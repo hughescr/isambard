@@ -18,6 +18,15 @@ import { truncateToWordBoundary } from '@/utils';
  */
 const CLOSING_ASK = "Izzy's status line right now (first person, under 40 characters, nothing else):";
 
+/**
+ * The clock every `createSynopsisGenerator` call in this file injects. Reads `Date.now()`, so
+ * every existing `setSystemTime(...)`-driven cooldown/boundary test below is unchanged: `setSystemTime`
+ * patches the engine's `Date` globally, and this closure reads straight through it, exactly like
+ * the direct `Date.now()` calls it replaces used to. The dedicated "reads the injected clock, not
+ * the wall clock" test further down uses its own locally-scoped `now` instead of this one.
+ */
+const now = (): number => Date.now();
+
 describe('ToolDescriptions', () => {
     it('should contain descriptions for all memory tools', () => {
         expect(ToolDescriptions.mcp__memory__view).toBe('Reading from memory storage');
@@ -352,7 +361,7 @@ describe('SynopsisGenerator', () => {
                     },
                 ],
             ])('should %s', async (_name, identityContext, assertSystem) => {
-                const generator = createSynopsisGenerator({ identityContext });
+                const generator = createSynopsisGenerator({ identityContext, now });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
 
@@ -363,6 +372,7 @@ describe('SynopsisGenerator', () => {
             it('should describe every labelled section the user prompt can carry', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -380,6 +390,7 @@ describe('SynopsisGenerator', () => {
             it('should describe the "Doing right now" section exactly as the user prompt builds it', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -391,6 +402,7 @@ describe('SynopsisGenerator', () => {
             it('should tell the model the previous status is there to be varied from', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -402,6 +414,7 @@ describe('SynopsisGenerator', () => {
             it('should forbid third person, filler and meta-commentary, and end with the output rule', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -417,6 +430,7 @@ describe('SynopsisGenerator', () => {
             it('should show good and bad output examples, after the Never list and before the output rule', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -448,6 +462,7 @@ describe('SynopsisGenerator', () => {
             it('should keep the instructions out of the user prompt (system and user are sent separately)', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Identity 9x7z',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -460,6 +475,7 @@ describe('SynopsisGenerator', () => {
             it('should send the system prompt as the [text, SYSTEM_PROMPT_DYNAMIC_BOUNDARY] array form for prompt caching', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Identity 9x7z',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -477,6 +493,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Identity 9x7z',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -492,6 +509,7 @@ describe('SynopsisGenerator', () => {
             it('should emit every section, in order, separated by blank lines', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -537,6 +555,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 mockGenerateTextWithSystemPrompt.mockResolvedValue('Chasing a hunch 9x7z');
@@ -570,6 +589,7 @@ describe('SynopsisGenerator', () => {
             it('should emit only the "Doing right now" section when nothing else is present', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -586,6 +606,7 @@ describe('SynopsisGenerator', () => {
             it('should keep sections in the fixed order even when the middle ones are missing', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -622,6 +643,7 @@ describe('SynopsisGenerator', () => {
             it.each<SynopsisContext['phase']>(['thinking', 'using_tool', 'responding'])('should end the %s user prompt with the ask', async (phase) => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({
@@ -646,6 +668,7 @@ describe('SynopsisGenerator', () => {
             it('should include the user message under its own heading', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -666,6 +689,7 @@ describe('SynopsisGenerator', () => {
             it('should truncate the user message to the first SYNOPSIS_SEED_CAP characters', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const longMessage = `${'q'.repeat(SYNOPSIS_SEED_CAP)}TAIL9x7z`;
@@ -684,6 +708,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the section entirely when the user message is empty', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -702,6 +727,7 @@ describe('SynopsisGenerator', () => {
             it('should include the thinking content under its own heading', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -719,6 +745,7 @@ describe('SynopsisGenerator', () => {
             it('should keep the LAST 500 characters of thinking content, not the first', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 // 628 chars: the first 128 (head marker + filler) must fall outside a 500-char tail
@@ -743,6 +770,7 @@ describe('SynopsisGenerator', () => {
             it('should include short thinking content untouched', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const thinkingContent = 'x'.repeat(499);
@@ -761,6 +789,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the section when thinkingContent is undefined', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -777,6 +806,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the section when thinkingContent is an empty string', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -794,6 +824,7 @@ describe('SynopsisGenerator', () => {
             it('should include the newest thinking in the using_tool phase', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -812,6 +843,7 @@ describe('SynopsisGenerator', () => {
             it('should include the newest thinking in the responding phase', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -832,6 +864,7 @@ describe('SynopsisGenerator', () => {
                 // Built from the user message alone: no thinking has streamed and no tool has run.
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -843,6 +876,7 @@ describe('SynopsisGenerator', () => {
             it('should label a thinking phase that already has thinking content as mid-turn', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test', thinkingContent: 'Weighing options 9x7z' });
@@ -855,6 +889,7 @@ describe('SynopsisGenerator', () => {
             it('should label a thinking phase that already has tool history as mid-turn', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test', recentToolCalls: ['Read'] });
@@ -867,6 +902,7 @@ describe('SynopsisGenerator', () => {
             it('should treat an empty recentToolCalls array as no tool history yet', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test', recentToolCalls: [] });
@@ -878,6 +914,7 @@ describe('SynopsisGenerator', () => {
             it('should label the using_tool phase', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'using_tool', userMessage: 'Test', toolName: 'Read' });
@@ -889,6 +926,7 @@ describe('SynopsisGenerator', () => {
             it('should label the responding phase', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'responding', userMessage: 'Test' });
@@ -900,6 +938,7 @@ describe('SynopsisGenerator', () => {
             it('should include the tool description and arguments for using_tool', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -935,6 +974,7 @@ describe('SynopsisGenerator', () => {
             ])('should %s', async (_name, toolName, expected) => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -952,6 +992,7 @@ describe('SynopsisGenerator', () => {
             it('should show "(no input)" when the tool input is undefined', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -969,6 +1010,7 @@ describe('SynopsisGenerator', () => {
             it('should show "(no input)" when the tool input is null', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -987,6 +1029,7 @@ describe('SynopsisGenerator', () => {
             it('should truncate long tool input to 200 characters plus an ellipsis', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1007,6 +1050,7 @@ describe('SynopsisGenerator', () => {
             it('should NOT emit Tool or Arguments lines outside the using_tool phase', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1028,6 +1072,7 @@ describe('SynopsisGenerator', () => {
             it('should keep the LAST 150 characters of accumulated text, not the first', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const accumulatedText = `HEADACC9x7z${'a'.repeat(200)}TAILACC9x7z`;
@@ -1048,6 +1093,7 @@ describe('SynopsisGenerator', () => {
             it('should include short accumulated text untouched', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1065,6 +1111,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the line when there is no accumulated text', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1081,6 +1128,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the line when the accumulated text is an empty string', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1098,6 +1146,7 @@ describe('SynopsisGenerator', () => {
             it('should include the line in the using_tool phase, after the Arguments line', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1117,6 +1166,7 @@ describe('SynopsisGenerator', () => {
             it('should include the line in the thinking phase', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1136,6 +1186,7 @@ describe('SynopsisGenerator', () => {
             it('should render each tool through its human-readable description, joined with ", " in the order given (newest first)', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1153,6 +1204,7 @@ describe('SynopsisGenerator', () => {
             it('should fall back to the raw tool name for a tool with no known description', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1170,6 +1222,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the section when recentToolCalls is undefined', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1187,6 +1240,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the section when recentToolCalls is empty', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1205,6 +1259,7 @@ describe('SynopsisGenerator', () => {
             it('should emit a single recent tool without a separator', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1225,6 +1280,7 @@ describe('SynopsisGenerator', () => {
             it('should include the subagent summary under its own heading', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1242,6 +1298,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the section when there is no subagent summary', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1258,6 +1315,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the section when the subagent summary is an empty string', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1279,6 +1337,7 @@ describe('SynopsisGenerator', () => {
             it('should omit the section on the first call, when there is nothing shown yet', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -1293,6 +1352,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 mockGenerateTextWithSystemPrompt.mockResolvedValue('Retracing the config path 9x7z');
@@ -1309,8 +1369,8 @@ describe('SynopsisGenerator', () => {
                 const baseTime = 5_000_000;
                 setSystemTime(new Date(baseTime));
 
-                const first = createSynopsisGenerator({ identityContext: 'Test identity' });
-                const second = createSynopsisGenerator({ identityContext: 'Test identity' });
+                const first = createSynopsisGenerator({ identityContext: 'Test identity', now });
+                const second = createSynopsisGenerator({ identityContext: 'Test identity', now });
 
                 mockGenerateTextWithSystemPrompt.mockResolvedValue('Only the first instance saw this 9x7z');
                 await first.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -1331,6 +1391,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -1356,6 +1417,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -1371,6 +1433,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -1390,6 +1453,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -1402,6 +1466,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const result = await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -1415,6 +1480,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Chasing a good hunch 9x7z');
@@ -1443,6 +1509,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1466,6 +1533,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1485,6 +1553,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1505,6 +1574,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1522,6 +1592,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1539,6 +1610,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1556,6 +1628,7 @@ describe('SynopsisGenerator', () => {
             it('should throttle rapid calls within 2 second cooldown', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1577,6 +1650,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1600,6 +1674,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1624,6 +1699,7 @@ describe('SynopsisGenerator', () => {
             it('should make real API call when within cooldown window but cache is null', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1648,6 +1724,7 @@ describe('SynopsisGenerator', () => {
             it('should verify cache is updated and used on subsequent cooldown calls', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1679,6 +1756,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1734,6 +1812,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1763,7 +1842,7 @@ describe('SynopsisGenerator', () => {
                 });
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Fresh call');
 
-                const generator = createSynopsisGenerator({ identityContext: 'Test identity' });
+                const generator = createSynopsisGenerator({ identityContext: 'Test identity', now });
                 const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
                 const stale = generator.generateSynopsis(context);
                 expect(await generator.generateSynopsis(context)).toBe('Fresh call');
@@ -1786,7 +1865,7 @@ describe('SynopsisGenerator', () => {
                 );
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('Fresh call');
 
-                const generator = createSynopsisGenerator({ identityContext: 'Test identity' });
+                const generator = createSynopsisGenerator({ identityContext: 'Test identity', now });
                 const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
                 const stale = generator.generateSynopsis(context);
 
@@ -1816,7 +1895,7 @@ describe('SynopsisGenerator', () => {
                 );
                 mockGenerateTextWithSystemPrompt.mockResolvedValueOnce('third');
 
-                const generator = createSynopsisGenerator({ identityContext: 'Test identity' });
+                const generator = createSynopsisGenerator({ identityContext: 'Test identity', now });
                 const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
                 const first = generator.generateSynopsis(context);
                 const second = generator.generateSynopsis(context);
@@ -1843,6 +1922,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1862,6 +1942,7 @@ describe('SynopsisGenerator', () => {
                 // A subsequent call within cooldown (with cache) should return cache, NOT null.
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1885,6 +1966,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1913,6 +1995,47 @@ describe('SynopsisGenerator', () => {
 
                 setSystemTime();
             });
+
+            it('reads the injected clock, not the wall clock (#106)', async () => {
+                let t = 0;
+                const generator = createSynopsisGenerator({ identityContext: 'Test identity', now: () => t });
+                const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
+
+                await generator.generateSynopsis(context);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
+
+                // Wall clock moves forward past the 2s cooldown; the injected clock does not.
+                setSystemTime(new Date(Date.now() + 5000));
+                await generator.generateSynopsis(context);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1); // still cached — wall clock is irrelevant
+
+                setSystemTime();
+
+                // Advancing the injected clock past the cooldown DOES allow a new call.
+                t += 2001;
+                await generator.generateSynopsis(context);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
+            });
+
+            it('each generator instance reads its OWN injected clock', async () => {
+                let t1 = 0;
+                const t2 = 0;
+                const generator1 = createSynopsisGenerator({ identityContext: 'Identity 1', now: () => t1 });
+                const generator2 = createSynopsisGenerator({ identityContext: 'Identity 2', now: () => t2 });
+                const context: SynopsisContext = { phase: 'thinking', userMessage: 'Test' };
+
+                await generator1.generateSynopsis(context);
+                await generator2.generateSynopsis(context);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
+
+                // Advancing generator1's clock past cooldown does not affect generator2's cache/cooldown.
+                t1 += 2001;
+                await generator1.generateSynopsis(context);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(3);
+
+                await generator2.generateSynopsis(context);
+                expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(3); // generator2 still within its own cooldown
+            });
         });
 
         describe('logging', () => {
@@ -1928,6 +2051,7 @@ describe('SynopsisGenerator', () => {
             it('should log debug before generating synopsis', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1949,6 +2073,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1973,6 +2098,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -1994,6 +2120,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'responding', userMessage: 'Test' });
@@ -2013,6 +2140,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 await generator.generateSynopsis({ phase: 'thinking', userMessage: 'Test' });
@@ -2035,6 +2163,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2057,6 +2186,7 @@ describe('SynopsisGenerator', () => {
             it('should log debug when call is within cooldown', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2080,6 +2210,7 @@ describe('SynopsisGenerator', () => {
             it('should not log info when using cached/cooldown status', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2104,6 +2235,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2121,6 +2253,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2139,6 +2272,7 @@ describe('SynopsisGenerator', () => {
 
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2156,9 +2290,11 @@ describe('SynopsisGenerator', () => {
             it('does NOT share cooldown state across generators — a second instance is not gated by the first\'s cooldown', async () => {
                 const generator1 = createSynopsisGenerator({
                     identityContext: 'Identity 1',
+                    now,
                 });
                 const generator2 = createSynopsisGenerator({
                     identityContext: 'Identity 2',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2179,9 +2315,11 @@ describe('SynopsisGenerator', () => {
             it('does NOT share cache across generators — a second instance never returns the first\'s cached status', async () => {
                 const generator1 = createSynopsisGenerator({
                     identityContext: 'Identity 1',
+                    now,
                 });
                 const generator2 = createSynopsisGenerator({
                     identityContext: 'Identity 2',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2201,9 +2339,11 @@ describe('SynopsisGenerator', () => {
             it('instance B\'s call does not abort instance A\'s STILL-IN-FLIGHT AbortController', async () => {
                 const generator1 = createSynopsisGenerator({
                     identityContext: 'Identity 1',
+                    now,
                 });
                 const generator2 = createSynopsisGenerator({
                     identityContext: 'Identity 2',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2255,6 +2395,7 @@ describe('SynopsisGenerator', () => {
             it('should handle circular references gracefully', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 // Create a circular reference
@@ -2277,6 +2418,7 @@ describe('SynopsisGenerator', () => {
             it('should handle BigInt gracefully', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2295,6 +2437,7 @@ describe('SynopsisGenerator', () => {
             it('should handle short JSON input without truncation', async () => {
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 const context: SynopsisContext = {
@@ -2318,6 +2461,7 @@ describe('SynopsisGenerator', () => {
                 // MAX_TOOL_INPUT_LENGTH is 200, so a 200-char JSON should NOT be truncated
                 const generator = createSynopsisGenerator({
                     identityContext: 'Test identity',
+                    now,
                 });
 
                 // Create an object whose JSON stringification is exactly 200 characters

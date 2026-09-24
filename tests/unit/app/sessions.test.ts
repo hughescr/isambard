@@ -2825,6 +2825,30 @@ describe('#39: each conductor factory wires its own turn synopsis producer', () 
         expect(systemPrompt[0]).toContain('I am Izzy');
     });
 
+    it('#106: the attached generator reads the session clock, not the wall clock', async () => {
+        const h = build();
+        jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+        const captured = captureAttachments();
+        mockGenerateTextWithSystemPrompt.mockResolvedValue('status');
+
+        await createConversationConductor(h.params);
+        const { generator } = captured[0];
+
+        await generator.generateSynopsis({ phase: 'thinking', userMessage: 'first' });
+        expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
+
+        // Still within the generator's 2s Haiku cooldown on h.clock — served from cache, not a new call.
+        h.clock.advance(1999);
+        await generator.generateSynopsis({ phase: 'thinking', userMessage: 'second' });
+        expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(1);
+
+        // Past the cooldown on h.clock — a new Haiku call fires. This fails if sessions.ts wired
+        // Date.now() (or any clock other than h.clock) into the generator's `now`.
+        h.clock.advance(2);
+        await generator.generateSynopsis({ phase: 'thinking', userMessage: 'third' });
+        expect(mockGenerateTextWithSystemPrompt).toHaveBeenCalledTimes(2);
+    });
+
     it('end to end: a seeded turn on the conversation ledger gets its synopsis from the real producer', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);

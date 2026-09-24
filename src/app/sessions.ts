@@ -203,7 +203,7 @@ function attachSessionTurnSynopsis(params: {
     attachTurnSynopsis({
         conductor,
         ledgerStore,
-        generator: createSynopsisGenerator({ identityContext: identity }),
+        generator: createSynopsisGenerator({ identityContext: identity, now: () => clock.now() }),
         budget:    createSynopsisBudget({ now: () => clock.now() }),
         clock,
         onThinkingContentUpdate,

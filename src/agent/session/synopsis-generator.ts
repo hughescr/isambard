@@ -113,6 +113,13 @@ export interface SynopsisGenerator {
 interface SynopsisGeneratorDeps {
     /** Context about the assistant's identity for personalized status */
     identityContext: string
+    /**
+     * Millisecond clock — `() => clock.now()` in production (src/app/sessions.ts); a fake in
+     * tests. A plain function, not a {@link Clock}, mirroring context-policy.ts's `now` port: this
+     * module never calls `Date.now()` itself, since `clock.ts` is the only file under
+     * `src/agent/session/` allowed to (#106).
+     */
+    now:             () => number
 }
 
 /**
@@ -129,7 +136,8 @@ const MAX_ACCUMULATED_TEXT_LENGTH = 150;
 const MAX_TOOL_INPUT_LENGTH = 200;
 const MAX_THINKING_CONTENT_LENGTH = 500;
 
-// Rate limiting: minimum 2 seconds between Haiku calls (cooldown measured from call completion).
+// Rate limiting: minimum 2 seconds between Haiku calls (cooldown measured from call completion,
+// against the injected `now` clock — #106 — not `Date.now()`).
 // P14: this used to be module-level state shared across every generator instance — a single
 // shared cooldown/cache/in-flight-controller let one session's Haiku call abort the other
 // session's in-flight call, and one session's cooldown gate the other's synopsis. It now lives in
@@ -383,12 +391,15 @@ interface CooldownLogContext {
  * @param logContext - Per-site log objects; each carries its own fields and `msg`
  * @param state - The calling instance's own cooldown/cache/in-flight-controller state (P14: no
  * longer module-level — see this file's own top-of-file doc note).
+ * @param now - Injected millisecond clock (#106) — the cooldown reads and records time through
+ * this, never `Date.now()` directly.
  * @returns Promise resolving to a status string, or null on error or a rejected response
  */
 async function executeWithCooldown(
     promptBuilder: () => { systemPrompt: string | string[], userPrompt: string },
     logContext: CooldownLogContext,
-    state: InstanceState
+    state: InstanceState,
+    now: () => number
 ): Promise<string | null> {
     // Cancel-and-replace: abort any previous in-flight call (from THIS instance only) and start fresh
     if(state.inFlightController) {
@@ -397,8 +408,7 @@ async function executeWithCooldown(
     }
 
     // Rate limiting - check if we're within cooldown window (measured from last call completion)
-    const now = Date.now();
-    if(now - state.lastHaikuCall < HAIKU_COOLDOWN_MS && state.cachedStatus) {
+    if(now() - state.lastHaikuCall < HAIKU_COOLDOWN_MS && state.cachedStatus) {
         logger.debug(logContext.cooldown);
         return state.cachedStatus;
     }
@@ -452,7 +462,7 @@ async function executeWithCooldown(
     } finally {
         // A cancelled older call must not start a cooldown or clear the newer controller.
         if(state.inFlightController === controller) {
-            state.lastHaikuCall = Date.now();
+            state.lastHaikuCall = now();
             state.inFlightController = null;
         }
     }
@@ -469,19 +479,21 @@ interface InstanceState {
  * Creates a turn synopsis generator that uses Claude Haiku to generate
  * contextual one-line synopses.
  *
- * The generator implements rate limiting (2 second cooldown measured from call completion)
- * to avoid excessive API calls during rapid status updates. P14: the cooldown/cache/in-flight
- * state lives in THIS closure — every call to this factory returns an instance with its own,
- * independent state, so two instances (e.g. the conversation and perch sessions) never abort
- * each other's in-flight call or gate each other's cooldown.
+ * The generator implements rate limiting (2 second cooldown measured from call completion,
+ * against the injected `now` — see #106) to avoid excessive API calls during rapid status
+ * updates. P14: the cooldown/cache/in-flight state lives in THIS closure — every call to this
+ * factory returns an instance with its own, independent state, so two instances (e.g. the
+ * conversation and perch sessions) never abort each other's in-flight call or gate each other's
+ * cooldown.
  *
- * @param deps - Dependencies including identity context
+ * @param deps - Dependencies including identity context and the injected clock
  * @returns SynopsisGenerator instance
  *
  * @example
  * ```typescript
  * const generator = createSynopsisGenerator({
- *   identityContext: 'I am Isambard, an AI assistant'
+ *   identityContext: 'I am Isambard, an AI assistant',
+ *   now: () => clock.now()
  * });
  *
  * const status = await generator.generateSynopsis({
@@ -494,7 +506,7 @@ interface InstanceState {
 export function createSynopsisGenerator(
     deps: SynopsisGeneratorDeps
 ): SynopsisGenerator {
-    const { identityContext } = deps;
+    const { identityContext, now } = deps;
 
     // Built once per instance and sent as the array form with SYSTEM_PROMPT_DYNAMIC_BOUNDARY at
     // the end (same pattern as status-generator-idle.ts): the identity block never changes across
@@ -523,7 +535,8 @@ export function createSynopsisGenerator(
                     success:    { phase, msg: 'Generated dynamic status' },
                     failure:    { phase, msg: 'Failed to generate synopsis' },
                 },
-                state
+                state,
+                now
             );
         },
     };
