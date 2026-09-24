@@ -30,12 +30,8 @@ export type {
 export { ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionRetryListener } from './approved-outbound-action';
 
 // Allowlist saga
-export type { SagaStepResult, SagaInteractionResult, AllowlistSagaStarter } from './allowlist-saga';
+export type { SagaStepResult, SagaInteractionResult } from './allowlist-saga';
 export { AllowlistSagaBackend, AllowlistSagaExecutor } from './allowlist-saga';
-
-// Outbound approval handler base
-export type { ApprovalActivityLogger } from './outbound-approval-handler-base';
-export { BaseOutboundApprovalHandler } from './outbound-approval-handler-base';
 
 // Rate limiters
 export { TokenBucketRateLimiter } from './rate-limiters';

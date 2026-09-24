@@ -1,10 +1,10 @@
 import { type Mock, describe, test, expect, beforeEach, mock } from 'bun:test';
 import { ComponentType, MessageFlags, type ChatInputCommandInteraction } from 'discord.js';
 import { mockLogger } from '../../../setup';
-import { buildCalendarCommand, CalendarCommandHandler } from '@/integrations/caldav/calendar-commands';
 import type { CalendarRegistryBackend } from '@/integrations/caldav/calendar-registry/backend';
 import type { CalendarRegistryRecord } from '@/integrations/caldav/calendar-registry/types';
 import type { CalDAVClient } from '@/integrations/caldav/client';
+import { buildCalendarCommand, CalendarCommandHandler } from '@/integrations/discord/calendar-commands';
 
 // Admin Discord user ID used in tests
 const ADMIN_USER_ID = '423276934781468692';

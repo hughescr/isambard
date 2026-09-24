@@ -101,6 +101,12 @@ export {
     AllowlistInteractionHandler
 } from './allowlist-interaction-handler';
 
+// Calendar slash command (moved from integrations/caldav, #40)
+export {
+    buildCalendarCommand,
+    CalendarCommandHandler
+} from './calendar-commands';
+
 // Consolidated slash command registration
 export {
     registerAllCommands

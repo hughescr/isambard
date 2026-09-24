@@ -359,6 +359,14 @@ src/
 │   │   ├── contact-commands.ts      # Contact management Discord slash commands
 │   │   ├── allowlist-commands.ts    # Person-allowlist Discord slash commands
 │   │   ├── allowlist-interaction-handler.ts # Modal/button interactions for the allowlist saga flow
+│   │   ├── calendar-commands.ts     # /calendar slash command (CalDAV registry management)
+│   │   ├── approvals/               # Discord UI for admin approvals (the only home of this UI)
+│   │   │   ├── interaction-handler.ts  # DiscordOutboundApprovalInteractionHandler: ack, reject modal, result embeds
+│   │   │   ├── email-adapter.ts        # Outbound email card → EmailOutboundApprovals
+│   │   │   ├── bsky-adapter.ts         # Outbound Bluesky reply/DM card → BskyOutboundApprovals (parses embed fields)
+│   │   │   ├── email-embeds.ts         # Inbound email review/unsafe/restricted-access embeds
+│   │   │   ├── email-review-handler.ts # Inbound email review buttons (trash/junk/allow/allowlist)
+│   │   │   └── bsky-embeds.ts          # Bluesky reply/DM approval card builder
 │   │   ├── history-provider.ts      # Discord history provider for cross-platform context
 │   │   ├── setup/                   # Bot initialization setup modules
 │   │   │   ├── presence-setup.ts          # Presence manager, per-session status generators, ledger subscriptions + synopsis attachment
@@ -418,13 +426,11 @@ src/
 │   │   ├── wildduck-client.ts           # WildDuck HTTP API client (search, flags, drafts, send)
 │   │   ├── wildduck-listener.ts         # WildDuck SSE listener with poll fallback
 │   │   ├── email-processor.ts           # Email processing pipeline
-│   │   ├── outbound-approval-handler.ts # Admin approval workflow for outbound email
+│   │   ├── outbound-approvals.ts        # EmailOutboundApprovals: approve/reject operations (no Discord)
 │   │   ├── draft-review-state.ts        # Persisted review state for a draft awaiting admin approval
 │   │   ├── auth-checker.ts              # Authorization checking for outbound email
 │   │   ├── classifier.ts                # Email classification
 │   │   ├── classifier-prompt.ts         # LLM prompt for email classification
-│   │   ├── review-embed-builder.ts      # Discord embed builder for approval review
-│   │   ├── review-handler.ts            # Handles admin approval/rejection responses
 │   │   ├── history-provider.ts          # Email history provider for cross-platform context
 │   │   └── index.ts                     # Public exports (error hierarchy lives in src/errors/email.ts; rate limiter in src/services/rate-limiters/)
 │   ├── bsky/                          # Bluesky AT Protocol integration
@@ -434,8 +440,7 @@ src/
 │   │   ├── embeds.ts                    # Embed types, normalization, and facet support
 │   │   ├── history-provider.ts          # Bluesky history provider for cross-platform context
 │   │   ├── rejection-backend.ts         # DynamoDB backend for admin-rejected posts/DMs
-│   │   ├── review-embed-builder.ts      # Discord embed builder for reply/DM approval requests
-│   │   ├── outbound-approval-handler.ts # Discord approval workflow for outbound replies and DMs
+│   │   ├── outbound-approvals.ts        # BskyOutboundApprovals: approve/reject reply and DM operations (no Discord)
 │   │   ├── index.ts                     # Public exports (error hierarchy lives in src/errors/bsky.ts)
 │   │   └── checkpoint/                  # Notification/feed checkpoint tracking
 │   │       ├── types.ts                 # Checkpoint types
@@ -447,7 +452,6 @@ src/
 │       ├── types.ts                     # Calendar domain types, including the CalendarTimeRange union
 │       ├── formatter.ts                 # Calendar event formatting with timezone support
 │       ├── time-range.ts                # The one display-zone policy for CalendarTimeRange (formatter, agenda, change list)
-│       ├── calendar-commands.ts         # Discord slash commands for calendar management
 │       ├── index.ts                     # Public exports (error hierarchy lives in src/errors/caldav.ts)
 │       └── calendar-registry/           # Per-user/shared calendar DynamoDB registry
 │           ├── backend.ts               # DynamoDB CRUD for calendar credentials
@@ -548,7 +552,6 @@ src/
 │   ├── lifecycle-orchestrator.ts       # serviceLifecycleMachine: per-service xstate health/reconnect state machine
 │   ├── reconnection-loop.ts            # Reconnection handling with exponential backoff
 │   ├── error-boundary.ts               # Process-level uncaughtException/unhandledRejection boundary handlers
-│   ├── outbound-approval-handler-base.ts # BaseOutboundApprovalHandler shared by email/Bluesky approval handlers
 │   ├── types.ts                        # Service types (ServiceName, HealthState, minimal logger interface)
 │   ├── index.ts                        # Public exports
 │   ├── outbox/                         # Reliable message delivery (outbox pattern)
@@ -567,7 +570,6 @@ src/
 │   ├── allowlist-saga/                 # Multi-step Discord UI flow for adding a contact to the person allowlist
 │   │   ├── backend.ts                  # Strongly-consistent read/conditional-put saga row storage
 │   │   ├── executor.ts                 # Saga step executor and typed transitions
-│   │   ├── starter.ts                  # Minimal interface for kicking off a saga from an approval handler
 │   │   ├── types.ts                    # Zod discriminated union of saga states
 │   │   └── index.ts                    # Public exports
 │   └── rate-limiters/                  # Generic rate limiting primitives

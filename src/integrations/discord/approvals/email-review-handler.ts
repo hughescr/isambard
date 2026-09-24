@@ -2,29 +2,29 @@ import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction, EmbedBuilder  } from 'discord.js';
 import { EmailFolder, EMAIL_REVIEW_PREFIXES } from '@/config';
 import { EmailProcessingError } from '@/errors';
-import type { WildDuckClient } from '@/integrations/email/wildduck-client';
-import type { AllowlistSagaStarter } from '@/services';
+import type { AllowlistApprovalStarter } from '@/integrations/discord/allowlist-interaction-handler';
+import type { WildDuckClient } from '@/integrations/email';
 import { parseCustomId } from '@/utils';
 
 const GREEN = 0x00_AA_00;
 const RED   = 0xFF_00_00;
 
-interface ReviewHandlerDeps {
+interface EmailReviewHandlerDeps {
     wildDuckClient:              WildDuckClient
     adminDiscordUserId:          string
-    allowlistInteractionHandler: AllowlistSagaStarter
+    allowlistInteractionHandler: AllowlistApprovalStarter
 }
 
 /**
- * Handles button interactions from email review embeds.
+ * Handles button interactions from inbound email review embeds.
  * Supports four actions: trash, junk, allow, and allow+allowlist.
  */
-export class ReviewHandler {
+export class EmailReviewHandler {
     private readonly wildDuckClient:              WildDuckClient;
     private readonly adminDiscordUserId:          string;
-    private readonly allowlistInteractionHandler: AllowlistSagaStarter;
+    private readonly allowlistInteractionHandler: AllowlistApprovalStarter;
 
-    constructor(deps: ReviewHandlerDeps) {
+    constructor(deps: EmailReviewHandlerDeps) {
         this.wildDuckClient              = deps.wildDuckClient;
         this.adminDiscordUserId          = deps.adminDiscordUserId;
         this.allowlistInteractionHandler = deps.allowlistInteractionHandler;

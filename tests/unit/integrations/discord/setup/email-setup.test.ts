@@ -16,8 +16,9 @@ import type { NotifyParams } from '@/agent';
 import { createChannelId } from '@/agent/types';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
+import { buildReviewEmbed, buildUnsafeAlert } from '@/integrations/discord/approvals/email-embeds';
 import { setupEmail, buildEmailProcessorCallbacks, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
-import { type EmailMetadata, type ClassifierVerdict, WildDuckClient, ClassifierVerdictType, buildReviewEmbed, buildUnsafeAlert, EmailFolder  } from '@/integrations/email';
+import { type EmailMetadata, type ClassifierVerdict, WildDuckClient, ClassifierVerdictType, EmailFolder  } from '@/integrations/email';
 import type { ApprovedOutboundActionBackend } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 

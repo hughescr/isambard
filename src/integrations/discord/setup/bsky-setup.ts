@@ -6,13 +6,14 @@ import type { ChannelId } from '@/config';
 import { ChannelNotAccessibleError } from '@/errors';
 import {
     BskyCheckpointManager,
-    BskyOutboundApprovalHandler,
+    BskyOutboundApprovals,
     BskyRejectionBackend,
-    buildBskyApprovalEmbed,
     type BlueskyClient,
     type BskyReplyInput
 } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
+import { BskyApprovalInteractionAdapter } from '@/integrations/discord/approvals/bsky-adapter';
+import { buildBskyApprovalEmbed } from '@/integrations/discord/approvals/bsky-embeds';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import { createBskyDmPoller, DEFAULT_DM_POLL_INTERVAL_MS, type BskyDmPoller } from '@/integrations/discord/setup/bsky-dm-poller';
 import { TokenBucketRateLimiter, type ApprovedOutboundActionBackend, type ServiceHealthRegistry } from '@/services';
@@ -68,7 +69,7 @@ export interface BskySetupResult {
     allowlist:               PersonAllowlist
     rateLimiter:             TokenBucketRateLimiter
     rejectionBackend:        BskyRejectionBackend
-    outboundApprovalHandler: BskyOutboundApprovalHandler
+    outboundApprovalHandler: BskyApprovalInteractionAdapter
     /** Q8: health-gated DM poller, returned unstarted — the caller decides when to start/stop it. */
     dmPoller:                BskyDmPoller
     /** sendApprovalRequest callback for MCP server integration */
@@ -97,7 +98,7 @@ export interface BskySetupResult {
  * - TokenBucketRateLimiter (capacity=24, refill=1/hr)
  * - sendApprovalRequest callback (posts approval embed to admin channel, retries 3x)
  * - sendDMApprovalRequest callback (posts DM approval embed to admin channel, retries 3x)
- * - BskyOutboundApprovalHandler for Discord button interactions
+ * - BskyOutboundApprovals + BskyApprovalInteractionAdapter for Discord button interactions
  *
  * @param options - Bsky setup options
  * @returns Bsky components for lifecycle management and MCP server wiring
@@ -189,14 +190,16 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
             }, retryDeps));
     };
 
-    // Create outbound approval handler (handles bsky-send-* and bsky-dm-* button/modal interactions)
-    const outboundApprovalHandler = new BskyOutboundApprovalHandler({
-        client:                      bskyClient,
-        rejectionBackend,
-        sagaBackend:                 options.approvedActions,
-        activityLogger:              options.activityLogger,
-        allowlistInteractionHandler: options.allowlistInteractionHandler,
-        notify:                      options.notify,
+    // Create the outbound approval operations and their Discord adapter (handles bsky-send-*
+    // and bsky-dm-* button/modal interactions)
+    const outboundApprovalHandler = new BskyApprovalInteractionAdapter({
+        approvals: new BskyOutboundApprovals({
+            rejectionBackend,
+            actionWriter:   options.approvedActions,
+            activityLogger: options.activityLogger,
+            notify:         options.notify,
+        }),
+        allowlist: options.allowlistInteractionHandler,
     });
 
     // Q8: DM checkpoint manager + health-gated poller. Built here but not started — the caller

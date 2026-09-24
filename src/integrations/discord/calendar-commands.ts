@@ -10,12 +10,15 @@ import {
     StringSelectMenuBuilder,
     type ChatInputCommandInteraction
 } from 'discord.js';
-import type { CalendarRegistryBackend } from './calendar-registry/backend';
-import { resolveCalendar, resolveServer } from './calendar-registry/resolve';
-import { createCalendarServerId } from './calendar-registry/types';
-import type { CalDAVClient } from './client';
-import type { CalendarInfo } from './types';
 import { AmbiguousCalendarMatchError, InvariantViolationError } from '@/errors';
+import {
+    createCalendarServerId,
+    resolveCalendar,
+    resolveServer,
+    type CalDAVClient,
+    type CalendarInfo,
+    type CalendarRegistryBackend
+} from '@/integrations/caldav';
 
 /**
  * Build the /calendar slash command with subcommands and the 'shared' subcommand group.

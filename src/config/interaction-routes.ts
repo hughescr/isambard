@@ -5,11 +5,11 @@
  * select-menu branch are three independently-gated dispatch points that each register only the
  * prefixes belonging to it.
  *
- * These live in `config` (domain vocabulary) rather than `utils` (pure, domain-free codec) so
- * every consumer that needs them — `services`, `email`, `bsky`, `discord` — can reach them
- * without a boundary violation (`utils` is documented as "no domain knowledge" in
- * eslint-boundaries.config.mjs; a discord-typed module would be unreachable from `services`
- * and `email`).
+ * These live in `config` (domain vocabulary) rather than `utils` (pure, domain-free codec).
+ * Their consumers are `config` itself and the Discord layer, which owns every button, modal and
+ * select route since #40 moved the approval UI out of `services`/`email`/`bsky`; keeping them
+ * in `config` also keeps them reachable from any layer without a boundary violation (`utils`
+ * is documented as "no domain knowledge" in eslint-boundaries.config.mjs).
  */
 
 /** `question:{questionId}:{value}` — the generic answer-button route. */

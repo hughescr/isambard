@@ -1,15 +1,8 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { truncate } from 'lodash-es';
 import type { EmailFolder } from '@/config';
-import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
+import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email';
 import { encodeCustomId } from '@/utils';
-
-interface OutboundApprovalEmbedParams {
-    to:       string
-    subject:  string
-    draftUid: number
-    cc?:      string[]
-}
 
 interface ReviewEmbedResult {
     embed:     EmbedBuilder
@@ -18,7 +11,6 @@ interface ReviewEmbedResult {
 
 const ORANGE             = 0xFF_8C_00;
 const RED                = 0xFF_00_00;
-const BLUE               = 0x00_55_FF;
 const YELLOW             = 0xFF_CC_00;
 const BODY_TRUNCATE_LENGTH = 500;
 
@@ -120,44 +112,6 @@ export function buildRestrictedAccessEmbed(mailboxName: string, uid: number, ref
             .setCustomId(encodeCustomId({ prefix: 'email-allow', id: String(uid), value: mailboxName }))
             .setLabel('Move to CleanInbox')
             .setStyle(ButtonStyle.Success)
-    );
-
-    return { embed, actionRow };
-}
-
-/**
- * Build an outbound email approval embed for Craig's review.
- * Returns a blue embed with draft metadata and 3 action buttons:
- * Approve, Approve+Allowlist, Reject.
- */
-export function buildOutboundApprovalEmbed(params: OutboundApprovalEmbedParams): ReviewEmbedResult {
-    const ccFields = params.cc && params.cc.length > 0
-        ? [{ name: 'Cc', value: params.cc.join(', '), inline: true }]
-        : [];
-
-    const embed = new EmbedBuilder()
-        .setTitle('Outbound Email Approval Required')
-        .setColor(BLUE)
-        .addFields(
-            { name: 'To',      value: params.to,     inline: true },
-            { name: 'Subject', value: params.subject, inline: true },
-            ...ccFields
-        );
-
-    const approveCustomId = encodeCustomId({ prefix: 'email-send-approve', id: String(params.draftUid) });
-    const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-            .setCustomId(approveCustomId)
-            .setLabel('Approve')
-            .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-            .setCustomId(encodeCustomId({ prefix: 'email-send-approveallowlist', id: String(params.draftUid) }))
-            .setLabel('Approve + Allowlist')
-            .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-            .setCustomId(encodeCustomId({ prefix: 'email-send-reject', id: String(params.draftUid) }))
-            .setLabel('Reject')
-            .setStyle(ButtonStyle.Danger)
     );
 
     return { embed, actionRow };

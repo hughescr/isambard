@@ -24,7 +24,8 @@ export type {
 } from './embeds';
 export { BlueskyClient } from './client';
 export * from './checkpoint';
-export { buildBskyApprovalEmbed } from './review-embed-builder';
-export { BskyOutboundApprovalHandler } from './outbound-approval-handler';
+export { BskyOutboundApprovals } from './outbound-approvals';
+export type { BskyApprovedReply, BskyApprovedDm, BskyOutboundApprovalsDeps } from './outbound-approvals';
 export { BskyRejectionBackend } from './rejection-backend';
+export type { BskyRejectionItem } from './rejection-backend';
 export { BskyHistoryProvider } from './history-provider';

@@ -162,7 +162,7 @@ Follow the patterns in `src/agent/bsky-mcp-server.ts` or `src/agent/email-mcp-se
 - Use `createSdkMcpServer` and `tool` from `@anthropic-ai/claude-agent-sdk`
 - Return results via `mcpTextResult`, `mcpJsonResult`, `mcpErrorResult` from `src/agent/mcp-helpers.ts`
 - Accept human-readable identifiers (names, handles) where you can; hiding a native ID is about `Contact._internal` specifically, not a blanket rule for every MCP tool — expose a platform's own native ID when its routing API needs one back (see "What the agent sees vs internal IDs" above)
-- For outbound actions that need admin approval, build a Discord embed and route through `BaseOutboundApprovalHandler` (see `EmailOutboundApprovalHandler` in `src/integrations/email/outbound-approval-handler.ts` or `BskyOutboundApprovalHandler` in `src/integrations/bsky/outbound-approval-handler.ts`)
+- For outbound actions that need admin approval, expose plain approval operations from your integration — inputs are identifiers and decisions, never Discord interactions, and approvals are recorded through `ApprovedOutboundActionWriter` (see `EmailOutboundApprovals` in `src/integrations/email/outbound-approvals.ts` or `BskyOutboundApprovals` in `src/integrations/bsky/outbound-approvals.ts`). Then add a Discord adapter under `src/integrations/discord/approvals/` that extends `DiscordOutboundApprovalInteractionHandler` and owns the card, buttons, modal and embed parsing (see `email-adapter.ts` / `bsky-adapter.ts`). Your integration folder must not import `discord.js` or `@discordjs/*`.
 
 ### 5. Activity Logger Hooks
 

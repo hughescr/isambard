@@ -2,6 +2,7 @@ import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction, type Client, type Interaction, type Message, type ModalSubmitInteraction } from 'discord.js';
 import type { AllowlistCommandHandler } from './allowlist-commands';
 import type { AllowlistInteractionHandler } from './allowlist-interaction-handler';
+import type { CalendarCommandHandler } from './calendar-commands';
 import type { DiscordCapability } from './capability';
 import { DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
 import { createDiscordClient } from './client';
@@ -42,7 +43,6 @@ import {
     ALLOWLIST_MODAL_PREFIXES,
     type DiscordConfig
 } from '@/config';
-import type { CalendarCommandHandler } from '@/integrations/caldav';
 import type { ServiceHealthRegistry } from '@/services';
 import { parseCustomId, resolveTimezone } from '@/utils';
 

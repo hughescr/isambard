@@ -7,20 +7,19 @@ import { createEmailMCPServer, generateTextWithSystemPrompt, type ActivityLogger
 import type { EmailConfig } from '@/config';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
+import { EmailApprovalInteractionAdapter } from '@/integrations/discord/approvals/email-adapter';
+import { buildReviewEmbed, buildUnsafeAlert, buildRestrictedAccessEmbed } from '@/integrations/discord/approvals/email-embeds';
+import { EmailReviewHandler } from '@/integrations/discord/approvals/email-review-handler';
 import type { ChannelContent, DiscordCapability } from '@/integrations/discord/capability';
 import type { ChannelId } from '@/integrations/discord/types';
 import {
     EmailClassifier,
     EmailProcessor,
     WildDuckListener,
-    ReviewHandler,
-    buildReviewEmbed,
-    buildUnsafeAlert,
-    buildRestrictedAccessEmbed,
     EmailFolder,
     formatMailboxMessageRef,
     WildDuckClient,
-    EmailOutboundApprovalHandler,
+    EmailOutboundApprovals,
     type ProcessEmailCallbacks
 } from '@/integrations/email';
 import { TokenBucketRateLimiter, type ApprovedOutboundActionBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
@@ -90,9 +89,9 @@ export interface EmailSetupOptions {
 
 export interface EmailSetupResult {
     listener:                     WildDuckListener
-    reviewHandler:                ReviewHandler
+    reviewHandler:                EmailReviewHandler
     emailMcpServer:               McpServerConfig
-    outboundApprovalHandler:      EmailOutboundApprovalHandler
+    outboundApprovalHandler:      EmailApprovalInteractionAdapter
     wildDuckClient:               WildDuckClient
     /** The person allowlist — exposed so the caller can wire it into AllowlistCommandHandler */
     allowlist:                    PersonAllowlist
@@ -229,7 +228,8 @@ export function buildEmailProcessorCallbacks(deps: BuildEmailProcessorCallbacksD
  * - WildDuck client, classifier, allowlist
  * - EmailProcessor with Discord DM callbacks for uncertain/unsafe verdicts
  * - WildDuckListener (NOT started — caller starts it after Discord client ready)
- * - ReviewHandler for button interactions
+ * - EmailReviewHandler for inbound review button interactions
+ * - EmailOutboundApprovals + EmailApprovalInteractionAdapter for outbound approval interactions
  * - Email MCP server for Claude agent
  *
  * @param options - Email setup options
@@ -278,7 +278,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     );
 
     // Create review handler (handles email-* button interactions)
-    const reviewHandler = new ReviewHandler({ wildDuckClient, adminDiscordUserId, allowlistInteractionHandler: options.allowlistInteractionHandler });
+    const reviewHandler = new EmailReviewHandler({ wildDuckClient, adminDiscordUserId, allowlistInteractionHandler: options.allowlistInteractionHandler });
 
     // Create rate limiter for outbound email
     const rateLimiter = new TokenBucketRateLimiter({ capacity: emailConfig.sendReservoirCapacity, refillRatePerHour: emailConfig.sendReservoirRefillRatePerHour });
@@ -340,13 +340,16 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         healthRegistry:      options.healthRegistry,
     });
 
-    // Create outbound approval handler (handles email-send-* button/modal interactions)
-    const outboundApprovalHandler = new EmailOutboundApprovalHandler({
-        wildDuckClient,
-        sagaBackend:                 options.approvedActions,
-        activityLogger:              options.activityLogger,
-        allowlistInteractionHandler: options.allowlistInteractionHandler,
-        notify:                      options.notify,
+    // Create the outbound approval operations and their Discord adapter (handles email-send-*
+    // button/modal and email-allowlist-select interactions)
+    const outboundApprovalHandler = new EmailApprovalInteractionAdapter({
+        approvals: new EmailOutboundApprovals({
+            wildDuckClient,
+            actionWriter:   options.approvedActions,
+            activityLogger: options.activityLogger,
+            notify:         options.notify,
+        }),
+        allowlist: options.allowlistInteractionHandler,
     });
 
     // Create email MCP server for Claude agent. Wrapped in a factory (rather than a bare

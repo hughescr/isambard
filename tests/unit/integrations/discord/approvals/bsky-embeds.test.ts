@@ -5,7 +5,7 @@ import {
     buildBskyApprovalEmbed,
     type BskyDmApprovalEmbedParams,
     type BskyReplyApprovalEmbedParams
-} from '@/integrations/bsky/review-embed-builder';
+} from '@/integrations/discord/approvals/bsky-embeds';
 
 // ---------------------------------------------------------------------------
 // Fixtures

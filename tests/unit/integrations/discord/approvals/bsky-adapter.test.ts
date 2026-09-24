@@ -1,11 +1,40 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import type { ButtonInteraction, ModalSubmitInteraction } from 'discord.js';
-import type { BlueskyClient } from '../../../../src/integrations/bsky/client';
-import { BskyOutboundApprovalHandler, type BskyOutboundApprovalHandlerDeps } from '../../../../src/integrations/bsky/outbound-approval-handler';
-import { type BskyRejectionBackend } from '../../../../src/integrations/bsky/rejection-backend';
-import type { AllowlistInteractionHandler } from '../../../../src/integrations/discord/allowlist-interaction-handler';
-import type { ApprovedOutboundActionBackend } from '../../../../src/services/approved-outbound-action/backend';
-import { mockLogger } from '../../../setup';
+import { mockLogger } from '../../../../setup';
+import type { NotifyFn } from '@/agent';
+import type { BlueskyClient } from '@/integrations/bsky/client';
+import { BskyOutboundApprovals } from '@/integrations/bsky/outbound-approvals';
+import type { BskyRejectionBackend } from '@/integrations/bsky/rejection-backend';
+import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
+import { BskyApprovalInteractionAdapter } from '@/integrations/discord/approvals/bsky-adapter';
+import type { ApprovedOutboundActionBackend } from '@/services';
+
+/**
+ * The collaborators behind the adapter: the Bluesky operations' dependencies plus the Discord
+ * allowlist starter. These suites drive the adapter end to end through real
+ * BskyOutboundApprovals, asserting on the rejection-backend/writer/notify mocks. `client` is
+ * kept only to assert that approval never posts directly (the executor does).
+ */
+interface BskyOutboundApprovalHandlerDeps {
+    client:                      BlueskyClient
+    rejectionBackend:            BskyRejectionBackend
+    sagaBackend:                 ApprovedOutboundActionBackend
+    activityLogger?:             { log: (entry: { type: string, summary: string }) => Promise<void> }
+    allowlistInteractionHandler: AllowlistInteractionHandler
+    notify?:                     NotifyFn
+}
+
+function makeAdapter(deps: BskyOutboundApprovalHandlerDeps): BskyApprovalInteractionAdapter {
+    return new BskyApprovalInteractionAdapter({
+        approvals: new BskyOutboundApprovals({
+            rejectionBackend: deps.rejectionBackend,
+            actionWriter:     deps.sagaBackend,
+            activityLogger:   deps.activityLogger,
+            notify:           deps.notify,
+        }),
+        allowlist: deps.allowlistInteractionHandler,
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Test constants
@@ -189,7 +218,7 @@ function makeDeferred(): { promise: Promise<void>, resolve: () => void } {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('BskyOutboundApprovalHandler', () => {
+describe('BskyApprovalInteractionAdapter', () => {
     beforeEach(() => {
         mockLogger.warn.mockClear();
         mockLogger.error.mockClear();
@@ -206,7 +235,7 @@ describe('BskyOutboundApprovalHandler', () => {
             const acknowledgement = makeDeferred();
             const acknowledgementStarted = makeDeferred();
             const deps = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -235,7 +264,7 @@ describe('BskyOutboundApprovalHandler', () => {
             const replyStarted = makeDeferred();
             const deps = makeDeps();
             (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mockRejectedValue(new Error('persistence unavailable'));
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, editReply } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -267,7 +296,7 @@ describe('BskyOutboundApprovalHandler', () => {
             const gate = makeDeferred();
             const started = makeDeferred();
             const deps = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const fixture = isDM ? makeDMButtonInteraction(customId) : makeButtonInteraction(customId);
             (fixture.interaction.message.embeds as unknown as unknown[]).length = 0;
             fixture.editReply.mockImplementation(async () => {
@@ -294,7 +323,7 @@ describe('BskyOutboundApprovalHandler', () => {
             const gate = makeDeferred();
             const started = makeDeferred();
             const deps = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const fixture = isDM ? makeDMButtonInteraction(customId) : makeButtonInteraction(customId);
             fixture.editReply.mockImplementation(async () => {
                 started.resolve();
@@ -331,7 +360,7 @@ describe('BskyOutboundApprovalHandler', () => {
                     handleModalSubmit: mock(async () => {}),
                 } as unknown as AllowlistInteractionHandler,
             });
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const fixture = isDM ? makeDMButtonInteraction(customId) : makeButtonInteraction(customId);
             const operation = handler.handleButton(fixture.interaction);
 
@@ -353,7 +382,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 await gate.promise;
             });
             const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
             const operation = handler.handleButton(interaction);
 
@@ -374,7 +403,7 @@ describe('BskyOutboundApprovalHandler', () => {
     describe('handleButton()', () => {
         test('should return early for unknown prefix', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate } = makeButtonInteraction('email-other:42');
 
             await handler.handleButton(interaction);
@@ -385,7 +414,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should return early when uuid is missing (no colon in customId)', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             // customId with no colon — parts.length < 2 guard fires
             const { interaction, deferUpdate } = makeButtonInteraction('bsky-send-approve');
 
@@ -396,7 +425,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should return early when uuid is empty string (colon with no value)', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             // customId with colon but empty uuid — parts[1] is '' which is falsy
             const { interaction, deferUpdate } = makeButtonInteraction('bsky-send-approve:');
 
@@ -408,7 +437,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('approve (bsky-send-approve)', () => {
             test('uses empty text when the reply embed description is null', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
                 (interaction.message.embeds[0] as unknown as { description: string | null }).description = null;
 
@@ -419,7 +448,7 @@ describe('BskyOutboundApprovalHandler', () => {
             });
             test('should deferUpdate, create saga, show success embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, deferUpdate, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -432,7 +461,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should create saga with text and parent URI/CID from embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`, {
                     text:      POST_TEXT,
                     parentUri: PARENT_URI,
@@ -455,7 +484,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should include rootUri/rootCid in saga params when present in embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`, {
                     rootUri: ROOT_URI,
                     rootCid: ROOT_CID,
@@ -472,7 +501,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should NOT add to allowlist on plain approve', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -483,7 +512,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should log error and show retry embed when embed is missing (empty embeds array)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId:    `bsky-send-approve:${TEST_UUID}`,
@@ -507,7 +536,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should log error and not re-throw when embed is missing and editReply also fails', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const editReply   = mock(async (): Promise<unknown> => {
                     throw new Error('Discord down');
                 });
@@ -532,7 +561,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should clear embed buttons in success editReply', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -544,7 +573,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should throw InvariantViolationError (caught by base handler) if parentUri is missing from embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 // Embed with no fields at all — parentUri/parentCid both missing
                 const editReply   = mock(async () => ({}));
                 const interaction = {
@@ -582,7 +611,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should throw InvariantViolationError (caught by base handler) if parentCid is missing but parentUri is present', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 // Only parentUri present — parentCid missing
                 const editReply   = mock(async () => ({}));
                 const interaction = {
@@ -617,7 +646,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('approve+allowlist (bsky-send-approveallowlist)', () => {
             test('should deferUpdate, create saga, kick off allowlist saga, show success embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, deferUpdate, editReply } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -632,7 +661,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should show success embed title (no allowlist status in title)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -644,7 +673,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should create saga with text and parent URI/CID from embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`, {
                     text:      POST_TEXT,
                     parentUri: PARENT_URI,
@@ -667,7 +696,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should include rootUri/rootCid in saga params when present in embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`, {
                     rootUri: ROOT_URI,
                     rootCid: ROOT_CID,
@@ -684,7 +713,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should throw InvariantViolationError (caught by base handler) and NOT start allowlist if parentCid is missing (approveallowlist path)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 // Only parentUri present — parentCid missing
                 const editReply   = mock(async () => ({}));
                 const interaction = {
@@ -719,7 +748,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should throw InvariantViolationError (caught by base handler) and NOT start allowlist if parentUri is missing (approveallowlist path)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-send-approveallowlist:${TEST_UUID}`,
@@ -749,7 +778,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should NOT call getProfile when targetHandle is missing from embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 // Embed without Replying to field
                 const interaction = {
                     customId: `bsky-send-approveallowlist:${TEST_UUID}`,
@@ -777,7 +806,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should clear embed buttons after approve+allowlist', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -789,7 +818,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should log error and show retry embed when embed is missing (approveallowlist path)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId:    `bsky-send-approveallowlist:${TEST_UUID}`,
@@ -816,7 +845,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('reject (bsky-send-reject)', () => {
             test('should show a modal for rejection reason without deferUpdate', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, deferUpdate, showModal } = makeButtonInteraction(`bsky-send-reject:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -829,7 +858,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should show modal with customId containing original uuid', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, showModal } = makeButtonInteraction(`bsky-send-reject:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -841,7 +870,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should set rejection reason text input as not required', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, showModal } = makeButtonInteraction(`bsky-send-reject:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -860,7 +889,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should show modal with title "Reject Bluesky Reply" for bsky-send-reject', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, showModal } = makeButtonInteraction(`bsky-send-reject:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -875,7 +904,7 @@ describe('BskyOutboundApprovalHandler', () => {
             test('should call editReply with error message when sagaBackend.create fails', async () => {
                 const deps = makeDeps();
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB error'));
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -887,7 +916,7 @@ describe('BskyOutboundApprovalHandler', () => {
             test('should call editReply with embeds and components cleared on error', async () => {
                 const deps = makeDeps();
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -903,7 +932,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
                 editReply.mockRejectedValue(new Error('Discord error'));
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
 
                 await handler.handleButton(interaction);
 
@@ -913,7 +942,7 @@ describe('BskyOutboundApprovalHandler', () => {
             test('should NOT call editReply when reject path (showModal) throws', async () => {
                 // Reject path does not defer, so editReply must not be called on error
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply, showModal } = makeButtonInteraction(`bsky-send-reject:${TEST_UUID}`);
                 showModal.mockRejectedValue(new Error('modal failed'));
 
@@ -930,7 +959,7 @@ describe('BskyOutboundApprovalHandler', () => {
         // eslint-disable-next-line sonarjs/parameterized-tests -- adjacent modal cases exercise distinct routing and error contracts.
         test('should return early for unknown prefix', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate } = makeModalInteraction('email-other-modal:42');
 
             await handler.handleModalSubmit(interaction);
@@ -940,7 +969,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should return early when uuid is missing (no colon in customId)', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate } = makeModalInteraction('bsky-send-reject-reason');
 
             await handler.handleModalSubmit(interaction);
@@ -950,7 +979,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should return early when uuid is empty string (colon with no value)', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             // colon present but uuid is empty — !uuid guard fires
             const { interaction, deferUpdate } = makeModalInteraction('bsky-send-reject-reason:');
 
@@ -961,7 +990,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should deferUpdate and update embed with rejection reason', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate, editReply } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -976,7 +1005,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should NOT call replyToPost after rejection', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -990,7 +1019,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should show "Rejected" title with reason in description after modal submit', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, editReply } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Off topic',
@@ -1008,7 +1037,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should use "No reason given" when reason is empty', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, editReply } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 '',
@@ -1024,7 +1053,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should log error if modal processing fails', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(`bsky-send-reject-reason:${TEST_UUID}`);
             // Force an error by making getTextInputValue throw
             (interaction.fields.getTextInputValue as ReturnType<typeof mock>).mockImplementation(() => {
@@ -1038,7 +1067,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should process bsky-dm-reject-reason modal and show rejection embed', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate, editReply } = makeModalInteraction(
                 `bsky-dm-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1062,7 +1091,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should return early for bsky-dm-reject-reason when uuid is missing (no colon)', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate } = makeModalInteraction('bsky-dm-reject-reason');
 
             await handler.handleModalSubmit(interaction);
@@ -1072,7 +1101,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should return early for bsky-dm-reject-reason when uuid is empty string', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate } = makeModalInteraction('bsky-dm-reject-reason:');
 
             await handler.handleModalSubmit(interaction);
@@ -1082,7 +1111,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should persist reply rejection to backend with uuid from customId', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Too aggressive',
@@ -1105,7 +1134,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should persist DM rejection to backend with uuid from customId', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-dm-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1132,7 +1161,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('persists an empty conversation ID when the rejection embed omits that field', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-dm-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1147,7 +1176,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('persists an empty reply target when the rejection embed omits Replying to', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1163,7 +1192,7 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should notify with wake:true and a rejection-keyed notify key after a reply rejection', async () => {
             const notify  = mock((_params: unknown) => true);
             const deps    = makeDeps({ notify });
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Too aggressive',
@@ -1184,7 +1213,7 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should notify with wake:true and a rejection-keyed notify key after a DM rejection', async () => {
             const notify  = mock((_params: unknown) => true);
             const deps    = makeDeps({ notify });
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-dm-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1210,7 +1239,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should resolve normally when notify is not provided on a reply rejection', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Too aggressive',
@@ -1223,7 +1252,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should log info with rejection details after successful reply rejection', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Too aggressive',
@@ -1244,7 +1273,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should log info with rejection details after successful DM rejection', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-dm-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1272,7 +1301,7 @@ describe('BskyOutboundApprovalHandler', () => {
         test('records distinct activity types for reply and DM rejections', async () => {
             const activityLogger = { log: mock(async () => {}) };
             const replyDeps = makeDeps({ activityLogger });
-            const replyHandler = new BskyOutboundApprovalHandler(replyDeps);
+            const replyHandler = makeAdapter(replyDeps);
             const { interaction: replyInteraction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Too aggressive',
@@ -1281,7 +1310,7 @@ describe('BskyOutboundApprovalHandler', () => {
             await replyHandler.handleModalSubmit(replyInteraction);
 
             const dmDeps = makeDeps({ activityLogger });
-            const dmHandler = new BskyOutboundApprovalHandler(dmDeps);
+            const dmHandler = makeAdapter(dmDeps);
             const { interaction: dmInteraction } = makeModalInteraction(
                 `bsky-dm-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1309,7 +1338,7 @@ describe('BskyOutboundApprovalHandler', () => {
         test('logs only the first 100 characters of a rejected draft', async () => {
             const deps = makeDeps();
             const text = 'x'.repeat(125);
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Too long',
@@ -1324,7 +1353,7 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should not log info when rejection persistence fails — DynamoDB is the gate', async () => {
             const deps = makeDeps();
             (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mockRejectedValueOnce(new Error('DynamoDB timeout'));
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1341,7 +1370,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should persist reply with root URI/CID when present', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
                 'Off topic',
@@ -1358,7 +1387,7 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should show error embed with original buttons when DynamoDB persist fails — NOT update to Rejected', async () => {
             const deps = makeDeps();
             (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mockRejectedValueOnce(new Error('DynamoDB timeout'));
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const originalEmbed = { description: POST_TEXT, fields: makeEmbedFields() };
             const originalComponents = [{ type: 1, components: [] }];
             const deferUpdate = mock(async () => ({}));
@@ -1396,7 +1425,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should show error embed and log error when embed is missing — gate prevents showing Rejected', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             // Create modal interaction WITHOUT embed data (message is undefined)
             const { interaction, editReply } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`,
@@ -1426,7 +1455,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should log warn and info with discordUpdated:false when editReply fails after successful persist', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const deferUpdate = mock(async () => ({}));
             const editReply   = mock(async (): Promise<unknown> => {
                 throw new Error('Discord timeout');
@@ -1464,7 +1493,7 @@ describe('BskyOutboundApprovalHandler', () => {
         test('should log error twice when both DynamoDB fails and error editReply fails', async () => {
             const deps = makeDeps();
             (deps.rejectionBackend.recordRejection as ReturnType<typeof mock>).mockRejectedValueOnce(new Error('DynamoDB timeout'));
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const deferUpdate = mock(async () => ({}));
             const editReply   = mock(async (): Promise<unknown> => {
                 throw new Error('Discord also down');
@@ -1489,7 +1518,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should throw InvariantViolationError (caught by base handler) and NOT record a rejection when Parent URI/CID are missing from a rejection embed', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
 
             // Create a modal interaction with an embed that has description but no fields —
             // extractRejectionItem can no longer default the strong ref to empty strings
@@ -1534,7 +1563,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('persists empty text when the rejection embed has a null description', async () => {
             const deps = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-send-reject-reason:${TEST_UUID}`, 'No text', { fields: makeEmbedFields() }
             );
@@ -1548,7 +1577,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('finds the Recipients field after an unrelated first field', async () => {
             const deps = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction(
                 `bsky-dm-reject-reason:${TEST_UUID}`,
                 'Not appropriate',
@@ -1569,7 +1598,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
         test('should log error and NOT call recordRejection when handleMissingEmbed editReply throws', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const deferUpdate = mock(async () => ({}));
             const editReply   = mock(async (): Promise<unknown> => {
                 throw new Error('Discord timeout');
@@ -1600,7 +1629,7 @@ describe('BskyOutboundApprovalHandler', () => {
     describe('handleButton() — DM flows', () => {
         test('should return early for unknown prefix (dm path)', async () => {
             const deps    = makeDeps();
-            const handler = new BskyOutboundApprovalHandler(deps);
+            const handler = makeAdapter(deps);
             const { interaction, deferUpdate } = makeDMButtonInteraction('bsky-other:42');
 
             await handler.handleButton(interaction);
@@ -1611,7 +1640,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('bsky-dm-approve', () => {
             test('uses empty text when the DM embed description is null', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
                 (interaction.message.embeds[0] as unknown as { description: string | null }).description = null;
 
@@ -1622,7 +1651,7 @@ describe('BskyOutboundApprovalHandler', () => {
             });
             test('should deferUpdate, create saga, show success embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, deferUpdate, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -1635,7 +1664,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should create saga with convoId and DM text from embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`, {
                     text:    DM_TEXT,
                     convoId: DM_CONVO_ID,
@@ -1656,7 +1685,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should show "DM Approved ✓" in embed title', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -1667,7 +1696,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should clear buttons in success editReply', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -1679,7 +1708,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should throw InvariantViolationError (caught by base handler) if convoId is missing from embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-dm-approve:${TEST_UUID}`,
@@ -1716,7 +1745,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should NOT add to allowlist on plain DM approve', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -1726,7 +1755,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should log error and show retry embed when embed is missing (dm-approve path)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId:    `bsky-dm-approve:${TEST_UUID}`,
@@ -1752,7 +1781,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('bsky-dm-approveallowlist', () => {
             test('should deferUpdate, create saga, kick off allowlist saga for each recipient, show DM Approved embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, deferUpdate, editReply } = makeDMButtonInteraction(
                     `bsky-dm-approveallowlist:${TEST_UUID}`,
                     { recipientHandles: [DM_HANDLE_ALICE] }
@@ -1771,7 +1800,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should show "DM Approved" in embed title', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeDMButtonInteraction(
                     `bsky-dm-approveallowlist:${TEST_UUID}`,
                     { recipientHandles: [DM_HANDLE_ALICE] }
@@ -1786,7 +1815,7 @@ describe('BskyOutboundApprovalHandler', () => {
             test('should create saga with exact convoId from embed field', async () => {
                 // Mutants 15/16: ConditionalExpression/EqualityOperator on convoId field lookup
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const customConvoId = 'specific-convo-xyz';
                 const { interaction } = makeDMButtonInteraction(
                     `bsky-dm-approveallowlist:${TEST_UUID}`,
@@ -1803,7 +1832,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should create saga with type bsky_dm and state approved', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(
                     `bsky-dm-approveallowlist:${TEST_UUID}`,
                     { recipientHandles: [DM_HANDLE_ALICE] }
@@ -1823,7 +1852,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should use empty string for text when embed description is null', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const interaction = {
                     customId: `bsky-dm-approveallowlist:${TEST_UUID}`,
                     message:  {
@@ -1850,7 +1879,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should create saga and not call addPerson when Recipients field is absent from embed', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const fields: { name: string, value: string, inline: boolean }[] = [
                     { name: 'Conversation ID', value: DM_CONVO_ID, inline: true },
                     // No 'Recipients' field
@@ -1877,7 +1906,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should throw InvariantViolationError (caught by base handler) and NOT start allowlist if convoId is missing from embed (dm-approveallowlist path)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId: `bsky-dm-approveallowlist:${TEST_UUID}`,
@@ -1911,7 +1940,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should log error and show retry embed when embed is missing (dm-approveallowlist path)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const editReply   = mock(async () => ({}));
                 const interaction = {
                     customId:    `bsky-dm-approveallowlist:${TEST_UUID}`,
@@ -1938,7 +1967,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('bsky-dm-reject', () => {
             test('should show a modal for rejection reason without deferUpdate', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, deferUpdate, showModal } = makeDMButtonInteraction(`bsky-dm-reject:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -1951,7 +1980,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should show modal with customId containing bsky-dm-reject-reason prefix and original uuid', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, showModal } = makeDMButtonInteraction(`bsky-dm-reject:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -1964,7 +1993,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should NOT call editReply when DM reject path (showModal) throws', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply, showModal } = makeDMButtonInteraction(`bsky-dm-reject:${TEST_UUID}`);
                 showModal.mockRejectedValue(new Error('modal failed'));
 
@@ -1976,7 +2005,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should show modal with title "Reject Bluesky DM" for bsky-dm-reject', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, showModal } = makeDMButtonInteraction(`bsky-dm-reject:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -1991,7 +2020,7 @@ describe('BskyOutboundApprovalHandler', () => {
             test('records the reply-approval activity type and summary', async () => {
                 const activityLogger = { log: mock(async () => {}) };
                 const deps    = makeDeps({ activityLogger });
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -2006,7 +2035,7 @@ describe('BskyOutboundApprovalHandler', () => {
             test('records the DM-approval activity type and summary', async () => {
                 const activityLogger = { log: mock(async () => {}) };
                 const deps    = makeDeps({ activityLogger });
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -2023,7 +2052,7 @@ describe('BskyOutboundApprovalHandler', () => {
                     log: mock(async () => { throw new Error('Activity log network error'); }),
                 };
                 const deps    = makeDeps({ activityLogger });
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
 
                 // Should not throw even though activityLogger throws
@@ -2039,7 +2068,7 @@ describe('BskyOutboundApprovalHandler', () => {
                     log: mock(async () => { throw new Error('Activity log timeout'); }),
                 };
                 const deps    = makeDeps({ activityLogger });
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -2054,7 +2083,7 @@ describe('BskyOutboundApprovalHandler', () => {
                     log: mock(async () => { throw new Error('Activity log offline'); }),
                 };
                 const deps    = makeDeps({ activityLogger });
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeModalInteraction(
                     `bsky-send-reject-reason:${TEST_UUID}`,
                     'Not appropriate',
@@ -2072,7 +2101,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('parseRecipientHandles — malformed JSON warning', () => {
             test('should log warn when Recipients field contains malformed JSON during DM rejection', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeModalInteraction(
                     `bsky-dm-reject-reason:${TEST_UUID}`,
                     'Not appropriate',
@@ -2097,7 +2126,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('bsky-dm-approveallowlist — malformed JSON and empty recipients', () => {
             test('should still create saga when Recipients field is malformed JSON (Recipients field ignored after allowlist-saga simplification)', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const fields: { name: string, value: string, inline: boolean }[] = [
                     { name: 'Recipients',      value: 'not-valid-json', inline: false },
                     { name: 'Conversation ID', value: DM_CONVO_ID,      inline: true },
@@ -2127,7 +2156,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('should still create saga when Recipients field is absent from embed', async () => {
                 const deps    = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const fields: { name: string, value: string, inline: boolean }[] = [
                     { name: 'Conversation ID', value: DM_CONVO_ID, inline: true },
                     // No 'Recipients' field
@@ -2159,7 +2188,7 @@ describe('BskyOutboundApprovalHandler', () => {
         describe('mutation regression coverage', () => {
             test('uses the amber color for a recoverable missing-embed reply', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
                 (interaction.message.embeds as unknown as unknown[]).length = 0;
 
@@ -2172,7 +2201,7 @@ describe('BskyOutboundApprovalHandler', () => {
             test('uses an ISO-8601 timestamp for reply approval sagas', async () => {
                 jest.useFakeTimers({ now: new Date('2026-01-02T03:04:05.678Z') });
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -2187,7 +2216,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 ['DM',    `bsky-dm-approve:${TEST_UUID}`,   true],
             ])('persists a complete UUID for %s approvals', async (_kind, customId, isDM) => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = isDM ? makeDMButtonInteraction(customId) : makeButtonInteraction(customId);
 
                 await handler.handleButton(interaction);
@@ -2198,7 +2227,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('shows the complete reply approval status', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -2209,7 +2238,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('hands the reply target value to the allowlist saga', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -2219,7 +2248,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('rejects an empty DM conversation ID', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`, { convoId: '' });
 
                 await handler.handleButton(interaction);
@@ -2231,7 +2260,7 @@ describe('BskyOutboundApprovalHandler', () => {
             test('uses one current instant for both DM saga timestamps', async () => {
                 jest.useFakeTimers({ now: new Date('2026-01-02T03:04:05.678Z') });
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -2243,7 +2272,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('shows the complete DM approval status', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
@@ -2254,7 +2283,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('uses the first DM approval embed when a message contains several embeds', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(`bsky-dm-approveallowlist:${TEST_UUID}`);
                 (interaction.message.embeds as unknown as { description: string, fields: { name: string, value: string, inline: boolean }[] }[]).push({
                     description: 'unrelated later embed',
@@ -2273,7 +2302,7 @@ describe('BskyOutboundApprovalHandler', () => {
 
             test('hands every DM recipient value to the allowlist saga', async () => {
                 const deps = makeDeps();
-                const handler = new BskyOutboundApprovalHandler(deps);
+                const handler = makeAdapter(deps);
                 const { interaction } = makeDMButtonInteraction(
                     `bsky-dm-approveallowlist:${TEST_UUID}`, { recipientHandles: [DM_HANDLE_ALICE, DM_HANDLE_BOB] }
                 );
@@ -2284,5 +2313,109 @@ describe('BskyOutboundApprovalHandler', () => {
                 expect(deps.allowlistInteractionHandler.startFromApproval).toHaveBeenNthCalledWith(2, interaction, 'bsky', DM_HANDLE_BOB);
             });
         });
+    });
+});
+
+describe('BskyApprovalInteractionAdapter over mocked operations', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    function makeOpsAdapter(): { adapter: BskyApprovalInteractionAdapter, events: string[], approvals: BskyOutboundApprovals } {
+        const events: string[] = [];
+        const approvals = {
+            approveReply: mock(async (_reply: unknown) => {
+                events.push('approveReply');
+            }),
+            approveDm: mock(async (_dm: unknown) => {
+                events.push('approveDm');
+            }),
+            reject: mock(async (_item: unknown) => {
+                events.push('reject');
+            }),
+        } as unknown as BskyOutboundApprovals;
+        const allowlist = {
+            startFromApproval: mock(async (_interaction: unknown, platform: string, identifier: string) => {
+                events.push(`startFromApproval:${platform}:${identifier}`);
+                return { allowlistSuffix: '' };
+            }),
+        };
+        return { adapter: new BskyApprovalInteractionAdapter({ approvals, allowlist }), events, approvals };
+    }
+
+    function track<T extends { deferUpdate: ReturnType<typeof mock>, editReply: ReturnType<typeof mock> }>(parts: T, events: string[]): T {
+        parts.deferUpdate.mockImplementation(async () => {
+            events.push('deferUpdate');
+            return {};
+        });
+        parts.editReply.mockImplementation(async () => {
+            events.push('editReply');
+            return {};
+        });
+        return parts;
+    }
+
+    test('a reply approve button acknowledges, then approves the reply parsed from the embed', async () => {
+        const { adapter, events, approvals } = makeOpsAdapter();
+        const { interaction } = track(makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`, { rootUri: ROOT_URI, rootCid: ROOT_CID }), events);
+
+        await adapter.handleButton(interaction);
+
+        expect(approvals.approveReply).toHaveBeenCalledWith({ text: POST_TEXT, parentUri: PARENT_URI, parentCid: PARENT_CID, rootUri: ROOT_URI, rootCid: ROOT_CID });
+        expect(events).toEqual(['deferUpdate', 'approveReply', 'editReply']);
+    });
+
+    test('reply approve+allowlist acknowledges before approving and before the allowlist follow-up', async () => {
+        const { adapter, events } = makeOpsAdapter();
+        const { interaction } = track(makeButtonInteraction(`bsky-send-approveallowlist:${TEST_UUID}`), events);
+
+        await adapter.handleButton(interaction);
+
+        expect(events).toEqual(['deferUpdate', 'approveReply', 'editReply', `startFromApproval:bsky:${TEST_HANDLE}`]);
+    });
+
+    test('a DM approve button approves the text and convoId parsed from the embed', async () => {
+        const { adapter, events, approvals } = makeOpsAdapter();
+        const { interaction } = track(makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`), events);
+
+        await adapter.handleButton(interaction);
+
+        expect(approvals.approveDm).toHaveBeenCalledWith({ text: DM_TEXT, convoId: DM_CONVO_ID });
+        expect(events).toEqual(['deferUpdate', 'approveDm', 'editReply']);
+    });
+
+    test('DM approve+allowlist starts the allowlist follow-up for each recipient after approving', async () => {
+        const { adapter, events } = makeOpsAdapter();
+        const { interaction } = track(makeDMButtonInteraction(`bsky-dm-approveallowlist:${TEST_UUID}`, { recipientHandles: [DM_HANDLE_ALICE, DM_HANDLE_BOB] }), events);
+
+        await adapter.handleButton(interaction);
+
+        expect(events).toEqual([
+            'deferUpdate',
+            'approveDm',
+            'editReply',
+            `startFromApproval:bsky:${DM_HANDLE_ALICE}`,
+            `startFromApproval:bsky:${DM_HANDLE_BOB}`,
+        ]);
+    });
+
+    test('the reply reject modal passes the reply rejection extracted from the embed to reject', async () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-09-23T12:00:00.000Z'));
+        const { adapter, events, approvals } = makeOpsAdapter();
+        const { interaction } = track(makeModalInteraction(`bsky-send-reject-reason:${TEST_UUID}`, 'Off topic', { description: POST_TEXT, fields: makeEmbedFields() }), events);
+
+        await adapter.handleModalSubmit(interaction);
+
+        expect(approvals.reject).toHaveBeenCalledWith({
+            type:         'reply',
+            uuid:         TEST_UUID,
+            text:         POST_TEXT,
+            targetHandle: TEST_HANDLE,
+            reply:        { parent: { uri: PARENT_URI, cid: PARENT_CID }, root: undefined },
+            reason:       'Off topic',
+            rejectedAt:   '2026-09-23T12:00:00.000Z',
+        });
+        expect(events).toEqual(['deferUpdate', 'reject', 'editReply']);
     });
 });

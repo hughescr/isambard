@@ -1,15 +1,14 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { EmbedBuilder, type ButtonInteraction, type ModalSubmitInteraction } from 'discord.js';
-import { mockLogger } from '../../setup';
-import type { AllowlistSagaStarter, ApprovedOutboundActionWriter } from '@/services';
-import { BaseOutboundApprovalHandler } from '@/services/outbound-approval-handler-base';
+import { mockLogger } from '../../../../setup';
+import { DiscordOutboundApprovalInteractionHandler } from '@/integrations/discord/approvals/interaction-handler';
 
 // ---------------------------------------------------------------------------
 // Minimal concrete subclass — exercises the shared base-class behaviour
 // directly, without any platform-specific routing logic getting in the way.
 // ---------------------------------------------------------------------------
 
-class TestOutboundApprovalHandler extends BaseOutboundApprovalHandler<string> {
+class TestOutboundApprovalHandler extends DiscordOutboundApprovalInteractionHandler<string> {
     readonly dispatchApprovedButtonImpl = mock(async (_prefix: string, _interaction: ButtonInteraction, _id: string): Promise<void> => { /* no-op by default */ });
     readonly performRejectionImpl       = mock(async (
         _prefix: string,
@@ -75,15 +74,8 @@ class TestOutboundApprovalHandler extends BaseOutboundApprovalHandler<string> {
     }
 }
 
-function makeDeps(): { sagaBackend: ApprovedOutboundActionWriter, allowlistInteractionHandler: AllowlistSagaStarter } {
-    return {
-        sagaBackend:                 {} as unknown as ApprovedOutboundActionWriter,
-        allowlistInteractionHandler: {} as unknown as AllowlistSagaStarter,
-    };
-}
-
 function makeHandler(): TestOutboundApprovalHandler {
-    return new TestOutboundApprovalHandler(makeDeps());
+    return new TestOutboundApprovalHandler();
 }
 
 function makeButtonInteraction(customId: string): {
@@ -118,7 +110,7 @@ function makeModalInteraction(customId: string): {
     return { interaction, deferUpdate };
 }
 
-describe('BaseOutboundApprovalHandler', () => {
+describe('DiscordOutboundApprovalInteractionHandler', () => {
     beforeEach(() => {
         mockLogger.error.mockClear();
     });
@@ -217,7 +209,7 @@ function makeFailingModalInteraction(message: unknown): {
     return { interaction, editReply };
 }
 
-describe('BaseOutboundApprovalHandler.replyWithErrorEmbed()', () => {
+describe('DiscordOutboundApprovalInteractionHandler.replyWithErrorEmbed()', () => {
     beforeEach(() => {
         mockLogger.error.mockClear();
     });

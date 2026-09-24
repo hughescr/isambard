@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import type { APIButtonComponentWithCustomId } from 'discord.js';
-import { buildReviewEmbed, buildUnsafeAlert, buildOutboundApprovalEmbed, buildRestrictedAccessEmbed } from '@/integrations/email/review-embed-builder';
-import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email/types';
+import { buildReviewEmbed, buildUnsafeAlert, buildRestrictedAccessEmbed } from '@/integrations/discord/approvals/email-embeds';
+import type { EmailMetadata, ClassifierVerdict } from '@/integrations/email';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -275,119 +275,6 @@ describe('buildUnsafeAlert', () => {
         // The full description is the prefix + 500-char truncated body
         const prefix = '**Reason:** Phish\n\n';
         expect(data.description!).toHaveLength(prefix.length + 500);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// buildOutboundApprovalEmbed
-// ---------------------------------------------------------------------------
-describe('buildOutboundApprovalEmbed', () => {
-    test('returns embed and actionRow', () => {
-        const result = buildOutboundApprovalEmbed({ to: 'craig@example.com', subject: 'Hi', draftUid: 99 });
-        expect(result.embed).toBeDefined();
-        expect(result.actionRow).toBeDefined();
-    });
-
-    test('embed title contains "Outbound"', () => {
-        const result = buildOutboundApprovalEmbed({ to: 'craig@example.com', subject: 'Hi', draftUid: 99 });
-        expect(result.embed.toJSON().title).toContain('Outbound');
-    });
-
-    test('creates embed with blue color', () => {
-        const result = buildOutboundApprovalEmbed({ to: 'craig@example.com', subject: 'Hi', draftUid: 99 });
-        const data    = result.embed.toJSON();
-        expect(data.color).toBe(0x00_55_FF);
-    });
-
-    test('embed includes To field', () => {
-        const result = buildOutboundApprovalEmbed({ to: 'craig@example.com', subject: 'Hi', draftUid: 99 });
-        const field  = result.embed.toJSON().fields?.find(f => f.name === 'To');
-        expect(field?.value).toContain('craig@example.com');
-    });
-
-    test('embed includes Subject field', () => {
-        const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Test Subject', draftUid: 99 });
-        const field  = result.embed.toJSON().fields?.find(f => f.name === 'Subject');
-        expect(field?.value).toBe('Test Subject');
-    });
-
-    test('Subject field is the subject even when cc is present (not the first cc address)', () => {
-        const result = buildOutboundApprovalEmbed({
-            to:       'a@b.com',
-            subject:  'Test Subject',
-            draftUid: 99,
-            cc:       ['cc@b.com'],
-        });
-        const field = result.embed.toJSON().fields?.find(f => f.name === 'Subject');
-        expect(field?.value).toBe('Test Subject');
-    });
-
-    test('keeps every outbound metadata field inline, including Cc when present', () => {
-        const data = buildOutboundApprovalEmbed({
-            to:       'a@b.com',
-            subject:  'Test Subject',
-            draftUid: 99,
-            cc:       ['cc@b.com'],
-        }).embed.toJSON();
-
-        for(const field of data.fields ?? []) {
-            expect(field.inline).toBe(true);
-        }
-    });
-
-    test('actionRow has Approve button with correct customId', () => {
-        const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
-        const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
-        const approve = buttons.find(b => b.custom_id === 'email-send-approve:42');
-        expect(approve).toBeDefined();
-    });
-
-    test('Approve button uses the Success style', () => {
-        const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
-        const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
-        const approve = buttons.find(b => b.custom_id === 'email-send-approve:42');
-        // ButtonStyle.Success = 3
-        expect(approve?.style).toBe(3);
-    });
-
-    test('actionRow has Approve+Allowlist button with correct customId', () => {
-        const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
-        const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
-        const btn     = buttons.find(b => b.custom_id === 'email-send-approveallowlist:42');
-        expect(btn).toBeDefined();
-    });
-
-    test('Approve+Allowlist button uses the Primary style', () => {
-        const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
-        const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
-        const btn     = buttons.find(b => b.custom_id === 'email-send-approveallowlist:42');
-        // ButtonStyle.Primary = 1
-        expect(btn?.style).toBe(1);
-    });
-
-    test('actionRow has Reject button with correct customId', () => {
-        const result  = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42 });
-        const buttons = result.actionRow.toJSON().components as APIButtonComponentWithCustomId[];
-        const reject  = buttons.find(b => b.custom_id === 'email-send-reject:42');
-        expect(reject).toBeDefined();
-    });
-
-    test('includes cc in embed when provided', () => {
-        const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42, cc: ['cc@b.com'] });
-        const field  = result.embed.toJSON().fields?.find(f => f.name === 'Cc');
-        expect(field?.value).toContain('cc@b.com');
-    });
-
-    test('joins multiple cc addresses with comma separator', () => {
-        const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42, cc: ['cc1@b.com', 'cc2@b.com'] });
-        const field  = result.embed.toJSON().fields?.find(f => f.name === 'Cc');
-        expect(field?.value).toBe('cc1@b.com, cc2@b.com');
-    });
-
-    test('omits cc field when cc is empty', () => {
-        const result = buildOutboundApprovalEmbed({ to: 'a@b.com', subject: 'Hi', draftUid: 42, cc: [] });
-        const field  = result.embed.toJSON().fields?.find(f => f.name === 'Cc');
-        expect(field).toBeUndefined();
     });
 });
 

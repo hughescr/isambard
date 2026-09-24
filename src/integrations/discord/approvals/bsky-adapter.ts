@@ -1,27 +1,23 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder } from 'discord.js';
-import type { NotifyFn } from '@/agent';
+import { DiscordOutboundApprovalInteractionHandler } from './interaction-handler';
 import { InvariantViolationError } from '@/errors';
-import type { BlueskyClient } from '@/integrations/bsky/client';
-import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
-import { createAtUri, createCid, type BskyReplyInput } from '@/integrations/bsky/types';
-import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type ApprovedOutboundActionWriter } from '@/services';
+import { createAtUri, createCid, type BskyOutboundApprovals, type BskyRejectionItem, type BskyReplyInput } from '@/integrations/bsky';
+import type { AllowlistApprovalStarter } from '@/integrations/discord/allowlist-interaction-handler';
 import { encodeCustomId } from '@/utils';
 
 const AMBER = 0xFF_AA_00;
 
-export interface BskyOutboundApprovalHandlerDeps {
-    client:                      BlueskyClient
-    rejectionBackend:            BskyRejectionBackend
-    sagaBackend:                 ApprovedOutboundActionWriter
-    activityLogger?:             ApprovalActivityLogger
-    allowlistInteractionHandler: AllowlistSagaStarter
-    /** Q8: wakes the conductor after an admin rejects a Bluesky reply/DM. Omitted means `performRejection` never notifies (still resolves normally). */
-    notify?:                     NotifyFn
+export interface BskyApprovalInteractionAdapterDeps {
+    approvals: BskyOutboundApprovals
+    allowlist: AllowlistApprovalStarter
 }
 
 /**
- * Handles Discord button/modal interactions for outbound Bluesky reply and DM approval workflows.
+ * Discord adapter for outbound Bluesky reply and DM approval cards: turns button/modal
+ * interactions into calls on {@link BskyOutboundApprovals}. The approval data (text, parent
+ * URI/CID, convoId, recipients) travels in the card's embed fields, so parsing it back out is
+ * Discord work and lives here.
  *
  * Supports button customIds:
  * - bsky-send-approve:{uuid}
@@ -40,33 +36,27 @@ export interface BskyOutboundApprovalHandlerDeps {
  * No in-code user ID check is needed because only admins have access to that channel.
  * Discord channel-level ACL is the enforcement boundary.
  */
-export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<string> {
-    private readonly client:           BlueskyClient;
-    private readonly rejectionBackend: BskyRejectionBackend;
-    private readonly notify?:          NotifyFn;
+export class BskyApprovalInteractionAdapter extends DiscordOutboundApprovalInteractionHandler<string> {
+    private readonly approvals: BskyOutboundApprovals;
+    private readonly allowlist: AllowlistApprovalStarter;
 
     private static readonly KNOWN_BUTTON_PREFIXES = new Set([
         'bsky-send-approve', 'bsky-send-approveallowlist', 'bsky-send-reject',
         'bsky-dm-approve',   'bsky-dm-approveallowlist',   'bsky-dm-reject',
     ]);
 
-    constructor(deps: BskyOutboundApprovalHandlerDeps) {
-        super({
-            sagaBackend:                 deps.sagaBackend,
-            activityLogger:              deps.activityLogger,
-            allowlistInteractionHandler: deps.allowlistInteractionHandler,
-        });
-        this.client           = deps.client;
-        this.rejectionBackend = deps.rejectionBackend;
-        this.notify           = deps.notify;
+    constructor(deps: BskyApprovalInteractionAdapterDeps) {
+        super();
+        this.approvals = deps.approvals;
+        this.allowlist = deps.allowlist;
     }
 
     // ---------------------------------------------------------------------------
-    // BaseOutboundApprovalHandler implementation
+    // DiscordOutboundApprovalInteractionHandler implementation
     // ---------------------------------------------------------------------------
 
     protected isKnownButtonPrefix(prefix: string): boolean {
-        return BskyOutboundApprovalHandler.KNOWN_BUTTON_PREFIXES.has(prefix);
+        return BskyApprovalInteractionAdapter.KNOWN_BUTTON_PREFIXES.has(prefix);
     }
 
     protected isRejectButtonPrefix(prefix: string): boolean {
@@ -79,7 +69,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
 
     protected parseId(raw: string): string | null {
         // Guaranteed non-empty: this is only ever called with an id already validated non-empty
-        // by parseCustomId (BaseOutboundApprovalHandler.handleButton/handleModalSubmit).
+        // by parseCustomId (DiscordOutboundApprovalInteractionHandler.handleButton/handleModalSubmit).
         return raw;
     }
 
@@ -146,22 +136,8 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
 
         const rejectionItem = this.extractRejectionItem(prefix, embed, reason, uuid);
 
-        // Gate: persist to DynamoDB — must succeed before updating Discord to "Rejected"
-        await this.rejectionBackend.recordRejection(rejectionItem);
-
-        // Q8: wake the conductor now that the rejection is durably recorded. Keyed on the
-        // rejection's own uuid so a retried/duplicate delivery of the same rejection cannot
-        // wake the conductor twice.
-        this.notify?.({
-            source: 'bsky-approval',
-            text:   `Bluesky ${rejectionItem.type} rejected: ${reason}`,
-            wake:   true,
-            key:    `${uuid}:rejected`,
-        });
-
-        void this.activityLogger?.log({ type: rejectionItem.type === 'dm' ? 'bsky-dm-rejected' : 'bsky-post-rejected', summary: 'Bluesky post/DM rejected' }).catch((err) => {
-            logger.warn({ err, type: rejectionItem.type, msg: 'Activity log failed for Bluesky rejection' });
-        });
+        // Gate: persist (then notify) — must succeed before updating Discord to "Rejected"
+        await this.approvals.reject(rejectionItem);
 
         // Persist succeeded — update Discord to show rejection
         const updatedEmbed = this.buildRejectedEmbed(reason);
@@ -285,19 +261,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         const rootUri = fields.find(f => f.name === 'Root URI')?.value;
         const rootCid = fields.find(f => f.name === 'Root CID')?.value;
 
-        const now = new Date().toISOString();
-        await this.sagaBackend.create({
-            id:        crypto.randomUUID(),
-            state:     'approved',
-            type:      'bsky_reply',
-            params:    { text, parentUri, parentCid, rootUri, rootCid },
-            createdAt: now,
-            updatedAt: now,
-        });
-
-        void this.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch((err) => {
-            logger.warn({ err, msg: 'Activity log failed for Bluesky post approval' });
-        });
+        await this.approvals.approveReply({ text, parentUri, parentCid, rootUri, rootCid });
 
         const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — posting shortly');
 
@@ -324,7 +288,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
 
         // Kick off allowlist saga for the target handle
         if(targetHandle) {
-            await this.allowlistInteractionHandler.startFromApproval(interaction, 'bsky', targetHandle);
+            await this.allowlist.startFromApproval(interaction, 'bsky', targetHandle);
         }
     }
 
@@ -350,19 +314,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
             throw new InvariantViolationError('handleDMApprove', 'convoId missing despite embed present — upstream embed builder bug');
         }
 
-        const now = new Date().toISOString();
-        await this.sagaBackend.create({
-            id:        crypto.randomUUID(),
-            state:     'approved',
-            type:      'bsky_dm',
-            params:    { text, convoId },
-            createdAt: now,
-            updatedAt: now,
-        });
-
-        void this.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch((err) => {
-            logger.warn({ err, msg: 'Activity log failed for Bluesky DM approval' });
-        });
+        await this.approvals.approveDm({ text, convoId });
 
         const updatedEmbed = this.buildApprovedEmbed('DM Approved ✓ — sending shortly');
 
@@ -390,7 +342,7 @@ export class BskyOutboundApprovalHandler extends BaseOutboundApprovalHandler<str
         // Kick off allowlist saga for each recipient handle
         for(const handle of recipientHandles) {
             // eslint-disable-next-line no-await-in-loop -- sequential: each saga start depends on the prior completing before the next followUp
-            await this.allowlistInteractionHandler.startFromApproval(interaction, 'bsky', handle);
+            await this.allowlist.startFromApproval(interaction, 'bsky', handle);
         }
     }
 }

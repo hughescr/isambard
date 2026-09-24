@@ -1,7 +1,6 @@
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
-import type { AllowlistSagaStarter, ApprovedOutboundActionWriter } from '@/services';
 import { parseCustomId } from '@/utils';
 
 const GREEN = 0x00_AA_00;
@@ -9,16 +8,10 @@ const RED   = 0xFF_00_00;
 const AMBER = 0xFF_AA_00;
 
 /**
- * Minimal interface for activity logging used by outbound approval handlers.
- * Mirrors ActivityLogger from @/agent without creating a cross-boundary import.
- */
-export interface ApprovalActivityLogger {
-    log(entry: { type: string, summary: string }): Promise<void>
-}
-
-/**
- * Base class for outbound approval handlers that manage Discord button/modal interactions
- * for admin approval of platform-specific outbound messages.
+ * Base class for the Discord adapters that turn admin button/modal interactions on outbound
+ * approval cards into calls on a platform's plain approval operations (for example
+ * `EmailOutboundApprovals`, `BskyOutboundApprovals`). The Discord interaction protocol —
+ * acknowledgement, reject modal, result embeds — lives here, never in the platform folders.
  *
  * Subclasses provide:
  * - `isKnownButtonPrefix(prefix)` — whether this prefix belongs to this handler
@@ -29,21 +22,7 @@ export interface ApprovalActivityLogger {
  * - `performRejection(prefix, embed, reason, interaction, id)` — persist rejection + update Discord
  * - `handleMissingEmbed(interaction, id)` — what to do when a modal submit has no embed
  */
-export abstract class BaseOutboundApprovalHandler<TId> {
-    protected readonly sagaBackend:                 ApprovedOutboundActionWriter;
-    protected readonly activityLogger?:             ApprovalActivityLogger;
-    protected readonly allowlistInteractionHandler: AllowlistSagaStarter;
-
-    constructor(deps: {
-        sagaBackend:                 ApprovedOutboundActionWriter
-        activityLogger?:             ApprovalActivityLogger
-        allowlistInteractionHandler: AllowlistSagaStarter
-    }) {
-        this.sagaBackend                 = deps.sagaBackend;
-        this.activityLogger              = deps.activityLogger;
-        this.allowlistInteractionHandler = deps.allowlistInteractionHandler;
-    }
-
+export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
     // ---------------------------------------------------------------------------
     // Abstract hooks — subclasses implement platform-specific behaviour
     // ---------------------------------------------------------------------------

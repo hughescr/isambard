@@ -1,6 +1,6 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { truncate } from 'lodash-es';
-import type { BskyReplyInput } from './types';
+import type { BskyReplyInput } from '@/integrations/bsky';
 import { encodeCustomId } from '@/utils';
 
 export interface BskyReplyApprovalEmbedParams {

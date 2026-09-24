@@ -304,7 +304,7 @@ describe('setupBsky — Q8 DM poller and notify threading', () => {
         result.dmPoller.stop();
     });
 
-    it('threads options.notify into the BskyOutboundApprovalHandler construction', async () => {
+    it('threads options.notify into the Bluesky approval operations behind the adapter', async () => {
         const result = await setupBsky(options);
         const { interaction } = {
             interaction: {

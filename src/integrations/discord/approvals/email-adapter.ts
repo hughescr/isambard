@@ -1,24 +1,19 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
-import { chain } from 'lodash-es';
-import { markDraftReviewState } from './draft-review-state';
-import type { NotifyFn } from '@/agent';
-import { EmailFolder, EMAIL_ALLOWLIST_SELECT_PREFIX } from '@/config';
-import type { WildDuckClient } from '@/integrations/email/wildduck-client';
-import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type ApprovedOutboundActionWriter } from '@/services';
+import { DiscordOutboundApprovalInteractionHandler } from './interaction-handler';
+import { EMAIL_ALLOWLIST_SELECT_PREFIX } from '@/config';
+import type { AllowlistApprovalStarter } from '@/integrations/discord/allowlist-interaction-handler';
+import type { EmailOutboundApprovals } from '@/integrations/email';
 import { encodeCustomId, parseCustomId } from '@/utils';
 
-export interface EmailOutboundApprovalHandlerDeps {
-    wildDuckClient:              WildDuckClient
-    sagaBackend:                 ApprovedOutboundActionWriter
-    activityLogger?:             ApprovalActivityLogger
-    allowlistInteractionHandler: AllowlistSagaStarter
-    /** Shared notification bridge (Q7, plan amendment B2) — required so every admin approval outcome (approve, approve+allowlist, reject) wakes a notification. Never lets a false return or a thrown error fail the outcome it is reporting; see call sites below. */
-    notify:                      NotifyFn
+export interface EmailApprovalInteractionAdapterDeps {
+    approvals: EmailOutboundApprovals
+    allowlist: AllowlistApprovalStarter
 }
 
 /**
- * Handles Discord button/modal/select-menu interactions for outbound email approval workflow.
+ * Discord adapter for the outbound email approval card: turns button/modal/select-menu
+ * interactions into calls on {@link EmailOutboundApprovals}.
  *
  * Supports button customIds:
  * - email-send-approve:{uid}
@@ -36,22 +31,18 @@ export interface EmailOutboundApprovalHandlerDeps {
  * No in-code user ID check is needed because only admins have access to that channel.
  * Discord channel-level ACL is the enforcement boundary.
  */
-export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<number> {
-    private readonly wildDuckClient: WildDuckClient;
-    private readonly notify:         NotifyFn;
+export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInteractionHandler<number> {
+    private readonly approvals: EmailOutboundApprovals;
+    private readonly allowlist: AllowlistApprovalStarter;
 
-    constructor(deps: EmailOutboundApprovalHandlerDeps) {
-        super({
-            sagaBackend:                 deps.sagaBackend,
-            activityLogger:              deps.activityLogger,
-            allowlistInteractionHandler: deps.allowlistInteractionHandler,
-        });
-        this.wildDuckClient = deps.wildDuckClient;
-        this.notify         = deps.notify;
+    constructor(deps: EmailApprovalInteractionAdapterDeps) {
+        super();
+        this.approvals = deps.approvals;
+        this.allowlist = deps.allowlist;
     }
 
     // ---------------------------------------------------------------------------
-    // BaseOutboundApprovalHandler implementation
+    // DiscordOutboundApprovalInteractionHandler implementation
     // ---------------------------------------------------------------------------
 
     protected isKnownButtonPrefix(prefix: string): boolean {
@@ -96,17 +87,8 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
         interaction: ModalSubmitInteraction,
         uid:         number
     ): Promise<void> {
-        // Gate: persist rejection to WildDuck — must succeed before updating Discord to "Rejected"
-        await this.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, {
-            rejectedAt: new Date().toISOString(),
-            reason,
-        });
-
-        await markDraftReviewState(this.wildDuckClient, uid, 'rejected_by_admin');
-
-        void this.activityLogger?.log({ type: 'email-rejected', summary: 'Email rejected' }).catch((err) => {
-            logger.warn({ err, msg: 'Activity log failed for email rejection' });
-        });
+        // Gate: persist the rejection — must succeed before updating Discord to "Rejected"
+        await this.approvals.rejectSend(uid, reason);
 
         // Persist succeeded — update Discord to show rejection
         const updatedEmbed = this.buildRejectedEmbed(reason);
@@ -124,18 +106,8 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
 
         // Wake notification (Q7, plan amendment B2) — deliberately AFTER the Discord editReply
         // block above so a stuck/failed notify can never be mistaken for a WildDuck-persist
-        // failure or delay the "Rejected" embed. A thrown or false-returning notify never fails
-        // the rejection outcome, which has already been persisted and reflected to Discord.
-        try {
-            this.notify({
-                source: 'email-approval',
-                wake:   true,
-                key:    `${uid}:rejected`,
-                text:   `Outbound email (uid ${uid}) rejected by admin. Reason: ${reason}`,
-            });
-        } catch (err) {
-            logger.warn({ err, uid, msg: 'Notify failed for email rejection' });
-        }
+        // failure or delay the "Rejected" embed.
+        this.approvals.announceRejected(uid, reason);
 
         logger.info({ uid, reason, discordUpdated, msg: 'Discord admin rejected outbound email' });
     }
@@ -161,32 +133,17 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
         await interaction.deferUpdate();
 
         try {
-            // Rate limiter is intentionally not incremented here — Craig's manual approval
-            // is itself the rate control mechanism for non-allowlisted sends.
-
-            const now = new Date().toISOString();
-            await this.sagaBackend.create({
-                id:        crypto.randomUUID(),
-                state:     'approved',
-                type:      'email_send',
-                params:    { uid },
-                createdAt: now,
-                updatedAt: now,
-            });
-
-            void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch((err) => {
-                logger.warn({ err, msg: 'Activity log failed for email send (allowlist path)' });
-            });
+            await this.approvals.approveSend(uid, 'allowlist');
 
             // Kick off the allowlist saga for each selected recipient address.
             // Uses followUp (not showModal) since deferUpdate was already called.
             // Stryker disable next-line llm: iterating a shallow copy of interaction.values yields the same elements in the same order; nothing in the loop body mutates the array
             for(const emailAddress of interaction.values) {
                 // eslint-disable-next-line no-await-in-loop -- serialize saga starts and followUps on the shared interaction in recipient order
-                await this.allowlistInteractionHandler.startFromApproval(interaction, 'email', emailAddress);
+                await this.allowlist.startFromApproval(interaction, 'email', emailAddress);
             }
 
-            const updatedEmbed = this.buildApprovedEmbed('Approved \u2713 \u2014 sending shortly');
+            const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — sending shortly');
 
             await interaction.editReply({
                 content:    null,
@@ -194,19 +151,9 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
                 components: [],
             });
 
-            // Wake notification (Q7, plan amendment B2) \u2014 after editReply succeeds, exactly once
-            // per uid regardless of how many recipients were selected above. A thrown or
-            // false-returning notify never fails this approval outcome.
-            try {
-                this.notify({
-                    source: 'email-approval',
-                    wake:   true,
-                    key:    `${uid}:approved`,
-                    text:   `Outbound email (uid ${uid}) approved for sending`,
-                });
-            } catch (notifyError) {
-                logger.warn({ err: notifyError, uid, msg: 'Notify failed for email approval' });
-            }
+            // Wake notification (Q7, plan amendment B2) — after editReply succeeds, exactly once
+            // per uid regardless of how many recipients were selected above.
+            this.approvals.announceApproved(uid);
         } catch (err) {
             logger.error({ err, uid, msg: 'Failed to process allowlist select menu' });
             try {
@@ -226,24 +173,9 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
     // ---------------------------------------------------------------------------
 
     private async handleApprove(interaction: ButtonInteraction, uid: number): Promise<void> {
-        // Rate limiter is intentionally not incremented here — Craig's manual approval
-        // is itself the rate control mechanism for non-allowlisted sends.
+        await this.approvals.approveSend(uid, 'direct');
 
-        const now = new Date().toISOString();
-        await this.sagaBackend.create({
-            id:        crypto.randomUUID(),
-            state:     'approved',
-            type:      'email_send',
-            params:    { uid },
-            createdAt: now,
-            updatedAt: now,
-        });
-
-        void this.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch((err) => {
-            logger.warn({ err, msg: 'Activity log failed for email send (direct path)' });
-        });
-
-        const updatedEmbed = this.buildApprovedEmbed('Approved \u2713 \u2014 sending shortly');
+        const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — sending shortly');
 
         // The approved outbound action above is already persisted, so a failed Discord UI update must not
         // suppress the wake notification below (mirrors performRejection's editReply guard).
@@ -256,41 +188,17 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
             logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email approval' });
         }
 
-        // Wake notification (Q7, plan amendment B2) \u2014 after the Discord editReply attempt
-        // above, regardless of whether it succeeded. A thrown or false-returning notify never
-        // fails this approval outcome.
-        try {
-            this.notify({
-                source: 'email-approval',
-                wake:   true,
-                key:    `${uid}:approved`,
-                text:   `Outbound email (uid ${uid}) approved for sending`,
-            });
-        } catch (err) {
-            logger.warn({ err, uid, msg: 'Notify failed for email approval' });
-        }
+        // Wake notification (Q7, plan amendment B2) — after the Discord editReply attempt
+        // above, regardless of whether it succeeded.
+        this.approvals.announceApproved(uid);
     }
 
     private async handleApproveShowAllowlist(interaction: ButtonInteraction, uid: number): Promise<void> {
-        // Fetch draft message to get to + cc recipients from message fields
-        let toAddresses: string[];
-        let ccAddresses: string[];
-        try {
-            const msg   = await this.wildDuckClient.getMessage(EmailFolder.Drafts, uid);
-            toAddresses = chain(msg?.to).map('address').compact().value();
-            ccAddresses = chain(msg?.cc).map('address').compact().value();
-        } catch (error) {
-            logger.warn({ err: error, uid, msg: 'Failed to fetch draft message before allowlist select — falling back to simple approve' });
-            // Fall back to simple approve on fetch error
-            await this.handleApprove(interaction, uid);
-            return;
-        }
-
-        const allRecipients = [...new Set([...toAddresses, ...ccAddresses])];
+        const allRecipients = await this.approvals.draftRecipients(uid);
 
         // Stryker disable next-line llm: an array length is never negative, so === 0, <= 0 and < 1 are the same condition
-        if(allRecipients.length === 0) {
-            // No recipients to allowlist — fall back to simple approve
+        if(allRecipients === undefined || allRecipients.length === 0) {
+            // Draft unreadable, or no recipients to allowlist — fall back to simple approve
             await this.handleApprove(interaction, uid);
             return;
         }

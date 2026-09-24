@@ -10,9 +10,15 @@ import {
     type ModalSubmitInteraction
 } from 'discord.js';
 import { BRIGHT_GREEN, BLUE, RED } from './colors';
-import type { AllowlistSagaExecutor, AllowlistSagaStarter, SagaInteractionResult } from '@/services';
+import type { AllowlistSagaExecutor, SagaInteractionResult } from '@/services';
 import type { ContactBackend, Contact, PersonId } from '@/storage';
 import { encodeCustomId, parseCustomId } from '@/utils';
+
+/**
+ * The slice of {@link AllowlistInteractionHandler} that approval adapters use to start the
+ * allowlist saga from an approve+allowlist interaction (its follow-up can carry a button).
+ */
+export type AllowlistApprovalStarter = Pick<AllowlistInteractionHandler, 'startFromApproval'>;
 
 export interface AllowlistInteractionHandlerDeps {
     executor:       AllowlistSagaExecutor
@@ -29,7 +35,7 @@ export interface AllowlistInteractionHandlerDeps {
  * - Button: allowlist-create:{sagaId}       — admin wants to create a new contact
  * - Button: allowlist-startmodal:{sagaId}   — admin clicked "set up allowlist" to open the modal
  */
-export class AllowlistInteractionHandler implements AllowlistSagaStarter {
+export class AllowlistInteractionHandler {
     private readonly deps: AllowlistInteractionHandlerDeps;
 
     constructor(deps: AllowlistInteractionHandlerDeps) {
