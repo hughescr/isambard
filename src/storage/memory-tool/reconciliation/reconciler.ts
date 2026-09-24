@@ -384,22 +384,39 @@ async function cleanPreviouslyKnownAs(
         const isClean = await checkOldPathIndicesClean(ctx, cleanup);
 
         if(isClean) {
-            await ctx.deps.docClient.send(new UpdateCommand({
-                TableName: ctx.deps.tableName,
+            let cleanupError: unknown;
+            const updateResult = await retryWithBackoff(
+                async () => {
+                    try {
+                        return await ctx.deps.docClient.send(new UpdateCommand({
+                            TableName: ctx.deps.tableName,
 
-                Key: { PK: memoryItem.PK, SK: memoryItem.SK },
+                            Key: { PK: memoryItem.PK, SK: memoryItem.SK },
 
-                UpdateExpression: 'REMOVE #metadata.#previouslyKnownAs, #metadata.#previouslyKnownAsTags',
+                            UpdateExpression: 'REMOVE #metadata.#previouslyKnownAs, #metadata.#previouslyKnownAsTags',
 
-                ConditionExpression: 'attribute_exists(PK) AND attribute_type(#metadata, :map)',
+                            ConditionExpression: 'attribute_exists(PK) AND attribute_type(#metadata, :map)',
 
-                ExpressionAttributeNames: {
-                    '#metadata':              'metadata',
-                    '#previouslyKnownAs':     'previouslyKnownAs',
-                    '#previouslyKnownAsTags': 'previouslyKnownAsTags',
+                            ExpressionAttributeNames: {
+                                '#metadata':              'metadata',
+                                '#previouslyKnownAs':     'previouslyKnownAs',
+                                '#previouslyKnownAsTags': 'previouslyKnownAsTags',
+                            },
+                            ExpressionAttributeValues: { ':map': 'M' },
+                        }));
+                    } catch (error) {
+                        cleanupError = error;
+                        throw error;
+                    }
                 },
-                ExpressionAttributeValues: { ':map': 'M' },
-            }));
+                ctx.options.backoff,
+                `cleanPreviouslyKnownAs:${cleanup.oldPath}`,
+                ctx.options.signal
+            );
+
+            if(updateResult === undefined) {
+                throw cleanupError;
+            }
 
             ctx.progress.metadataCleaned++;
             logger.debug({ path: memoryItem.path, oldPath: cleanup.oldPath, msg: 'Cleaned previouslyKnownAs metadata' });

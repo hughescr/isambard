@@ -12,6 +12,25 @@ function namedError(name: string): Error {
     return error;
 }
 
+async function flushMicrotasks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+}
+
 describe('delay', () => {
     beforeEach(() => {
         jest.useFakeTimers();
@@ -1409,6 +1428,102 @@ describe('runTagIndexReconciliation', () => {
             expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(1);
             // No GetCommand should have been issued for tag checking
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+        });
+
+        describe('previouslyKnownAs metadata cleanup retries', () => {
+            beforeEach(() => {
+                jest.useFakeTimers();
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            test('retries a throttled tombstone removal and cleans metadata in the same pass', async () => {
+                const memoryItem = {
+                    PK:          'DIR#/identity',
+                    SK:          'FILE#core.md',
+                    GSI1PK:      'LAYER#identity',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/identity/core.md',
+                    content:     'test content',
+                    contentType: 'text/markdown',
+                    metadata:    {
+                        previouslyKnownAs:     '/identity/old-name.md',
+                        previouslyKnownAsTags: [],
+                    },
+                    createdAt:      '2024-01-01T00:00:00.000Z',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    tags:           new Set<string>(),
+                    contentPreview: 'test content',
+                };
+                mockLayerQuery('identity', [memoryItem]);
+                mockLayerQuery('state', []);
+                mockLayerQuery('events', []);
+                mockEmptyPhaseB();
+                ddbMock.on(UpdateCommand)
+                    .rejectsOnce(namedError('ProvisionedThroughputExceededException'))
+                    .resolves({});
+
+                const reconciliation = runTagIndexReconciliation(deps, options);
+                await flushMicrotasks();
+                expect(jest.getTimerCount()).toBe(1);
+                jest.advanceTimersByTime(99);
+                expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(1);
+                jest.advanceTimersByTime(1);
+                const result = await reconciliation;
+
+                expect(result.phaseA.metadataCleaned).toBe(1);
+                expect(result.phaseA.errors).toBe(0);
+                expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(2);
+                expect(mockLogger.debug).toHaveBeenCalledWith({
+                    attempt: 1,
+                    context: 'cleanPreviouslyKnownAs:/identity/old-name.md',
+                    msg:     'Reconciler retry 1/3',
+                });
+            });
+
+            test('does not retry a conditional tombstone removal failure and preserves failure accounting', async () => {
+                const conditionalFailure = namedError('ConditionalCheckFailedException');
+                const memoryItem = {
+                    PK:          'DIR#/identity',
+                    SK:          'FILE#core.md',
+                    GSI1PK:      'LAYER#identity',
+                    GSI1SK:      'UPDATED#2024-01-01T00:00:00.000Z',
+                    path:        '/identity/core.md',
+                    content:     'test content',
+                    contentType: 'text/markdown',
+                    metadata:    {
+                        previouslyKnownAs:     '/identity/old-name.md',
+                        previouslyKnownAsTags: [],
+                    },
+                    createdAt:      '2024-01-01T00:00:00.000Z',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    tags:           new Set<string>(),
+                    contentPreview: 'test content',
+                };
+                mockLayerQuery('identity', [memoryItem]);
+                mockLayerQuery('state', []);
+                mockLayerQuery('events', []);
+                mockEmptyPhaseB();
+                ddbMock.on(UpdateCommand).rejects(conditionalFailure);
+
+                const result = await runTagIndexReconciliation(deps, options);
+
+                expect(result.phaseA.metadataCleaned).toBe(0);
+                expect(result.phaseA.errors).toBe(1);
+                expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(1);
+                expect(mockLogger.warn).toHaveBeenCalledWith({
+                    error:   conditionalFailure,
+                    context: 'cleanPreviouslyKnownAs:/identity/old-name.md',
+                    msg:     'Reconciler operation failed after 1 attempts',
+                });
+                expect(mockLogger.warn).toHaveBeenCalledWith({
+                    error: conditionalFailure,
+                    path:  '/identity/core.md',
+                    msg:   'Failed to clean previouslyKnownAs',
+                });
+            });
         });
 
         test('should use GetItem per old tag (not TAG_COUNTS) when previouslyKnownAsTags is present', async () => {
