@@ -480,6 +480,10 @@ export interface Conductor {
      * synthesized envelope, so the reply reaches the channel and author that launched the work,
      * exactly like an ordinary turn. A second call before the first pending wake is consumed
      * overwrites it and logs a warning — only the most recent call's wake is ever adopted.
+     *
+     * A crash while the adopted turn runs does not re-send it (the model already read the
+     * notification): it settles as failed — so the wake delivery sends nothing — and the reopen
+     * handshake tells the model the turn was cut off (#99).
      */
     adoptWakeTurn:                 (input: { taskId: string, toolUseId: string, summary: string }) => void
     /**
@@ -496,6 +500,8 @@ export interface Conductor {
      * {@link Conductor.adoptWakeTurn}'s is not: the SDK already started it from the peer's raw
      * prompt. Unlike a wake, an adopted peer turn has no host-side delivery at all — Claude
      * answers a peer by calling `SendMessage` itself, which the envelope's own text instructs.
+     * Nor is it re-sent after a crash: it settles as failed, and the reopen handshake names the
+     * peer whose message the crash cut off (#99).
      *
      * A peer message that lands while this session is ALREADY mid-turn never reaches here at
      * all: the SDK folds it into the running turn and fires no `UserPromptSubmit` hook (block-0
@@ -551,8 +557,9 @@ interface QueuedItem {
     /**
      * A submitted, compaction or continuation envelope, or the synthesized/adopted envelope of a turn
      * the SDK started itself (a `task` wake, an adopted peer). An adopted item is seeded at
-     * `retryPolicy.maxAttempts`, so it never retries through {@link beginTurn}; only a crash
-     * reopen re-queues it (as the turn then in flight).
+     * `retryPolicy.maxAttempts`, so it never retries through {@link beginTurn}, and a crash
+     * reopen never re-queues it either (#99): it settles as failed and the reopen handshake
+     * names it. So an adopted item is never pushed to the SDK.
      */
     envelope:               QueryEnvelope | AdoptedPeerEnvelope
     priority:               SubmitPriority
@@ -604,6 +611,49 @@ interface ActiveTurn {
      * but does not name it answers some other message and must not settle this turn.
      */
     wireUuid?:        string
+}
+
+/**
+ * The error an SDK-started (adopted) turn settles with when a crash cuts it off (#99). Such a
+ * turn is never re-sent to the replacement session — the model already read its input — so it
+ * ends here, and the reopen handshake names it instead (see {@link CutOffAdoptedTurn}).
+ */
+const ADOPTED_TURN_CUT_OFF_ERROR = 'The session process ended during this SDK-started turn; it is not re-sent to the replacement session';
+
+/** How the reopen handshake names a cut-off adopted turn's input: the peer session it came from, or a background-task notification (an adopted wake). */
+function describeAdoptedTurn(envelope: QueryEnvelope | AdoptedPeerEnvelope): string {
+    if(envelope.mode === 'adopted') {
+        return `a message from peer session ${envelope.peer.fromName ?? envelope.peer.from}`;
+    }
+    return 'a background-task notification';
+}
+
+/** An adopted turn a crash cut off (#99), as {@link ReopenHandshake} names it: `description` from {@link describeAdoptedTurn}, and the input `text` a fresh-fallback transcript never saw. */
+interface CutOffAdoptedTurn {
+    description: string
+    text:        string
+}
+
+/**
+ * The reopen handshake's paragraph for a cut-off adopted turn (#99). A resumed transcript already
+ * holds the turn's input, so it is only pointed at; a fresh-fallback transcript never saw it, so
+ * it is quoted line by line.
+ */
+function cutOffTurnParagraph({ description, text }: CutOffAdoptedTurn, resumed: boolean): string {
+    const opening = `Your turn answering ${description} was cut off when the previous session process ended`;
+    const pickUp = 'If it still needs a response, pick it up at your next turn.';
+    if(resumed) {
+        return `${opening}. It will not be sent to you again: that input is already in the transcript above. ${pickUp}`;
+    }
+    const quoted = text.split('\n').map(line => `> ${line}`).join('\n');
+    return `${opening}, and this new transcript does not contain it. It will not be sent to you again as a new message; here is what it said:\n${quoted}\n${pickUp}`;
+}
+
+/** What a reopen's `[BOOT]` handshake says — rendered per attempt by `reopenHandshakeText`. `cutOffTurn` is set only by a crash reopen that interrupted an adopted turn. */
+interface ReopenHandshake {
+    why:             string
+    backgroundTasks: string[]
+    cutOffTurn?:     CutOffAdoptedTurn
 }
 
 /** A no-op {@link Deferred} for envelopes the conductor submits to itself (`/compact`, a continuation note). */
@@ -1249,11 +1299,16 @@ export function createConductor(params: CreateConductorParams): Conductor {
     /**
      * The {@link Deferred} for an adopted wake turn's synthesized {@link QueuedItem} (R2): no
      * external caller is waiting on a promise for this turn, so `resolve` routes the settled
-     * {@link TurnResult} to {@link onWakeTurnSettled} instead (when one was provided), catching
-     * and logging a rejection so a failing delivery callback never surfaces as an unhandled
-     * rejection. `reject` should never legitimately fire for this item (see `rejectAllQueued`
-     * and the reopen-failure path, whose callers only ever `resolve` a wake item's deferred), but
-     * is still logged defensively rather than silently swallowed.
+     * {@link TurnResult} to {@link onWakeTurnSettled} instead (when one was provided). The
+     * callback is still invoked synchronously, but through `Promise.try`, so a synchronous
+     * throw becomes a rejection like an asynchronous one: both are caught and logged, never
+     * surfacing as an unhandled rejection — and never escaping `resolve` itself, which a crash
+     * reopen calls (via {@link settleCutOffAdoptedTurn}) after setting `reopening`, where a throw
+     * would leave the queue wedged with no replacement session (#99 challenge).
+     *
+     * `reject` is a no-op because nothing ever calls it for this item: an adopted item is never
+     * in `pendingQueue` (so `rejectAllQueued` cannot reach it), never retried, and never the
+     * `inFlightItem` a crash reopen re-queues or rejects — a crash settles it as failed instead.
      */
     function buildWakeSettledDeferred(envelope: TaskQueryEnvelope): Deferred {
         return {
@@ -1261,13 +1316,11 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 if(onWakeTurnSettled === undefined) {
                     return;
                 }
-                Promise.resolve(onWakeTurnSettled(envelope, result)).catch((error: unknown) => {
+                Promise.try(onWakeTurnSettled, envelope, result).catch((error: unknown) => {
                     logger.error({ error }, 'onWakeTurnSettled failed for an adopted wake turn');
                 });
             },
-            reject: (error: unknown) => {
-                logger.error({ error }, 'An adopted wake turn was rejected before it could settle');
-            },
+            reject: () => undefined,
         };
     }
 
@@ -1620,8 +1673,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * synchronously where a reopen starts, before the old handle is discarded or anything is
      * opened: the replacement's `finishOpen` dispatches `session_opened`, which clears the ledger's
      * task list (journaling each as `task_lost`). Foreground tasks are left out — they belong to the
-     * turn a crash interrupted, which is re-queued and re-run, and a requested reopen only ever
-     * starts while idle, when no foreground task is left.
+     * turn a crash interrupted, which is either re-queued and re-run (a host-pushed turn) or named
+     * in the handshake as cut off (an adopted one, #99) — and a requested reopen only ever starts
+     * while idle, when no foreground task is left.
      */
     function runningBackgroundTaskDescriptions(): string[] {
         return ledgerStore.get().tasks.filter(task => task.background).map(task => task.description);
@@ -1637,14 +1691,19 @@ export function createConductor(params: CreateConductorParams): Conductor {
      * and a task can still finish, and its notification still land, between the snapshot and the
      * replacement's open (a discarded reader keeps delivering already-buffered frames).
      *
-     * @param why Why the old session went away, completing "Session reopened at <time> because …"
-     * @param backgroundTasks {@link runningBackgroundTaskDescriptions}, taken where the reopen started
+     * When a crash cut off an adopted turn (#99), one more paragraph, right after the continuity
+     * one, says so and that it will not be sent again: a resumed transcript already holds its
+     * input, while a fresh one never saw it, so the fresh fallback quotes it.
+     *
+     * @param handshake `why` completes "Session reopened at <time> because …";
+     *   `backgroundTasks` is {@link runningBackgroundTaskDescriptions}, taken where the reopen
+     *   started; `cutOffTurn` is the adopted turn a crash cut off, when there was one
      * @param resumed Whether this attempt resumes the old transcript, or is the fresh fallback after that failed
      * @param bundle The fresh fallback's boot bundle (#98), appended as the last paragraph after
      *   the #62 explanation; `''` for a resume, or when the fallback's build produced nothing. The
      *   continuity sentence only claims a re-seed when there is one to read.
      */
-    function reopenHandshakeText(why: string, backgroundTasks: readonly string[], resumed: boolean, bundle = ''): string {
+    function reopenHandshakeText({ why, backgroundTasks, cutOffTurn }: ReopenHandshake, resumed: boolean, bundle = ''): string {
         let continuity = 'This same conversation was resumed, so this was not an offline gap: messages waiting for you were kept and will still be delivered, and no conversation was lost.';
         if(!resumed) {
             const reseed = bundle === ''
@@ -1656,6 +1715,9 @@ export function createConductor(params: CreateConductorParams): Conductor {
             `[BOOT] Session reopened at ${now().toISOString()} because ${why}. The host process kept running throughout; only the session process was replaced.`,
             continuity,
         ];
+        if(cutOffTurn !== undefined) {
+            paragraphs.push(cutOffTurnParagraph(cutOffTurn, resumed));
+        }
         if(backgroundTasks.length > 0) {
             paragraphs.push([
                 'Background tasks you had started in the previous session process were still running when it ended. They may have been stopped, or may still be running with no way to report back to you — either way, do not wait for a result from them:',
@@ -1840,23 +1902,25 @@ export function createConductor(params: CreateConductorParams): Conductor {
      *   is awaited says — mandatory, because the SDK emits nothing at all (not even `system/init`)
      *   until it has read a first user message. Rendered per attempt by {@link reopenHandshakeText},
      *   so the fresh fallback does not claim the conversation was resumed; `backgroundTasks` is the
-     *   caller's {@link runningBackgroundTaskDescriptions} snapshot, taken before any close or open.
+     *   caller's {@link runningBackgroundTaskDescriptions} snapshot, taken before any close or open,
+     *   and `cutOffTurn` the adopted turn a crash already settled as failed (#99), if any.
      *   Only the fresh fallback builds a boot bundle (#98), after the resume has failed, and
      *   appends it to its handshake; if shutdown began during that build, nothing is spawned.
-     * @param inFlightItem The turn that was running when the session went away, re-queued ahead of
+     * @param inFlightItem The host-pushed turn a crash interrupted, re-queued ahead of
      *   everything else on success and rejected if the reopen is abandoned or shutdown overtakes
-     *   it (shutdown's own `rejectAllQueued` cannot reach it); `undefined` on the
-     *   controlled path, which only ever runs while idle.
+     *   it (shutdown's own `rejectAllQueued` cannot reach it); `undefined` for an adopted or
+     *   spontaneous turn (the SDK started those itself, so they are never re-sent — #99), when
+     *   nothing was running, and on the controlled path, which only ever runs while idle.
      * @param carryOver Messages the dying queue never delivered, taken by the CALLER: the
      *   controlled path has to `discardHandle` the old handle first (so its `onClosed` is not read
      *   as a crash), and `discardHandle` clears `currentQueue`, so by the time this function runs
      *   there is no dying queue left to ask.
      * @param cause Which of the two paths this is, journaled on the replacement's `session_opened`.
      */
-    async function reopenReplacementSession(handshake: { why: string, backgroundTasks: string[] }, inFlightItem: QueuedItem | undefined, carryOver: SDKUserMessage[], cause: 'crash_reopen' | 'requested_reopen'): Promise<void> {
+    async function reopenReplacementSession(handshake: ReopenHandshake, inFlightItem: QueuedItem | undefined, carryOver: SDKUserMessage[], cause: 'crash_reopen' | 'requested_reopen'): Promise<void> {
         try {
             try {
-                const { handle, sessionId } = await openWithHandle(currentSessionId, reopenHandshakeText(handshake.why, handshake.backgroundTasks, true), cause);
+                const { handle, sessionId } = await openWithHandle(currentSessionId, reopenHandshakeText(handshake, true), cause);
                 try {
                     await finishOpen(sessionId, { outcome: 'resumed', cause });
                 } catch (finishError) {
@@ -1870,7 +1934,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 // If shutdown() began during the build, spawning now would only create a child to
                 // close at once; the shutdown branch below abandons the reopen instead.
                 if(!shuttingDown) {
-                    const { sessionId } = await openWithHandle(undefined, reopenHandshakeText(handshake.why, handshake.backgroundTasks, false, bundle), cause);
+                    const { sessionId } = await openWithHandle(undefined, reopenHandshakeText(handshake, false, bundle), cause);
                     await finishOpen(sessionId, { outcome: 'resume_fallback', cause });
                 }
             }
@@ -1914,6 +1978,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
         // only have been pushed by beginTurn — the one place that pushes one — for the turn then in
         // flight, so an unread one is the crashed turn's own prompt, which re-queuing inFlightItem
         // below pushes again (under a fresh wire uuid); replaying it too would run that turn twice.
+        // (An adopted turn in flight pushed nothing, so it leaves no querying message behind.)
         // A requested reopen only starts while idle, so its carry-over never holds one.
         for(const message of [...carryOver.filter(carried => carried.shouldQuery === false), ...bufferedAppends]) {
             currentQueue?.push(message);
@@ -1926,24 +1991,59 @@ export function createConductor(params: CreateConductorParams): Conductor {
         processQueue();
     }
 
+    /**
+     * The item a crash reopen re-queues from the turn it interrupted: only a turn the host pushed
+     * itself (`beginTurn` set its {@link ActiveTurn.wireUuid}), whose input the replacement
+     * session must be sent again. `undefined` when nothing was running, for a bare spontaneous
+     * turn, and for an adopted wake/peer turn (#99) — `mode`/`kind` cannot tell these apart, since
+     * an adopted wake's envelope is a `mode: 'query'`, `kind: 'task'` one like a submitted task's.
+     */
+    function hostPushedItem(turn: ActiveTurn | null): QueuedItem | undefined {
+        return turn?.wireUuid === undefined ? undefined : turn.item;
+    }
+
+    /**
+     * Settles an adopted (SDK-started) turn a crash cut off (#99): the model already read its
+     * input, so re-sending it would hand the model the same text a second time. It fails instead
+     * (journaled `turn_failed`; an adopted wake's delivery sees a reply-less failure and sends
+     * nothing), and the returned description goes into the reopen handshake. A no-op returning
+     * `undefined` when nothing was running, for a bare spontaneous turn (no item to settle), and
+     * for a host-pushed turn, which {@link hostPushedItem} re-queues instead.
+     */
+    function settleCutOffAdoptedTurn(turn: ActiveTurn | null): CutOffAdoptedTurn | undefined {
+        if(turn?.item === undefined || turn.wireUuid !== undefined) {
+            return undefined;
+        }
+        const { item } = turn;
+        logger.warn({ envelopeId: item.envelope.id, kind: turn.kind }, 'A session crash cut off an SDK-started turn; settling it as failed and naming it in the reopen handshake instead of re-sending it');
+        failTurn(turn, item, new Error(ADOPTED_TURN_CUT_OFF_ERROR), ledgerStore.get().context.percentage);
+        return { description: describeAdoptedTurn(item.envelope), text: item.envelope.text };
+    }
+
     async function handleMidLifeClosed(error: unknown): Promise<void> {
         if(shuttingDown) {
             return;
         }
         logger.error({ error }, 'Session ended unexpectedly; reopening');
         reopening = true;
-        const inFlightItem = currentTurn?.item;
-        if(currentTurn?.escalationTimer !== undefined) {
-            clock.clearTimer(currentTurn.escalationTimer);
+        const interrupted = currentTurn;
+        if(interrupted?.escalationTimer !== undefined) {
+            clock.clearTimer(interrupted.escalationTimer);
         }
         currentTurn = null;
         // Stryker disable next-line CallExpression: turnEndedWaiters is only ever populated by shutdown()'s waitForTurnEnd(), which only runs once shuttingDown is true — and the check above already returns before this line whenever shuttingDown is true, so the array this splices is always empty here
         resolveTurnEndedWaiters();
         // Taken before any open: openWithHandle reassigns currentQueue as part of settling.
         const carryOver = currentQueue?.takePending() ?? [];
-        // Also before any open: the replacement's finishOpen clears the ledger's task list.
-        const handshake = { why: 'the previous session process ended unexpectedly (it crashed or was killed)', backgroundTasks: runningBackgroundTaskDescriptions() };
-        reopenInFlight = reopenReplacementSession(handshake, inFlightItem, carryOver, 'crash_reopen');
+        // Also before any open: the replacement's finishOpen clears the ledger's task list. An
+        // adopted turn is settled here, before any reopen attempt, so neither an abandoned reopen
+        // nor a shutdown can leave it pending (#99).
+        const handshake: ReopenHandshake = {
+            why:             'the previous session process ended unexpectedly (it crashed or was killed)',
+            backgroundTasks: runningBackgroundTaskDescriptions(),
+            cutOffTurn:      settleCutOffAdoptedTurn(interrupted),
+        };
+        reopenInFlight = reopenReplacementSession(handshake, hostPushedItem(interrupted), carryOver, 'crash_reopen');
         // Stryker disable next-line AwaitDrop: onClosed discards this wrapper promise, while lifecycle synchronization observes the separately assigned reopenInFlight promise directly.
         await reopenInFlight;
     }

@@ -30,7 +30,7 @@ export class InputQueue {
      * `./result-echo.ts`). It is fresh on EVERY push, never the envelope id and never a uuid the
      * message already carries: the CLI silently drops a message whose uuid it has already seen —
      * no turn, no result — and the conductor pushes the same envelope again on a retry and after a
-     * crash reopen, and re-pushes carried-over messages onto a replacement queue.
+     * crash reopen of a host-pushed turn, and re-pushes carried-over messages onto a replacement queue.
      *
      * A `shouldQuery:false` message's uuid is remembered so {@link claimAcknowledgement} can
      * recognise the bare result the SDK answers it with.

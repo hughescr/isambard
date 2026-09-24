@@ -1625,6 +1625,29 @@ describe('reduceLedger: context, process, phase, session', () => {
 
         expect(next).toBe(opened);
     });
+
+    it('session_opened with a new sessionId closes a turn the dead session left open', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'session_opened', sessionId: 'sess-1', at: T1 }));
+        const inTurn = reduceLedger(opened, frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T2 }));
+        expect(inTurn.turn).not.toBeNull();
+
+        const ledger = reduceLedger(inTurn, frozenEvent({ type: 'session_opened', sessionId: 'sess-2', at: T3 }));
+
+        expect(ledger.turn).toBeNull();
+        expect(ledger.sessionId).toBe('sess-2');
+    });
+
+    it('session_opened with an unchanged sessionId and nothing else to reset still closes a turn the dead session left open', () => {
+        const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'session_opened', sessionId: 'sess-1', at: T1 }));
+        const inTurn = reduceLedger(opened, frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T2 }));
+        expect(inTurn.tasks).toEqual([]);
+        expect(inTurn.cost.cumulativeUsd).toBe(0);
+
+        const ledger = reduceLedger(inTurn, frozenEvent({ type: 'session_opened', sessionId: 'sess-1', at: T3 }));
+
+        expect(ledger.turn).toBeNull();
+        expect(ledger.sessionId).toBe('sess-1');
+    });
 });
 
 describe('finishedTaskStatus', () => {

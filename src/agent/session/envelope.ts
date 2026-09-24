@@ -478,9 +478,9 @@ export function buildCompactEnvelope(now: Date): QueryEnvelope {
  * `shouldQuery` boolean exists. It is derived from the envelope's contract: `false` for an
  * {@link AccumulationEnvelope} (the SDK appends it and answers with a bare acknowledgement the
  * session's input queue absorbs), `true` otherwise. An {@link AdoptedPeerEnvelope} still maps
- * to `true`, as it did before the contracts were split: the adopted record is never pushed on
- * its own, but a crash reopen re-queues whatever turn was in flight, adopted or not, and
- * {@link import('./conductor')}'s `beginTurn` pushes it. Deliberately does not set the SDK's own
+ * to `true`, as it did before the contracts were split, but is never actually pushed: since #99
+ * a crash reopen re-queues only a turn the host pushed itself, and settles an adopted one as
+ * failed instead of re-sending it. Deliberately does not set the SDK's own
  * `priority?: 'now'|'next'|'later'` field — this session core does not use it; the conductor's
  * own submit-time `SubmitPriority` is a separate, unrelated concept.
  * @param envelope Envelope to convert

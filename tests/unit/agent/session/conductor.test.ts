@@ -4640,27 +4640,6 @@ describe('createConductor', () => {
             const result = await humanPromise;
             expect(result.envelopeId).toBe(humanEnvelope.id);
         });
-
-        it('when a mid-life crash strands an ADOPTED wake turn in flight and both the resume and fresh-open fallback fail, its deferred is rejected via buildWakeSettledDeferred\'s own reject path — logged, not left as an unhandled rejection', async () => {
-            const h = build();
-            await openWith(h, 'sess-1');
-            h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary: 'in flight when it crashed' });
-            h.instances[0].emit(frames.assistantText('in flight when it crashed'));
-            await flush();
-            expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
-
-            h.instances[0].fail(new Error('worker crashed'));
-            await flush();
-            h.instances[1].fail(new Error('resume also failed'));
-            await flush();
-            h.instances[2].fail(new Error('fresh open also failed'));
-            await flush();
-
-            expect(h.logger.error).toHaveBeenCalledWith(
-                { error: expect.any(Error) },
-                'An adopted wake turn was rejected before it could settle'
-            );
-        });
     });
 
     describe('adoptPeerTurn() (session-peers block 2: a peer session\'s cross-session message opens its own turn)', () => {
@@ -6670,6 +6649,257 @@ describe('createConductor', () => {
                     FALLBACK_CONTINUITY,
                     HANDSHAKE_SUFFIX,
                 ].join('\n\n'));
+            });
+        });
+
+        describe('a crash during an SDK-started (adopted) turn (#99)', () => {
+            const CUT_OFF_ERROR = 'The session process ended during this SDK-started turn; it is not re-sent to the replacement session';
+            const CUT_OFF_WARNING = 'A session crash cut off an SDK-started turn; settling it as failed and naming it in the reopen handshake instead of re-sending it';
+            const WAKE_CUT_OFF_RESUMED = 'Your turn answering a background-task notification was cut off when the previous session process ended. It will not be sent to you again: that input is already in the transcript above. If it still needs a response, pick it up at your next turn.';
+            const PEER_CUT_OFF_RESUMED = 'Your turn answering a message from peer session Izzy-main was cut off when the previous session process ended. It will not be sent to you again: that input is already in the transcript above. If it still needs a response, pick it up at your next turn.';
+            const GIVE_UP_LOG = 'Conductor could not reopen the session after it closed unexpectedly; giving up';
+
+            /** Adopts a wake with `summary` and opens its turn on instance 0 with one assistant frame; returns the synthesized envelope id. */
+            async function runAdoptedWake(h: Harness, summary: string): Promise<string> {
+                h.conductor.adoptWakeTurn({ taskId: 'task-1', toolUseId: 'tool-1', summary });
+                h.instances[0].emit(frames.assistantText('reporting on the background work'));
+                await flush();
+                expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+                return h.journal.byKind('envelope_submitted').at(-1)?.envelopeId ?? '';
+            }
+
+            it('an adopted wake cut off by a crash settles failed once, is named in the resumed handshake and is never re-sent', async () => {
+                const onWakeTurnSettled = jest.fn();
+                const h = build({ onWakeTurnSettled });
+                await openWith(h, 'sess-1');
+                const wakeId = await runAdoptedWake(h, 'the archive is indexed');
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    WAKE_CUT_OFF_RESUMED,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                expect(h.journal.byKind('turn_failed')).toEqual([
+                    { type: 'turn_failed', at: expect.any(Date), envelopeId: wakeId, kind: 'task', error: CUT_OFF_ERROR },
+                ]);
+                expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
+                const [settledEnvelope, settledResult] = onWakeTurnSettled.mock.calls[0] as [QueryEnvelope, Record<string, unknown>];
+                expect(settledEnvelope).toMatchObject({ id: wakeId, kind: 'task', text: 'the archive is indexed' });
+                expect(settledResult).toEqual({
+                    status: 'failed', envelopeId: wakeId, response: null, sessionId: 'sess-1', contextUsagePercent: 0, error: expect.any(Error),
+                });
+                expect(settledResult.error).toMatchObject({ message: CUT_OFF_ERROR });
+                expect(h.logger.warn).toHaveBeenCalledWith({ envelopeId: wakeId, kind: 'task' }, CUT_OFF_WARNING);
+
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                expect(turnPrompts(h.instances[1])).toEqual([]);
+                expect(h.ledgerStore.get().turn).toBeNull();
+
+                const next = discordEnvelope({ text: 'are you still there?' });
+                const nextResult = h.conductor.submit(next, { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
+                await flush();
+                expect(turnPrompts(h.instances[1]).map(prompt => prompt.message.content)).toEqual([[{ type: 'text', text: 'are you still there?' }]]);
+                h.instances[1].emit(frames.resultSuccess({ result: 'yes' }));
+                expect(await nextResult).toMatchObject({ status: 'completed', envelopeId: next.id, response: 'yes' });
+            });
+
+            it('an adopted peer turn cut off by a crash settles failed, names the peer in the resumed handshake and is never re-sent', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                const envelope = peerEnvelope();
+                h.conductor.adoptPeerTurn(envelope);
+                h.instances[0].emit(frames.assistantText('answering the peer'));
+                await flush();
+                expect(h.conductor.status().turn).toMatchObject({ kind: 'peer' });
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    PEER_CUT_OFF_RESUMED,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                expect(h.journal.byKind('turn_failed')).toEqual([
+                    { type: 'turn_failed', at: expect.any(Date), envelopeId: envelope.id, kind: 'peer', error: CUT_OFF_ERROR },
+                ]);
+                expect(h.logger.warn).toHaveBeenCalledWith({ envelopeId: envelope.id, kind: 'peer' }, CUT_OFF_WARNING);
+
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                expect(turnPrompts(h.instances[1])).toEqual([]);
+                expect(h.ledgerStore.get().turn).toBeNull();
+            });
+
+            it('an adopted peer turn with no fromName is named in the handshake by its uds reply address', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                h.conductor.adoptPeerTurn(peerEnvelope({ peer: { from: 'uds:/tmp/cc-socks/94548.sock' } }));
+                h.instances[0].emit(frames.assistantText('answering the peer'));
+                await flush();
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[1])).toContain('\n\nYour turn answering a message from peer session uds:/tmp/cc-socks/94548.sock was cut off when the previous session process ended. It will not be sent to you again');
+            });
+
+            it('an adopted wake cut off by a crash whose resume fails: the fresh fallback handshake quotes it, and it settled once before either reopen attempt', async () => {
+                const onWakeTurnSettled = jest.fn();
+                const h = build({ onWakeTurnSettled });
+                await openWith(h, 'sess-1');
+                const wakeId = await runAdoptedWake(h, 'the archive is indexed\n\n3 files skipped');
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+                // Settled already, while the resume attempt is still waiting for its init frame.
+                expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
+                expect(h.instances).toHaveLength(2);
+                expect(h.journal.byKind('session_opened')).toHaveLength(1);
+                h.instances[1].fail(new Error('resume also failed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[2])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    FALLBACK_CONTINUITY,
+                    'Your turn answering a background-task notification was cut off when the previous session process ended, and this new transcript does not contain it. It will not be sent to you again as a new message; here is what it said:\n> the archive is indexed\n> \n> 3 files skipped\nIf it still needs a response, pick it up at your next turn.',
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                h.instances[2].emit(frames.init('sess-2'));
+                await flush();
+                expect(turnPrompts(h.instances[2])).toEqual([]);
+                expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
+                expect(h.journal.byKind('turn_failed').map(entry => entry.envelopeId)).toEqual([wakeId]);
+                expect(h.ledgerStore.get().turn).toBeNull();
+            });
+
+            it('an adopted wake cut off by a crash whose resume and fresh fallback both fail settles failed exactly once, and the give-up is still logged', async () => {
+                const onWakeTurnSettled = jest.fn();
+                const h = build({ onWakeTurnSettled });
+                await openWith(h, 'sess-1');
+                const wakeId = await runAdoptedWake(h, 'in flight when it crashed');
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+                h.instances[1].fail(new Error('resume also failed'));
+                await flush();
+                h.instances[2].fail(new Error('fresh open also failed'));
+                await flush();
+
+                expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
+                expect(onWakeTurnSettled.mock.calls[0]?.[1]).toMatchObject({ status: 'failed', envelopeId: wakeId, response: null });
+                expect(h.journal.byKind('turn_failed').map(entry => entry.envelopeId)).toEqual([wakeId]);
+                expect(h.logger.error).toHaveBeenCalledWith({ error: expect.any(Error) }, GIVE_UP_LOG);
+                expect(h.logger.error).not.toHaveBeenCalledWith(expect.anything(), 'An adopted wake turn was rejected before it could settle');
+            });
+
+            it('a crash during a directly-submitted task-kind query turn still re-sends it: the discriminant is who pushed the turn, not its mode or kind', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                const direct: QueryEnvelope = {
+                    id: 'direct-task-1', mode: 'query', kind: 'task', text: 'direct task text', createdAt: new Date(0),
+                };
+                const resultPromise = h.conductor.submit(direct, { priority: 'normal' });
+                await flush();
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                expect(turnPrompts(h.instances[1]).map(prompt => prompt.message.content)).toEqual([[{ type: 'text', text: 'direct task text' }]]);
+                expect(h.journal.byKind('turn_failed')).toEqual([]);
+                expect(h.ledgerStore.get().turn).toMatchObject({ id: 'direct-task-1', kind: 'task' });
+
+                h.instances[1].emit(frames.resultSuccess({ result: 'done' }));
+                expect(await resultPromise).toMatchObject({ status: 'completed', envelopeId: 'direct-task-1', response: 'done' });
+            });
+
+            it('a crash during a bare spontaneous notification turn settles nothing, names nothing and leaves no ledger turn behind', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                h.instances[0].emit(frames.assistantText('an unprompted musing'));
+                await flush();
+                expect(h.ledgerStore.get().turn).toMatchObject({ kind: 'notification' });
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+                expect(h.journal.byKind('turn_failed')).toEqual([]);
+                expect(h.logger.warn).not.toHaveBeenCalledWith(expect.anything(), CUT_OFF_WARNING);
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                expect(turnPrompts(h.instances[1])).toEqual([]);
+                expect(h.ledgerStore.get().turn).toBeNull();
+            });
+
+            it('the cut-off paragraph sits between the continuity paragraph and the background-tasks paragraph', async () => {
+                const h = build();
+                await openWith(h, 'sess-1');
+                await startOneTaskInTurn(h);
+                h.instances[0].emit(frames.resultSuccess());
+                await flush();
+                await runAdoptedWake(h, 'the inbox is summarised');
+                h.clock.advance(5000);
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+
+                expect(handshakeTextOf(h.instances[1])).toBe([
+                    `[BOOT] Session reopened at 1970-01-01T00:00:05.000Z ${CRASH_OPENING}`,
+                    RESUMED_CONTINUITY,
+                    WAKE_CUT_OFF_RESUMED,
+                    `${TASKS_INTRO}\n- index the archive\n${TASKS_ADVICE}`,
+                    HANDSHAKE_SUFFIX,
+                ].join('\n\n'));
+            });
+
+            it('an onWakeTurnSettled that throws synchronously while a crash settles the wake is logged, and the replacement session still opens and runs queued work', async () => {
+                const thrown = new Error('delivery failed');
+                const onWakeTurnSettled = jest.fn(() => {
+                    throw thrown;
+                });
+                const h = build({ onWakeTurnSettled });
+                await openWith(h, 'sess-1');
+                await runAdoptedWake(h, 'the archive is indexed');
+
+                h.instances[0].fail(new Error('worker crashed'));
+                await flush();
+
+                expect(h.journal.byKind('turn_failed')).toHaveLength(1);
+                expect(h.logger.error).toHaveBeenCalledWith({ error: thrown }, 'onWakeTurnSettled failed for an adopted wake turn');
+                expect(h.instances).toHaveLength(2);
+                h.instances[1].emit(frames.init('sess-1'));
+                await flush();
+                expect(h.conductor.status().lifecycle).toBe('open');
+
+                const next = discordEnvelope({ text: 'after the crash' });
+                const nextResult = h.conductor.submit(next, { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
+                await flush();
+                expect(turnPrompts(h.instances[1]).map(prompt => prompt.message.content)).toEqual([[{ type: 'text', text: 'after the crash' }]]);
+                h.instances[1].emit(frames.resultSuccess({ result: 'ok' }));
+                expect(await nextResult).toMatchObject({ status: 'completed', envelopeId: next.id });
             });
         });
     });

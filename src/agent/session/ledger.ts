@@ -1060,15 +1060,20 @@ function reduceTaskLost(ledger: Ledger, taskId: string, at: Date): Ledger {
 /**
  * A new session id means nothing the old session was running can ever report again, so every
  * tracked task — foreground and background alike — is finished as `'stopped'` rather than dropped:
- * the board still shows how the interrupted work ended.
+ * the board still shows how the interrupted work ended. Any open `turn` is closed too (#99) — even
+ * when the session id is unchanged, as after a crash reopen that resumes — since the process that
+ * would have sent its result is gone; a re-sent turn opens again with its own `turn_submitted`.
  */
 function reduceSessionOpened(ledger: Ledger, sessionId: string, at: Date): Ledger {
-    if(ledger.sessionId === sessionId && ledger.tasks.length === 0 && ledger.cost.cumulativeUsd === 0) {
+    if(ledger.sessionId === sessionId && ledger.tasks.length === 0 && ledger.cost.cumulativeUsd === 0 && ledger.turn === null) {
         return ledger;
     }
     return {
         ...ledger,
         sessionId,
+        // A new session process has no turn in flight: one the dead process left open (a crash
+        // mid-turn never sees that turn's result) would otherwise read as busy forever (#99).
+        turn:          null,
         tasks:         [],
         finishedTasks: appendAllStopped(ledger.finishedTasks, ledger.tasks, at),
         cost:          { ...ledger.cost, cumulativeUsd: 0 },
