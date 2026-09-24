@@ -32,9 +32,9 @@ interface FetchOptions {
  */
 interface FetchResult {
     /** Array of fetched messages transformed to DiscordSearchResult format */
-    messages: DiscordSearchResult[]
-    /** True if more messages exist beyond what was fetched */
-    hasMore:  boolean
+    messages:     DiscordSearchResult[]
+    /** True when the configured fetch cap was reached; it does not prove another qualifying message exists */
+    limitReached: boolean
 }
 
 /**
@@ -135,7 +135,7 @@ function transformMessage(message: Message): DiscordSearchResult {
  * const fetcher = createMessageFetcher(client);
  *
  * // Fetch recent messages
- * const { messages, hasMore } = await fetcher.fetchMessages({
+ * const { messages, limitReached } = await fetcher.fetchMessages({
  *   channelId: '123456789012345678',
  *   limit: 50
  * });
@@ -153,16 +153,16 @@ function transformMessage(message: Message): DiscordSearchResult {
  */
 /**
  * Processes a batch of messages, filtering by startTime snowflake.
- * @returns Object containing processed messages, hasMore flag, and whether to stop pagination
+ * @returns Object containing processed messages, limitReached flag, and whether to stop pagination
  */
 function processBatch(
     batch: Map<string, Message>,
     afterSnowflake: string | undefined,
     currentMessages: Message[],
     maxMessages: number
-): { messages: Message[], hasMore: boolean, shouldStop: boolean } {
+): { messages: Message[], limitReached: boolean, shouldStop: boolean } {
     const messages: Message[] = [];
-    let hasMore = false;
+    let limitReached = false;
     let shouldStop = false;
 
     for(const message of batch.values()) {
@@ -176,13 +176,13 @@ function processBatch(
         messages.push(message);
 
         if(currentMessages.length + messages.length >= maxMessages) {
-            hasMore = true;
+            limitReached = true;
             shouldStop = true;
             break;
         }
     }
 
-    return { messages, hasMore, shouldStop };
+    return { messages, limitReached, shouldStop };
 }
 
 function pageOptions(cursor: string | undefined, remaining: number): { limit: number, before?: string } {
@@ -224,7 +224,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
         const channel = await getChannel(channelId);
 
         const allMessages: Message[] = [];
-        let hasMore = false;
+        let limitReached = false;
 
         // Calculate snowflakes for time filtering
         const beforeSnowflake = endTime ? timestampToSnowflake(endTime) : undefined;
@@ -246,7 +246,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
                 const batchResult = processBatch(batch, afterSnowflake, allMessages, maxMessages);
                 // Stryker disable next-line ArrayMethodSwap, llm: page accumulation order is unobservable because fetchMessages fully re-sorts by snowflake id before returning.
                 allMessages.push(...batchResult.messages);
-                hasMore ||= batchResult.hasMore;
+                limitReached ||= batchResult.limitReached;
 
                 if(batchResult.shouldStop) {
                     break;
@@ -275,7 +275,7 @@ export function createMessageFetcher(client: Client): MessageFetcher {
 
         return {
             messages: sortedMessages,
-            hasMore,
+            limitReached,
         };
     }
 

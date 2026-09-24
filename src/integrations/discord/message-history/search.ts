@@ -69,7 +69,7 @@ export interface MessageSearchService {
      * Automatically handles overflow summaries.
      *
      * @param params - Search parameters including channelId, query, time range, and limit
-     * @returns Search response with messages, optional overflow summaries, and metadata
+     * @returns Oldest matching page; newer fetched matches appear as summarized overflow with coverage metadata
      */
     searchMessages(params: SearchParamsInput): Promise<SearchResponse>
 
@@ -78,7 +78,7 @@ export interface MessageSearchService {
      *
      * @param channelId - Discord channel ID (plain string)
      * @param limit - Maximum number of messages to return
-     * @returns Search response with recent messages
+     * @returns Newest page; older fetched messages appear as count-only overflow with coverage metadata
      */
     getRecentMessages(channelId: string, limit?: number): Promise<SearchResponse>
 
@@ -165,21 +165,18 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
             ...(searchOptions?.fetchLimit !== undefined && { limit: searchOptions.fetchLimit }),
         });
 
-        // 3. Start with all fetched messages
-        let allMessages: DiscordSearchResult[] = fetchResult.messages;
+        // 3. Start with all fetched messages, then sort chronologically (oldest first).
+        let allMessages: DiscordSearchResult[] = fetchResult.messages.toSorted((a, b) => a.id.localeCompare(b.id));
 
-        // 4. Sort by timestamp (oldest first) - snowflakes sort chronologically
-        allMessages = allMessages.toSorted((a, b) => a.id.localeCompare(b.id));
-
-        // 5. Filter by text query if provided
+        // 4. Filter by text query if provided.
         if(query) {
             const lowerQuery = query.toLowerCase();
             allMessages = allMessages.filter(msg =>
                 msg.content.toLowerCase().includes(lowerQuery));
         }
 
-        // 6. Apply limit and handle overflow
-        const totalFound = allMessages.length;
+        // 5. Apply limit and handle overflow from the fetched, filtered set.
+        const matchedInFetched = allMessages.length;
         const keepNewest = searchOptions?.keep === 'newest';
         const newestPageStart = Math.max(allMessages.length - limit, 0);
         const returnMessages = keepNewest
@@ -193,21 +190,23 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
                 : allMessages.slice(limit);
 
             if(searchOptions?.summarizeOverflow === false) {
-                // Count-only overflow (no Haiku calls)
+                // Recent history returns the newest page, so its count-only overflow is older.
                 overflow = {
+                    mode:  'count-only',
                     count: overflowMessages.length,
-                    hint:  'Use searchMessages with startTime/endTime to get AI summaries of older messages',
+                    hint:  'Older fetched messages were not returned; use searchMessages with startTime/endTime for summaries',
                 };
             } else {
-                // Batch summarization (Fix 3): cap at 100, batch into groups of 10
+                // Text search returns the oldest page; summarize only the first 100 newer matches.
                 const cappedOverflow = overflowMessages.slice(0, MAX_OVERFLOW_FOR_SUMMARY);
                 const batchSummaries = await summarizer.summarizeMessageBatch(cappedOverflow);
                 overflow = {
-                    count: overflowMessages.length,
+                    mode:            'summarized',
+                    count:           overflowMessages.length,
                     batchSummaries,
+                    summarizedCount: cappedOverflow.length,
                     ...(overflowMessages.length > MAX_OVERFLOW_FOR_SUMMARY && {
-                        hasMore: true,
-                        hint:    'Narrow your search with startTime/endTime to see all messages',
+                        hint: 'Newer fetched matches beyond the summaries are not represented; narrow the time range to inspect them',
                     }),
                 };
             }
@@ -217,7 +216,9 @@ export function createMessageSearchService(options: MessageSearchServiceOptions)
             messages: returnMessages,
             overflow,
             metadata: {
-                totalFound,
+                coverage:  fetchResult.limitReached ? 'limitReached' : 'complete',
+                fetched:   fetchResult.messages.length,
+                matchedInFetched,
                 timeRange: {
                     start: effectiveStart.toISOString(),
                     end:   effectiveEnd.toISOString(),

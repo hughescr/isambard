@@ -59,8 +59,8 @@ describe('InboxManager', () => {
             searchMessages: mock(async () => ({
                 messages: [],
                 metadata: {
-                    totalFound: 0,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          0, matchedInFetched: 0,
+                    timeRange:        {
                         start: new Date().toISOString(),
                         end:   new Date().toISOString(),
                     },
@@ -117,7 +117,7 @@ describe('InboxManager', () => {
         }));
         mockMessageSearchService.searchMessages = mock(async () => ({
             messages,
-            metadata: { totalFound: messages.length, timeRange: { start: nowIso, end: nowIso } },
+            metadata: { coverage: 'complete' as const, fetched: messages.length, matchedInFetched: messages.length, timeRange: { start: nowIso, end: nowIso } },
         }));
         return loadedManager;
     }
@@ -276,8 +276,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -328,8 +328,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: [],
                 metadata: {
-                    totalFound: 0,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          0, matchedInFetched: 0,
+                    timeRange:        {
                         start: new Date().toISOString(),
                         end:   new Date().toISOString(),
                     },
@@ -424,8 +424,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -481,8 +481,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -564,8 +564,8 @@ describe('InboxManager', () => {
                 return {
                     messages: mockMessages,
                     metadata: {
-                        totalFound: mockMessages.length,
-                        timeRange:  {
+                        coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                        timeRange:        {
                             start: mockMessages[0].timestamp,
                             end:   mockMessages[0].timestamp,
                         },
@@ -638,8 +638,8 @@ describe('InboxManager', () => {
                 return {
                     messages: [],
                     metadata: {
-                        totalFound: 0,
-                        timeRange:  {
+                        coverage:         'complete' as const, fetched:          0, matchedInFetched: 0,
+                        timeRange:        {
                             start: nowIso,
                             end:   nowIso,
                         },
@@ -739,8 +739,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[2].timestamp,
                     },
@@ -818,8 +818,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[1].timestamp,
                     },
@@ -985,8 +985,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: [],
                 metadata: {
-                    totalFound: 0,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          0, matchedInFetched: 0,
+                    timeRange:        {
                         start: new Date().toISOString(),
                         end:   new Date().toISOString(),
                     },
@@ -1054,8 +1054,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -1116,8 +1116,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -1195,8 +1195,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[1].timestamp,
                     },
@@ -1296,8 +1296,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -1367,8 +1367,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -1452,8 +1452,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[1].timestamp,
                     },
@@ -1531,8 +1531,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[1].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -1668,8 +1668,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[1].timestamp,
                     },
@@ -1755,8 +1755,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[1].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -1864,8 +1864,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[1].timestamp,
                     },
@@ -1931,8 +1931,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[1].timestamp,
                     },
@@ -1994,8 +1994,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -2050,8 +2050,8 @@ describe('InboxManager', () => {
             mockMessageSearchService.searchMessages = mock(async () => ({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: mockMessages.length,
-                    timeRange:  {
+                    coverage:         'complete' as const, fetched:          mockMessages.length, matchedInFetched: mockMessages.length,
+                    timeRange:        {
                         start: mockMessages[0].timestamp,
                         end:   mockMessages[0].timestamp,
                     },
@@ -2076,6 +2076,23 @@ describe('InboxManager', () => {
                 messageId: '555666777',
                 msg:       'Channel handled watermark recorded',
             }));
+        });
+    });
+
+    describe('fetch coverage warnings', () => {
+        test('warns on incomplete loadUnread coverage and remains silent for complete coverage', async () => {
+            const loadedManager = managerForLoadedMessages([]);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: [],
+                metadata: { coverage: 'limitReached' as const, fetched: 100, matchedInFetched: 100, timeRange: { start: nowIso, end: nowIso } },
+            }));
+
+            await loadedManager.loadUnread();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                { channelId, coverage: 'limitReached', fetched: 100, matchedInFetched: 100 },
+                'Discord inbox catch-up reached message fetch limit'
+            );
         });
     });
 
@@ -2110,6 +2127,25 @@ describe('InboxManager', () => {
             expect(call.limit).toBe(100);
         });
 
+        test('warns when replay coverage reaches the fetch limit', async () => {
+            const checkpoint = makeCheckpoint({
+                lastSeenAt: '2025-01-25T13:00:00.000Z',
+                handled:    { messageId: '100', at: '2025-01-25T12:00:00.000Z' },
+            });
+            mockCheckpointManager.listAll = mock(async () => [checkpoint]);
+            mockMessageSearchService.searchMessages = mock(async () => ({
+                messages: [],
+                metadata: { coverage: 'limitReached' as const, fetched: 100, matchedInFetched: 100, timeRange: { start: nowIso, end: nowIso } },
+            }));
+
+            await manager.replayUnhandled();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                { channelId, coverage: 'limitReached', fetched: 100, matchedInFetched: 100 },
+                'Discord inbox replay reached message fetch limit'
+            );
+        });
+
         test('should exclude messages with id <= handled.messageId and bot-authored messages', async () => {
             const botUserId = createUserId('bot-user-999');
             manager.setBotUserId(botUserId);
@@ -2126,7 +2162,7 @@ describe('InboxManager', () => {
                     { id: '250', channelId, guildId: null, author: { id: botUserId, username: 'izzy', displayName: 'Izzy' }, content: 'bot message', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
                     { id: '300', channelId, guildId: null, author: { id: createUserId('u2'), username: 'b', displayName: 'B' }, content: 'new', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
                 ],
-                metadata: { totalFound: 4, timeRange: { start: nowIso, end: nowIso } },
+                metadata: { coverage: 'complete' as const, fetched: 4, matchedInFetched: 4, timeRange: { start: nowIso, end: nowIso } },
             }));
 
             const result = await manager.replayUnhandled();
@@ -2191,14 +2227,14 @@ describe('InboxManager', () => {
                             { id: '301', channelId: otherChannelId, guildId: null, author: { id: createUserId('u1'), username: 'a', displayName: 'A' }, content: 'later-arriving', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
                             { id: '150', channelId: otherChannelId, guildId: null, author: { id: createUserId('u1'), username: 'a', displayName: 'A' }, content: 'earlier', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
                         ],
-                        metadata: { totalFound: 2, timeRange: { start: nowIso, end: nowIso } },
+                        metadata: { coverage: 'complete' as const, fetched: 2, matchedInFetched: 2, timeRange: { start: nowIso, end: nowIso } },
                     };
                 }
                 return {
                     messages: [
                         { id: '200', channelId, guildId: null, author: { id: createUserId('u2'), username: 'b', displayName: 'B' }, content: 'channel-b', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
                     ],
-                    metadata: { totalFound: 1, timeRange: { start: nowIso, end: nowIso } },
+                    metadata: { coverage: 'complete' as const, fetched: 1, matchedInFetched: 1, timeRange: { start: nowIso, end: nowIso } },
                 };
             });
 
@@ -2233,7 +2269,7 @@ describe('InboxManager', () => {
                 messages: [
                     { id: '300', channelId, guildId: null, author: { id: createUserId('snowflake-42'), username: 'craig', displayName: 'Craig' }, content: 'new', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
                 ],
-                metadata: { totalFound: 1, timeRange: { start: nowIso, end: nowIso } },
+                metadata: { coverage: 'complete' as const, fetched: 1, matchedInFetched: 1, timeRange: { start: nowIso, end: nowIso } },
             }));
 
             const result = await manager.replayUnhandled();
@@ -2252,7 +2288,7 @@ describe('InboxManager', () => {
                 messages: [
                     { id: '300', channelId, guildId: null, author: { id: createUserId('u2'), username: 'b', displayName: 'B' }, content: 'new', timestamp: nowIso, attachments: [], embeds: [], reactions: [] },
                 ],
-                metadata: { totalFound: 1, timeRange: { start: nowIso, end: nowIso } },
+                metadata: { coverage: 'complete' as const, fetched: 1, matchedInFetched: 1, timeRange: { start: nowIso, end: nowIso } },
             }));
 
             await manager.replayUnhandled();
@@ -2303,7 +2339,7 @@ describe('InboxManager', () => {
             const managerWithChannel = managerForLoadedMessages([]);
             mockMessageSearchService.searchMessages = mock(async () => {
                 jest.advanceTimersByTime(25);
-                return { messages: [], metadata: { totalFound: 0, timeRange: { start: nowIso, end: nowIso } } };
+                return { messages: [], metadata: { coverage: 'complete' as const, fetched: 0, matchedInFetched: 0, timeRange: { start: nowIso, end: nowIso } } };
             });
 
             await managerWithChannel.loadUnread();

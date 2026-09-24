@@ -80,8 +80,10 @@ const createMockSearchResult = (overrides: Partial<DiscordSearchResult> = {}): D
 const createMockSearchResponse = (overrides: Partial<SearchResponse> = {}): SearchResponse => ({
     messages: [],
     metadata: {
-        totalFound: 0,
-        timeRange:  {
+        coverage:         'complete',
+        fetched:          0,
+        matchedInFetched: 0,
+        timeRange:        {
             start: '2025-01-01T00:00:00.000Z',
             end:   '2025-01-07T00:00:00.000Z',
         },
@@ -245,8 +247,8 @@ describe('createDiscordMCPServer', () => {
         });
 
         test.each([
-            ['searchMessages', 'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit. Accepts channel ID or #channel-name format.'],
-            ['getRecentMessages', 'Get the most recent messages from a Discord channel. Returns the N most recent messages plus an overflow count. Use searchMessages with time range for AI summaries of older messages. Accepts channel ID or #channel-name format.'],
+            ['searchMessages', 'Search Discord message history by text, time range, or both. It returns the oldest matching page and summarizes newer fetched matches in overflow. Always inspect metadata.coverage, metadata.fetched, and metadata.matchedInFetched: limitReached means the fetch cap was reached, not that all matching messages were fetched. Accepts channel ID or #channel-name format.'],
+            ['getRecentMessages', 'Get the most recent messages from a Discord channel. It returns the newest page and a count-only overflow for older fetched messages. Always inspect metadata.coverage, metadata.fetched, and metadata.matchedInFetched: limitReached means the fetch cap was reached, not that all channel messages were fetched. Use searchMessages with time range for summaries. Accepts channel ID or #channel-name format.'],
             ['getMessageById', 'Fetch a specific Discord message by its ID, or multiple messages by an array of IDs. Accepts channel ID or #channel-name format.'],
             ['sendDiscordMessage', `Send a message to a Discord channel or DM to a user. Use this to communicate with users.
 
@@ -344,8 +346,10 @@ The channel must always be given explicitly — there is no ambient conversation
             mockSearchService.searchMessages = mock(async () => createMockSearchResponse({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: 2,
-                    timeRange:  {
+                    coverage:         'complete',
+                    fetched:          2,
+                    matchedInFetched: 2,
+                    timeRange:        {
                         start: '2025-01-01T00:00:00.000Z',
                         end:   '2025-01-07T00:00:00.000Z',
                     },
@@ -449,8 +453,10 @@ The channel must always be given explicitly — there is no ambient conversation
 
         test('should pass producible batch overflow summaries through unchanged', async () => {
             const overflow = {
-                count:          5,
-                batchSummaries: [{
+                mode:            'summarized' as const,
+                count:           5,
+                summarizedCount: 5,
+                batchSummaries:  [{
                     startTimestamp: '2025-01-01T00:00:00.000Z',
                     endTimestamp:   '2025-01-01T00:05:00.000Z',
                     messageCount:   5,
@@ -532,8 +538,10 @@ The channel must always be given explicitly — there is no ambient conversation
             mockSearchService.getRecentMessages = mock(async () => createMockSearchResponse({
                 messages: mockMessages,
                 metadata: {
-                    totalFound: 2,
-                    timeRange:  {
+                    coverage:         'complete',
+                    fetched:          2,
+                    matchedInFetched: 2,
+                    timeRange:        {
                         start: '2025-01-01T00:00:00.000Z',
                         end:   '2025-01-07T00:00:00.000Z',
                     },

@@ -526,7 +526,7 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
         tools:      [
             tool(
                 'searchMessages',
-                'Search Discord message history by text, time range, or both. Returns messages with overflow summaries if results exceed limit. Accepts channel ID or #channel-name format.',
+                'Search Discord message history by text, time range, or both. It returns the oldest matching page and summarizes newer fetched matches in overflow. Always inspect metadata.coverage, metadata.fetched, and metadata.matchedInFetched: limitReached means the fetch cap was reached, not that all matching messages were fetched. Accepts channel ID or #channel-name format.',
                 {
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                     query:     z.string().optional().describe('Text to search for in message content'),
@@ -560,7 +560,7 @@ export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
 
             tool(
                 'getRecentMessages',
-                'Get the most recent messages from a Discord channel. Returns the N most recent messages plus an overflow count. Use searchMessages with time range for AI summaries of older messages. Accepts channel ID or #channel-name format.',
+                'Get the most recent messages from a Discord channel. It returns the newest page and a count-only overflow for older fetched messages. Always inspect metadata.coverage, metadata.fetched, and metadata.matchedInFetched: limitReached means the fetch cap was reached, not that all channel messages were fetched. Use searchMessages with time range for summaries. Accepts channel ID or #channel-name format.',
                 {
                     channelId: z.string().describe('Discord channel ID or #channel-name (e.g., #general)'),
                     limit:     z.number().int().positive().max(100).optional().describe('Number of messages to return (default 10, max 100)'),

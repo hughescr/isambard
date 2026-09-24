@@ -57,13 +57,25 @@ export interface MCPRetryHelper {
     withRetry<T>(fn: () => Promise<T>): Promise<T>
 }
 
-/**
- * Discord message search service port.
- * Return types are kept as unknown to avoid importing Discord integration types.
- */
+/** Agent-owned JSON shape for Discord MCP search responses; it avoids integration imports. */
+interface MCPMessageSearchResponse {
+    messages:  { timestamp: string, localTimestamp?: string }[]
+    overflow?:
+      | { mode: 'count-only', count: number, hint?: string }
+      | { mode: 'summarized', count: number, batchSummaries: unknown[], summarizedCount: number, hint?: string }
+    metadata: {
+        coverage:         'complete' | 'limitReached'
+        fetched:          number
+        matchedInFetched: number
+        [key: string]:    unknown
+    }
+    [key: string]: unknown
+}
+
+/** Discord message search service port. */
 export interface MCPMessageSearchService {
-    searchMessages(params: { channelId?: string, query?: string, startTime?: Date, endTime?: Date, limit?: number }): Promise<{ messages: { timestamp: string, localTimestamp?: string }[], overflow?: { count: number, batchSummaries?: unknown[], hasMore?: boolean, hint?: string }, [key: string]: unknown }>
-    getRecentMessages(channelId: string, limit?: number): Promise<{ messages: { timestamp: string, localTimestamp?: string }[], [key: string]: unknown }>
+    searchMessages(params: { channelId?: string, query?: string, startTime?: Date, endTime?: Date, limit?: number }): Promise<MCPMessageSearchResponse>
+    getRecentMessages(channelId: string, limit?: number): Promise<MCPMessageSearchResponse>
     getMessageById(channelId: string, messageId: string): Promise<{ localTimestamp?: string, timestamp: string, [key: string]: unknown } | null>
     getMessagesById(channelId: string, messageIds: string[]): Promise<{ localTimestamp?: string, timestamp: string, [key: string]: unknown }[]>
 }

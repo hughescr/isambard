@@ -58,8 +58,8 @@ function createMockSearchService(): {
     getMessagesById:   ReturnType<typeof mock>
 } & MCPMessageSearchService {
     return {
-        searchMessages:    mock(async () => ({ messages: [] })),
-        getRecentMessages: mock(async () => ({ messages: [] })),
+        searchMessages:    mock(async () => ({ messages: [], metadata: { coverage: 'complete' as const, fetched: 0, matchedInFetched: 0 } })),
+        getRecentMessages: mock(async () => ({ messages: [], metadata: { coverage: 'complete' as const, fetched: 0, matchedInFetched: 0 } })),
         getMessageById:    mock(async () => null),
         getMessagesById:   mock(async () => []),
     };

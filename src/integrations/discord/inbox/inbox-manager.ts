@@ -242,6 +242,9 @@ export class InboxManager {
                     endTime:   now,
                     limit:     this.config.maxCatchUpMessages,
                 });
+                if(response.metadata.coverage !== 'complete') {
+                    logger.warn({ channelId, coverage: response.metadata.coverage, fetched: response.metadata.fetched, matchedInFetched: response.metadata.matchedInFetched }, 'Discord inbox catch-up reached message fetch limit');
+                }
 
                 // Filter out bot messages (if botUserId is set) and convert to UnreadMessage format.
                 // filter and map preserve the empty-result contract without a separate branch.
@@ -635,6 +638,9 @@ export class InboxManager {
                 endTime,
                 limit:     this.config.maxCatchUpMessages,
             });
+            if(response.metadata.coverage !== 'complete') {
+                logger.warn({ channelId: checkpoint.channelId, coverage: response.metadata.coverage, fetched: response.metadata.fetched, matchedInFetched: response.metadata.matchedInFetched }, 'Discord inbox replay reached message fetch limit');
+            }
 
             const handledMessageIdBig = BigInt(handled.messageId);
             // Stryker disable next-line llm: response.messages is a fresh slice owned by this call, and the trailing toSorted by snowflake fixes the only observable order, so an in-place reverse first is unobservable

@@ -42,7 +42,7 @@ function dependencies(channelNames: string[]) {
                 timestamp:   '2025-01-02T00:00:00.000Z',
                 attachments: [], embeds:      [], reactions:   [],
             }],
-            metadata: { totalFound: 1, timeRange: { start: lastSeenAt, end: '2025-01-02T00:00:00.000Z' } },
+            metadata: { coverage: 'complete' as const, fetched: 1, matchedInFetched: 1, timeRange: { start: lastSeenAt, end: '2025-01-02T00:00:00.000Z' } },
         })),
     } as unknown as MessageSearchService;
     const channelRegistry = { getUnmutedChannels: mock(async () => channels) } as unknown as ChannelRegistryManager;

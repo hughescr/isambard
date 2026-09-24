@@ -676,7 +676,7 @@ describe.concurrent('createMessageFetcher', () => {
                 expect(result.messages).toHaveLength(0);
             });
 
-            test('should set hasMore to true when more messages exist', async () => {
+            test('should set limitReached to true when more messages exist', async () => {
                 const messages: Message[] = [];
                 for(let i = 0; i < 50; i++) {
                     messages.push(createMockMessage({
@@ -697,10 +697,10 @@ describe.concurrent('createMessageFetcher', () => {
                     limit:     10,
                 });
 
-                expect(result.hasMore).toBe(true);
+                expect(result.limitReached).toBe(true);
             });
 
-            test('should set hasMore to false when all messages fetched', async () => {
+            test('should set limitReached to false when all messages fetched', async () => {
                 const messages = [
                     createMockMessage({ id: '100000000000000000' }),
                     createMockMessage({ id: '100000000000000001' }),
@@ -718,7 +718,7 @@ describe.concurrent('createMessageFetcher', () => {
                     limit:     100,
                 });
 
-                expect(result.hasMore).toBe(false);
+                expect(result.limitReached).toBe(false);
             });
 
             test('should calculate remaining messages correctly when paginating', async () => {

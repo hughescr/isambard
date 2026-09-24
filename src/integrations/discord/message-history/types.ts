@@ -122,33 +122,52 @@ export const batchOverflowSummarySchema = z
 
 export type BatchOverflowSummary = z.infer<typeof batchOverflowSummarySchema>;
 
+/** Count-only overflow, used when returning the newest page of recent history. */
+const countOnlyOverflowSchema = z
+    .object({
+        mode:  z.literal('count-only'),
+        count: z.number().int().min(0, 'Count cannot be negative'),
+        hint:  z.string().optional(),
+    })
+    .strict();
+
+/** Summarized overflow, used when returning the oldest page of text search results. */
+const summarizedOverflowSchema = z
+    .object({
+        mode:            z.literal('summarized'),
+        count:           z.number().int().min(0, 'Count cannot be negative'),
+        batchSummaries:  z.array(batchOverflowSummarySchema),
+        summarizedCount: z.number().int().min(0, 'Summarized count cannot be negative'),
+        hint:            z.string().optional(),
+    })
+    .strict()
+    .refine(value => value.summarizedCount <= value.count, {
+        message: 'Summarized count cannot exceed overflow count',
+        path:    ['summarizedCount'],
+    });
+
 /**
- * Complete search response with messages and metadata.
- * Includes full messages, optional batch overflow summaries, and search metadata.
+ * Complete search response with explicit coverage boundaries.
+ * Coverage describes the channel interval versus the fetched set, overflow describes
+ * the fetched set versus the returned page, and summarizedCount describes the portion
+ * of overflow represented by Haiku summaries.
  */
 export const searchResponseSchema = z
     .object({
         /** Array of full message search results */
         messages: z.array(discordSearchResultSchema),
-        /** Overflow information for truncated results (optional) */
-        overflow: z
-            .object({
-                /** Total count of overflow messages */
-                count:          z.number().int().min(0, 'Count cannot be negative'),
-                /** Batch summaries grouping multiple messages (used by searchMessages for efficiency) */
-                batchSummaries: z.array(batchOverflowSummarySchema).optional(),
-                /** Whether more overflow messages exist beyond what was counted */
-                hasMore:        z.boolean().optional(),
-                /** Hint for narrowing search to get full summaries */
-                hint:           z.string().optional(),
-            })
-            .optional(),
-        /** Metadata about the search operation */
+        /** Overflow from the fetched set which is not present in messages */
+        overflow: z.discriminatedUnion('mode', [countOnlyOverflowSchema, summarizedOverflowSchema]).optional(),
+        /** Metadata about the search operation and fetched-set coverage */
         metadata: z.object({
-            /** Total number of messages found */
-            totalFound: z.number().int().min(0),
+            /** Whether Discord pagination completed the requested channel interval */
+            coverage:         z.enum(['complete', 'limitReached']),
+            /** Number of source messages fetched before text-query filtering */
+            fetched:          z.number().int().min(0),
+            /** Number of fetched messages which matched the text query */
+            matchedInFetched: z.number().int().min(0),
             /** Time range of the search results */
-            timeRange:  z.object({
+            timeRange:        z.object({
                 /** Start of the time range (ISO 8601) */
                 start: z.iso.datetime(),
                 /** End of the time range (ISO 8601) */

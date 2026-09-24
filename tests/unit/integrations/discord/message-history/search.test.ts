@@ -57,7 +57,7 @@ describe('createMessageSearchService', () => {
         jest.setSystemTime(new Date('2025-01-20T12:00:00.000Z'));
 
         mockFetcher = {
-            fetchMessages: mock(() => Promise.resolve({ messages: [], hasMore: false })),
+            fetchMessages: mock(() => Promise.resolve({ messages: [], limitReached: false })),
             fetchById:     mock(() => Promise.resolve(null)),
             fetchByIds:    mock(() => Promise.resolve([])),
         };
@@ -87,8 +87,8 @@ describe('createMessageSearchService', () => {
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
-                        messages: [fetchedMessage],
-                        hasMore:  false,
+                        messages:     [fetchedMessage],
+                        limitReached: false,
                     })
                 );
 
@@ -113,8 +113,8 @@ describe('createMessageSearchService', () => {
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
-                        messages: [fetchedMessage],
-                        hasMore:  false,
+                        messages:     [fetchedMessage],
+                        limitReached: false,
                     })
                 );
 
@@ -153,7 +153,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -166,6 +166,32 @@ describe('createMessageSearchService', () => {
                 expect(result.messages).toHaveLength(2);
                 expect(result.messages[0].content).toBe('Oldest message');
                 expect(result.messages[1].content).toBe('Older message');
+            });
+        });
+
+        describe('coverage metadata', () => {
+            test('reports fetched count, filtered matches, and a reached fetch cap', async () => {
+                (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
+                    Promise.resolve({
+                        messages: [
+                            createMockSearchResult({ id: '100000000000000001', content: 'match one' }),
+                            createMockSearchResult({ id: '100000000000000002', content: 'other' }),
+                        ],
+                        limitReached: true,
+                    })
+                );
+
+                const result = await service.searchMessages({ channelId: createChannelId(testChannelId), query: 'match' });
+
+                expect(result.metadata).toMatchObject({ coverage: 'limitReached', fetched: 2, matchedInFetched: 1 });
+            });
+
+            test('reports complete coverage when the fetch cap was not reached', async () => {
+                const result = await service.searchMessages({ channelId: createChannelId(testChannelId) });
+
+                expect(result.metadata.coverage).toBe('complete');
+                expect(result.metadata.fetched).toBe(0);
+                expect(result.metadata.matchedInFetched).toBe(0);
             });
         });
 
@@ -248,7 +274,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -271,7 +297,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -302,7 +328,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -339,8 +365,8 @@ describe('createMessageSearchService', () => {
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
-                        messages: fetchedMessages,
-                        hasMore:  false,
+                        messages:     fetchedMessages,
+                        limitReached: false,
                     })
                 );
 
@@ -372,7 +398,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -394,7 +420,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -420,7 +446,7 @@ describe('createMessageSearchService', () => {
                 ];
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
-                    Promise.resolve({ messages, hasMore: false })
+                    Promise.resolve({ messages, limitReached: false })
                 );
 
                 const result = await service.getRecentMessages(testChannelId, 5);
@@ -444,7 +470,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -471,7 +497,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -492,7 +518,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -513,11 +539,11 @@ describe('createMessageSearchService', () => {
 
                 expect(result.overflow).toBeDefined();
                 expect(result.overflow!.count).toBe(5);
-                expect(result.overflow!.batchSummaries).toBeDefined();
+                expect(('batchSummaries' in result.overflow! ? result.overflow.batchSummaries : undefined)).toBeDefined();
                 expect(mockSummarizer.summarizeMessageBatch).toHaveBeenCalled();
             });
 
-            test('should include totalFound in metadata', async () => {
+            test('should include matchedInFetched in metadata', async () => {
                 const messages = Array.from({ length: 15 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
@@ -527,7 +553,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -536,7 +562,7 @@ describe('createMessageSearchService', () => {
                     limit:     5,
                 });
 
-                expect(result.metadata.totalFound).toBe(15);
+                expect(result.metadata.matchedInFetched).toBe(15);
             });
 
             test('should not have overflow when messages are within limit', async () => {
@@ -549,7 +575,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -585,7 +611,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -629,7 +655,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -649,7 +675,7 @@ describe('createMessageSearchService', () => {
                 });
 
                 expect(result.overflow?.count).toBe(5);
-                expect(result.overflow?.batchSummaries).toEqual([{
+                expect((result.overflow && 'batchSummaries' in result.overflow ? result.overflow.batchSummaries : undefined)).toEqual([{
                     startTimestamp: '2025-01-15T12:00:00.000Z',
                     endTimestamp:   '2025-01-15T12:05:00.000Z',
                     messageCount:   5,
@@ -669,7 +695,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -690,15 +716,15 @@ describe('createMessageSearchService', () => {
 
                 expect(result.overflow).toBeDefined();
                 expect(result.overflow!.count).toBe(140); // 150 - 10
-                expect(result.overflow!.hasMore).toBe(true);
-                expect(result.overflow!.hint).toBe('Narrow your search with startTime/endTime to see all messages');
+                expect(('summarizedCount' in result.overflow! ? result.overflow.summarizedCount : undefined)).toBe(100);
+                expect(result.overflow!.hint).toBe('Newer fetched matches beyond the summaries are not represented; narrow the time range to inspect them');
 
                 // Summarizer should receive at most 100 messages
                 const batchCall = (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mock.calls[0];
                 expect(batchCall[0]).toHaveLength(100);
             });
 
-            test('should not set hasMore when overflow is within cap', async () => {
+            test('should not set limitReached when overflow is within cap', async () => {
                 const messages = Array.from({ length: 50 }, (_, i) =>
                     createMockSearchResult({
                         id:      `10000000000000000${i}`,
@@ -708,7 +734,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -728,11 +754,11 @@ describe('createMessageSearchService', () => {
                 });
 
                 expect(result.overflow).toBeDefined();
-                expect(result.overflow!.hasMore).toBeUndefined();
+                expect(('summarizedCount' in result.overflow! ? result.overflow.summarizedCount : undefined)).toBe(40);
                 expect(result.overflow!.hint).toBeUndefined();
             });
 
-            test('should not set hasMore when overflow is exactly MAX_OVERFLOW_FOR_SUMMARY (100)', async () => {
+            test('should not set limitReached when overflow is exactly MAX_OVERFLOW_FOR_SUMMARY (100)', async () => {
                 // 110 messages with limit 10 = exactly 100 overflow
                 const messages = Array.from({ length: 110 }, (_, i) =>
                     createMockSearchResult({
@@ -743,7 +769,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -764,12 +790,12 @@ describe('createMessageSearchService', () => {
 
                 expect(result.overflow).toBeDefined();
                 expect(result.overflow!.count).toBe(100);
-                expect(result.overflow!.hasMore).toBeUndefined();
+                expect(('summarizedCount' in result.overflow! ? result.overflow.summarizedCount : undefined)).toBe(100);
                 expect(result.overflow!.hint).toBeUndefined();
-                expect(result.overflow!.batchSummaries).toBeDefined();
+                expect(('batchSummaries' in result.overflow! ? result.overflow.batchSummaries : undefined)).toBeDefined();
             });
 
-            test('should set hasMore when overflow is exactly one more than cap (101)', async () => {
+            test('should set limitReached when overflow is exactly one more than cap (101)', async () => {
                 // 111 messages with limit 10 = 101 overflow (just over cap)
                 const messages = Array.from({ length: 111 }, (_, i) =>
                     createMockSearchResult({
@@ -780,7 +806,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -801,8 +827,8 @@ describe('createMessageSearchService', () => {
 
                 expect(result.overflow).toBeDefined();
                 expect(result.overflow!.count).toBe(101);
-                expect(result.overflow!.hasMore).toBe(true);
-                expect(result.overflow!.hint).toBe('Narrow your search with startTime/endTime to see all messages');
+                expect(('summarizedCount' in result.overflow! ? result.overflow.summarizedCount : undefined)).toBe(100);
+                expect(result.overflow!.hint).toBe('Newer fetched matches beyond the summaries are not represented; narrow the time range to inspect them');
 
                 // Should cap at 100 messages sent to summarizer
                 const batchCall = (mockSummarizer.summarizeMessageBatch as ReturnType<typeof mock>).mock.calls[0];
@@ -822,7 +848,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -844,7 +870,7 @@ describe('createMessageSearchService', () => {
                 const originalOrder = messages.map(message => message.id);
 
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
-                    Promise.resolve({ messages, hasMore: false })
+                    Promise.resolve({ messages, limitReached: false })
                 );
 
                 await service.searchMessages({
@@ -863,7 +889,7 @@ describe('createMessageSearchService', () => {
 
                 expect(result.messages).toHaveLength(0);
                 expect(result.overflow).toBeUndefined();
-                expect(result.metadata.totalFound).toBe(0);
+                expect(result.metadata.matchedInFetched).toBe(0);
             });
 
             test('should return empty array when query matches nothing', async () => {
@@ -874,7 +900,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -884,7 +910,7 @@ describe('createMessageSearchService', () => {
                 });
 
                 expect(result.messages).toHaveLength(0);
-                expect(result.metadata.totalFound).toBe(0);
+                expect(result.metadata.matchedInFetched).toBe(0);
             });
         });
 
@@ -909,7 +935,7 @@ describe('createMessageSearchService', () => {
                 (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                     Promise.resolve({
                         messages,
-                        hasMore: false,
+                        limitReached: false,
                     })
                 );
 
@@ -966,7 +992,7 @@ describe('createMessageSearchService', () => {
             (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                 Promise.resolve({
                     messages,
-                    hasMore: false,
+                    limitReached: false,
                 })
             );
 
@@ -985,7 +1011,7 @@ describe('createMessageSearchService', () => {
                 }));
 
             (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
-                Promise.resolve({ messages, hasMore: false })
+                Promise.resolve({ messages, limitReached: false })
             );
 
             const result = await service.getRecentMessages(testChannelId, 0);
@@ -1005,7 +1031,7 @@ describe('createMessageSearchService', () => {
             (mockFetcher.fetchMessages as ReturnType<typeof mock>).mockImplementation(() =>
                 Promise.resolve({
                     messages,
-                    hasMore: false,
+                    limitReached: false,
                 })
             );
 
@@ -1020,8 +1046,8 @@ describe('createMessageSearchService', () => {
             ]);
             expect(result.overflow).toBeDefined();
             expect(result.overflow!.count).toBe(15);
-            expect(result.overflow!.batchSummaries).toBeUndefined();
-            expect(result.overflow!.hint).toBe('Use searchMessages with startTime/endTime to get AI summaries of older messages');
+            expect(('batchSummaries' in result.overflow! ? result.overflow.batchSummaries : undefined)).toBeUndefined();
+            expect(result.overflow!.hint).toBe('Older fetched messages were not returned; use searchMessages with startTime/endTime for summaries');
             expect(mockSummarizer.summarizeMessageBatch).not.toHaveBeenCalled();
         });
 
