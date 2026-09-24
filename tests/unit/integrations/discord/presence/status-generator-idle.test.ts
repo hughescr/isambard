@@ -3,7 +3,99 @@ import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { ActivityType } from 'discord.js';
 import { mockGenerateTextWithSystemPrompt, originalGenerateTextWithSystemPrompt } from '../../../../setup';
 import type { Signal } from '@/agent';
-import { createIdleStatusGenerator, type IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
+import { createIdleStatusGenerator, rejectIdleStatusText, type IdleStatusGeneratorDeps } from '@/integrations/discord/presence/status-generator-idle';
+
+const DEFAULT_IDLE_TEXT = 'Idle';
+
+describe('rejectIdleStatusText', () => {
+    test.each([
+        'Dozing peacefully',
+        'That error haunts me still',
+    ])('returns null for a short in-style fragment (%s)', (text) => {
+        expect(rejectIdleStatusText(text)).toBeNull();
+    });
+
+    test('returns null for text exactly 80 characters long', () => {
+        expect(rejectIdleStatusText('A'.repeat(80))).toBeNull();
+    });
+
+    test('returns "too_long" for text 81 characters long (kills the > vs >= boundary mutant)', () => {
+        expect(rejectIdleStatusText('A'.repeat(81))).toBe('too_long');
+    });
+
+    test('returns "too_long" for a long benign non-reasoning string', () => {
+        expect(rejectIdleStatusText('word '.repeat(20).trim())).toBe('too_long');
+    });
+
+    test('returns "multiline" for any text containing a newline', () => {
+        expect(rejectIdleStatusText('first line\nsecond line')).toBe('multiline');
+    });
+
+    test('reports "multiline" before "too_long" when a string is both multiline and over 80 chars (proves check order)', () => {
+        expect(rejectIdleStatusText(`${'A'.repeat(90)}\nmore`)).toBe('multiline');
+    });
+
+    test.each([
+        'I need to think about this',
+        'I should pick a signal',
+        "I'll write something short",
+        'I will keep it brief',
+        "I'm going to focus on one thread",
+        "I'm trying to capture the mood",
+        'I want to say something vague',
+        'Let me think of a phrase',
+        'First, consider the signals',
+        'We need a short fragment',
+        'Based on the context here',
+        'Looking at the signals now',
+        "Here's a thought for you",
+        'Here is a fleeting fragment',
+        'Perfect. That captures it',
+        'Okay, here is the status',
+        'Alright, one more thought',
+    ])('returns "reasoning" for a narration opener (%s)', (text) => {
+        expect(rejectIdleStatusText(text)).toBe('reasoning');
+    });
+
+    test('matches a reasoning opener case-insensitively', () => {
+        expect(rejectIdleStatusText('i need to think about this')).toBe('reasoning');
+    });
+
+    test('returns null when "I need to" appears mid-sentence rather than at the start (proves the anchor, not a bare substring check)', () => {
+        expect(rejectIdleStatusText('Somehow I need to keep moving')).toBeNull();
+    });
+
+    test.each([
+        'Isambard is thinking about bugs',
+        'They are quiet tonight',
+    ])('returns "third_person" for third-person narration (%s)', (text) => {
+        expect(rejectIdleStatusText(text)).toBe('third_person');
+    });
+
+    test('matches third-person narration case-insensitively', () => {
+        expect(rejectIdleStatusText('isambard is thinking about bugs')).toBe('third_person');
+    });
+
+    test('returns null for text merely containing "Izzy" without the banned verb', () => {
+        expect(rejectIdleStatusText('Izzy island, Craig mainland')).toBeNull();
+    });
+
+    test('returns null for the literal DEFAULT_IDLE_TEXT fallback', () => {
+        expect(rejectIdleStatusText(DEFAULT_IDLE_TEXT)).toBeNull();
+    });
+
+    test('the untruncated #122 production repro is rejected as reasoning', () => {
+        expect(rejectIdleStatusText('I need to pick one or two signals and let them shape a fleeting thought')).toBe('reasoning');
+    });
+
+    // Empty text is not rejected by this function (none of its checks fire on ''); the '' case is
+    // handled separately, before this function is even called, by resolveIdleText's own `rawText
+    // === ''` branch (reported as reason 'empty'). This function is only ever called on non-empty
+    // text in production; this test documents the split rather than relying on it implicitly.
+    test('does not itself reject an empty string (the "empty" reason comes from resolveIdleText, not here)', () => {
+        expect(rejectIdleStatusText('')).toBeNull();
+    });
+});
 
 describe('IdleStatusGenerator', () => {
     const mockLogger: IdleStatusGeneratorDeps['logger'] = {
@@ -98,7 +190,7 @@ describe('IdleStatusGenerator', () => {
             { len: 200, 'char': 'A', desc: '200 characters' },
             { len: 128, 'char': 'B', desc: 'exactly 128 characters' },
             { len: 129, 'char': 'C', desc: '129 characters' },
-        ])('should truncate status text from $desc with word-boundary truncation', async ({ len, char }) => {
+        ])('falls back to the built-in idle text for an over-80-char generation ($desc), rather than truncating it', async ({ len, char }) => {
             const text = char.repeat(len);
             mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
 
@@ -110,17 +202,12 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            // truncateToWordBoundary with no spaces: hard truncates at maxLength-1 (124) + '…'
-            // maxLength = 128 - 3 (emojiPrefix.length) = 125
-            // No spaces in repeated-char text → slice(0, 124) + '…' = 125 chars
-            // Final with "💤 " (3 code units): 3 + 125 = 128 code units (Discord's limit)
-            expect(result.name).toHaveLength(128); // Discord's limit is based on .length
-            expect(result.name).toBe(`💤 ${char.repeat(124)}\u2026`);
-            // Verify correct truncation for edge cases
-            if(len > 125) {
-                expect(result.name).not.toBe(text);
-                expect(result.name.length).not.toBeGreaterThan(128); // should not exceed Discord's limit
-            }
+            // Was: truncate-and-show for any length. That truncation is exactly how #122's
+            // reasoning dump reached Discord (a runaway generation cut to fit rather than
+            // refused), so text over 80 chars is now rejected outright ('too_long') and the
+            // previous/default status is shown instead.
+            expect(result.name).toBe('💤 Idle');
+            expect(result.name).not.toContain(char.repeat(50));
         });
 
         test('should handle text with leading/trailing whitespace (trimmed by generateTextWithSystemPrompt)', async () => {
@@ -138,9 +225,12 @@ describe('IdleStatusGenerator', () => {
             expect(result.name).toBe('💤 Waiting patiently');
         });
 
-        test('should truncate at word boundary with ellipsis when text is too long', async () => {
-            // A long response with spaces — word-boundary truncation should cut at a space
-            // rather than mid-word, and append '…' (unicode ellipsis)
+        test('rejects an over-80-char response outright rather than word-boundary-truncating it', async () => {
+            // Was: word-boundary truncation for any length. That truncation is exactly how
+            // #122's reasoning dump reached Discord (cut to fit rather than refused), so text
+            // over 80 chars is now rejected outright, even ordinary space-separated text like
+            // this. truncateToWordBoundary's real behaviour is still exercised via the P11
+            // composed-prefix path below.
             const longText = 'hello world '.repeat(20); // 240 chars of "hello world " repeated
 
             mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(longText));
@@ -153,15 +243,7 @@ describe('IdleStatusGenerator', () => {
 
             const result = await generator.generate();
 
-            // Should end with ellipsis (word-boundary truncation), not a mid-word cut
-            expect(result.name).toEndWith('\u2026');
-            // Should not exceed Discord's 128-code-unit limit
-            expect(result.name.length).toBeLessThanOrEqual(128);
-            // Should not contain a partial word at the end (before the ellipsis)
-            const statusWithoutEmoji = result.name.replace('💤 ', '');
-            const withoutEllipsis = statusWithoutEmoji.slice(0, -1); // remove '…'
-            expect(withoutEllipsis).not.toEndWith('hell');  // not mid-word
-            expect(withoutEllipsis).not.toEndWith('worl');  // not mid-word
+            expect(result.name).toBe('💤 Idle');
         });
 
         test('should fall back to "Idle" on generateTextWithSystemPrompt error', async () => {
@@ -219,8 +301,8 @@ describe('IdleStatusGenerator', () => {
 
                 expect(result.name).toBe('💤 Still chewing on that trace');
                 expect(mockLogger.warn).toHaveBeenCalledWith(
-                    { usedPreviousStatus: true },
-                    'Idle status generation produced no text'
+                    { usedPreviousStatus: true, reason: 'empty' },
+                    'Idle status generation produced no usable text'
                 );
             });
 
@@ -238,8 +320,8 @@ describe('IdleStatusGenerator', () => {
 
                 expect(result.name).toBe('💤 Idle');
                 expect(mockLogger.warn).toHaveBeenCalledWith(
-                    { usedPreviousStatus: false },
-                    'Idle status generation produced no text'
+                    { usedPreviousStatus: false, reason: 'empty' },
+                    'Idle status generation produced no usable text'
                 );
             });
 
@@ -257,8 +339,8 @@ describe('IdleStatusGenerator', () => {
 
                 expect(result.name).toBe('💤 Idle');
                 expect(mockLogger.warn).toHaveBeenCalledWith(
-                    { usedPreviousStatus: false },
-                    'Idle status generation produced no text'
+                    { usedPreviousStatus: false, reason: 'empty' },
+                    'Idle status generation produced no usable text'
                 );
             });
 
@@ -305,6 +387,208 @@ describe('IdleStatusGenerator', () => {
 
                 expect(result.name).toBe('💤 Chasing a loose thread');
                 expect(mockLogger.warn).not.toHaveBeenCalled();
+            });
+        });
+
+        /**
+         * #122: a non-empty but reasoning-shaped, over-length, multiline, or third-person
+         * generation must never be published verbatim (the real bug: the model's planning
+         * narration was word-boundary-truncated to 128 chars and shown as-is). Mirrors the
+         * 'empty generation' describe block above, one behaviour per rejection reason.
+         */
+        describe('rejected (non-empty but unusable) generation', () => {
+            test.each([
+                { reason: 'reasoning', text: 'I need to pick one or two signals and let them shape a fleeting thought' },
+                { reason: 'too_long', text: 'A'.repeat(81) },
+                { reason: 'multiline', text: 'first line\nsecond line' },
+                { reason: 'third_person', text: 'Isambard is thinking about bugs' },
+            ])('reuses the cached previous status when generation is rejected as $reason', async ({ reason, text }) => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => 'Still chewing on that trace',
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Still chewing on that trace');
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    { usedPreviousStatus: true, reason },
+                    'Idle status generation produced no usable text'
+                );
+            });
+
+            test.each([
+                { reason: 'reasoning', text: 'I need to pick one or two signals and let them shape a fleeting thought' },
+                { reason: 'too_long', text: 'A'.repeat(81) },
+                { reason: 'multiline', text: 'first line\nsecond line' },
+                { reason: 'third_person', text: 'Isambard is thinking about bugs' },
+            ])('falls back to the built-in idle text when generation is rejected as $reason and nothing is cached', async ({ reason, text }) => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => undefined,
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Idle');
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    { usedPreviousStatus: false, reason },
+                    'Idle status generation produced no usable text'
+                );
+            });
+
+            test('treats a previously-cached BAD status (itself reasoning-shaped) as unusable, falling through to the built-in idle text even though something is cached', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('I need to think about this'));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => 'I should have been rejected when cached',
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Idle');
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    { usedPreviousStatus: false, reason: 'reasoning' },
+                    'Idle status generation produced no usable text'
+                );
+            });
+
+            test('treats a previously-cached BAD status (over 80 chars) as unusable', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('first line\nsecond line'));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => 'B'.repeat(81),
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Idle');
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    { usedPreviousStatus: false, reason: 'multiline' },
+                    'Idle status generation produced no usable text'
+                );
+            });
+
+            test('keeps the composed P11 prefix and appends the reused status when generation is rejected', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('I need to think about this'));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => 'Still chewing on that trace',
+                });
+
+                const result = await generator.generate({ prefix: '💤 2 tasks' });
+
+                expect(result.name).toBe('💤 2 tasks • Still chewing on that trace');
+            });
+
+            test('the untruncated #122 production repro never appears in the published status', async () => {
+                const productionLeak = 'I need to pick one or two signals and let them shape a fleeting thought—something brief, vague, evocative. No…';
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(productionLeak));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => undefined,
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).not.toContain(productionLeak);
+                expect(result.name).toBe('💤 Idle');
+            });
+        });
+
+        describe('quote-wrapped generation', () => {
+            test.each([
+                ['straight', '"Dozing peacefully"'],
+                ['curly', '“Dozing peacefully”'],
+            ])('strips one pair of surrounding %s double quotes from an otherwise-usable status', async (_label, quoted) => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(quoted));
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: () => Promise.resolve('Test identity'),
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Dozing peacefully');
+            });
+
+            test.each([
+                // Baseline: quotes that are not a surrounding pair are left alone.
+                ['leaves quotes that are not a surrounding pair alone', 'Wondering if "this" is real'],
+                // Kills the ^-anchor mutant: unanchored, this would swallow the inner quotes.
+                ['leaves a status that merely ENDS with a quoted word alone', 'Wondering about "this"'],
+                // Kills the $-anchor mutant: without it, the leading quoted word would be unwrapped.
+                ['leaves a status that merely STARTS with a quoted word alone', '"this" still lingers'],
+            ])('%s', async (_name, text) => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
+
+                const generator = createIdleStatusGenerator({
+                    logger:          mockLogger,
+                    activityType:    ActivityType.Custom,
+                    identityContext: () => Promise.resolve('Test identity'),
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe(`💤 ${text}`);
+            });
+
+            test('strips the quotes BEFORE validating, so a quote-wrapped reasoning dump is still rejected (#122 regression: quotes previously bypassed the reasoning-opener check)', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('"I need to pick a status"'));
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    getPreviousStatus: () => undefined,
+                });
+
+                const result = await generator.generate();
+
+                expect(result.name).toBe('💤 Idle');
+                expect(result.name).not.toContain('I need to pick a status');
+                expect(mockLogger.warn).toHaveBeenCalledWith(
+                    { usedPreviousStatus: false, reason: 'reasoning' },
+                    'Idle status generation produced no usable text'
+                );
+            });
+
+            test('persists the dequoted text as the previous status, not the raw quoted form', async () => {
+                mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('"Dozing peacefully"'));
+                const mockSetPreviousStatus = mock((_text: string) => undefined);
+
+                const generator = createIdleStatusGenerator({
+                    logger:            mockLogger,
+                    activityType:      ActivityType.Custom,
+                    identityContext:   () => Promise.resolve('Test identity'),
+                    setPreviousStatus: mockSetPreviousStatus,
+                });
+
+                await generator.generate();
+
+                expect(mockSetPreviousStatus).toHaveBeenCalledWith('Dozing peacefully');
             });
         });
 
@@ -390,10 +674,14 @@ describe('IdleStatusGenerator', () => {
             );
         });
 
-        test('should slice starting from index 0', async () => {
-            // This test ensures slice(0, 128) starts at 0, not some other index
-            const text = `ABCDEFGHIJ${'X'.repeat(118)}`;
-            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(text));
+        test('should slice starting from index 0 (via a P11-squeezed digest, since an 80+ char digest is now rejected before slicing)', async () => {
+            // digest kept <=80 chars so it survives resolveIdleText's too_long rejection; a wide
+            // prefix squeezes the remaining budget below the digest's length so the real
+            // truncateToWordBoundary slice still runs and this proves it starts at index 0, not
+            // some other index.
+            const digest = `ABCDEFGHIJ${'X'.repeat(60)}`; // 70 chars
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(digest));
+            const prefix = 'Y'.repeat(100); // remaining budget: 128 - 100 - 3 = 25
 
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
@@ -401,11 +689,10 @@ describe('IdleStatusGenerator', () => {
                 identityContext: () => Promise.resolve('Test identity'),
             });
 
-            const result = await generator.generate();
+            const result = await generator.generate({ prefix });
 
-            // Should start with emoji prefix, then 'A'
-            expect(result.name).toStartWith('💤 A');
-            expect(result.name).toStartWith('💤 ABCDEFGHIJ');
+            expect(result.name).toStartWith(`${prefix} • A`);
+            expect(result.name).toStartWith(`${prefix} • ABCDEFGHIJ`);
         });
 
         // Tests for getRecentContext functionality
@@ -1099,8 +1386,10 @@ describe('IdleStatusGenerator', () => {
             await expect(generator.generate()).resolves.toBeDefined();
         });
 
-        test('should call setPreviousStatus even when text gets truncated', async () => {
-            // 200 A's — truncated to 124 chars + '…'
+        test('should call setPreviousStatus even when the generation is rejected as too_long (using the fallback text)', async () => {
+            // Was: 200 A's, truncated by composeDefaultIdleStatus. Now rejected outright as
+            // too_long before composition, so the fallback ('Idle', nothing cached) is what
+            // gets composed and persisted instead.
             const longText = 'A'.repeat(200);
             mockGenerateTextWithSystemPrompt.mockResolvedValue(longText);
             const mockSetPreviousStatus = mock((_text: string) => undefined);
@@ -1116,10 +1405,9 @@ describe('IdleStatusGenerator', () => {
 
             await generator.generate();
 
-            // setPreviousStatus receives the truncated statusText (without emoji prefix)
+            // setPreviousStatus receives the fallback text ('Idle'), not the rejected generation
             expect(mockSetPreviousStatus).toHaveBeenCalledTimes(1);
-            // toHaveBeenCalledWith with a matcher verifies truncation happened
-            expect(mockSetPreviousStatus).toHaveBeenCalledWith(expect.stringMatching(/…$/u));
+            expect(mockSetPreviousStatus).toHaveBeenCalledWith('Idle');
         });
 
         test('should fall back to Idle on getLiveSignals error without calling setPreviousStatus', async () => {
@@ -1196,8 +1484,14 @@ describe('IdleStatusGenerator', () => {
         });
 
         test('generate({ prefix }) keeps the prefix intact and word-boundary-truncates the text to fit 128', async () => {
-            const longText = 'word '.repeat(40).trim();
-            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(longText));
+            // Digest kept <=80 chars (so it survives resolveIdleText's own too_long rejection —
+            // #122's fix rejects the RAW generation over 80 chars before composition even runs);
+            // the prefix is widened so the remaining P11 budget (128 - 70 - 3 = 55) is still
+            // narrower than the 74-char digest, so renderPrefixedText's real word-boundary
+            // truncation is exercised here rather than at generation time.
+            const digest = 'word '.repeat(15).trim(); // 74 chars
+            mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve(digest));
+            const prefix = 'X'.repeat(70);
 
             const generator = createIdleStatusGenerator({
                 logger:          mockLogger,
@@ -1205,10 +1499,11 @@ describe('IdleStatusGenerator', () => {
                 identityContext: () => Promise.resolve('Test identity'),
             });
 
-            const result = await generator.generate({ prefix: '💤 • 2 🔬' });
+            const result = await generator.generate({ prefix });
 
-            expect(result.name).toStartWith('💤 • 2 🔬 • word word');
+            expect(result.name).toStartWith(`${prefix} • word word`);
             expect(result.name).toEndWith('…');
+            expect(result.name).not.toContain(digest); // proves it was actually truncated
             expect(result.name.length).toBeLessThanOrEqual(128);
         });
 

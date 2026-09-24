@@ -19,11 +19,17 @@ export interface IdleStatusGenerator {
    * Generate creative idle status text using Claude Haiku.
    * This is async and may fail - returns fallback "Idle" on error.
    *
+   * A generation that is empty, multiline, over 80 characters, or shaped like reasoning/planning
+   * narration rather than a status (see {@link rejectIdleStatusText}) is refused outright and
+   * replaced with the last known-good status (itself re-validated) or `'Idle'` — never truncated
+   * to fit, since truncating a runaway narration is how it would reach Discord looking like a
+   * status. Only a usable digest reaches the composition below.
+   *
    * With no `options` (or `options.prefix` omitted), behaves exactly as before: a `'💤 '`
    * emoji prefix and a 128-code-unit budget. When `options.prefix` is given (the P11 composed
-   * presence prefix), that prefix is rendered in full and never truncated; the generated text is
-   * word-boundary-truncated to whatever budget remains out of Discord's 128-code-unit limit
-   * (after the prefix, a ` • ` separator, and — when `options.compacting` — a `'compacting'`
+   * presence prefix), that prefix is rendered in full and never truncated; the (already-usable)
+   * digest is word-boundary-truncated to whatever budget remains out of Discord's 128-code-unit
+   * limit (after the prefix, a ` • ` separator, and — when `options.compacting` — a `'compacting'`
    * marker), and dropped entirely when fewer than 12 code units would remain for it.
    *
    * @param options - Optional composed prefix and compacting marker (P11)
@@ -147,6 +153,64 @@ const IDLE_GENERATION_TIMEOUT_MS = 30_000;
 interface ComposedIdleStatus {
     name:        string
     digestText?: string
+}
+
+/**
+ * The system prompt's own stated "HARD MAX: 80 characters" — anything longer is a paragraph of
+ * narration, not a status, so it is refused outright rather than word-boundary-truncated. Matches
+ * `synopsis-generator.ts`'s `SYNOPSIS_MAX_LENGTH` precedent for the identical reasoning: trimming
+ * a runaway generation to fit would cache a bad shape (and is exactly how #122's reasoning dump
+ * reached Discord — truncated to 128 chars and shown as-is).
+ */
+const IDLE_STATUS_HARD_MAX = 80;
+
+/**
+ * One pair of double quotes wrapped around the whole response, straight or curly. Haiku sometimes
+ * quotes the status even though the system prompt forbids it; that is a formatting tic, not a bad
+ * status, so the quotes come off before {@link rejectIdleStatusText} judges the text — otherwise a
+ * quoted reasoning dump (`"I need to pick a status"`) slips past {@link REASONING_OPENING_PATTERN},
+ * which is anchored to the opening word and does not expect a leading `"`. Matches
+ * `synopsis-generator.ts`'s identical `SURROUNDING_QUOTES_PATTERN`.
+ */
+const SURROUNDING_QUOTES_PATTERN = /^["“]([\s\S]*)["”]$/;
+
+/**
+ * Openings that mean Haiku narrated the job of writing a status instead of writing one. Drawn from
+ * the production leak in #122 ("I need to pick one or two signals and let them shape a fleeting
+ * thought...") plus the system prompt's own `## NEVER output` meta-commentary examples
+ * ("Based on...", "Looking at...", "Here's...", "Perfect. I can see...").
+ */
+const REASONING_OPENING_PATTERN = /^(?:I need to|I should|I'll|I will|I'm going to|I'm trying to|I want to|Let me|First,|We need|Based on|Looking at|Here's|Here is|Perfect[.,]|Okay[.,]|Alright[.,])/i;
+
+/** Izzy written about rather than from: the third-person case the system prompt forbids most explicitly. */
+const THIRD_PERSON_PATTERN = /\b(?:Isambard|Izzy|They) (?:is|are|was|needs|wants)\b/i;
+
+/**
+ * Judge a non-empty Haiku response: is this an idle status, or a comment about the job of writing
+ * one? Mirrors `synopsis-generator.ts`'s `rejectSynopsis` — checked in this order so the reported
+ * reason is the first thing wrong: a multiline narration is `multiline`, not `too_long`.
+ *
+ * Only ever called on non-empty text — an empty generation is its own `resolveIdleText` branch,
+ * reported as `'empty'`, not routed through here.
+ *
+ * @internal Exported for direct unit testing; production reaches it through resolveIdleText.
+ * @param text - The trimmed generated text (or a previously cached status being re-validated)
+ * @returns The reason to reject, or null when the text is usable as-is
+ */
+export function rejectIdleStatusText(text: string): string | null {
+    if(text.includes('\n')) {
+        return 'multiline';
+    }
+    if(text.length > IDLE_STATUS_HARD_MAX) {
+        return 'too_long';
+    }
+    if(REASONING_OPENING_PATTERN.test(text)) {
+        return 'reasoning';
+    }
+    if(THIRD_PERSON_PATTERN.test(text)) {
+        return 'third_person';
+    }
+    return null;
 }
 
 /** Unchanged pre-P11 behaviour: a bare `'💤 '` prefix and a 128-code-unit budget for the whole thing. */
@@ -288,27 +352,35 @@ export function createIdleStatusGenerator(
     /**
      * The text to actually compose into the status.
      *
-     * An empty generation (the deadline firing, an abort, or a model that returned nothing) must
-     * never be applied: composing it produced a status that was all prefix and no thought. Instead
-     * the last status this generator produced keeps standing — the same "refuse it rather than
-     * cache it" stance the session core's turn synopsis generator (`rejectSynopsis` in
-     * `src/agent/session/synopsis-generator.ts`) takes for a
-     * response it would not want to show, reached here by keeping the previous value rather than
-     * by returning null (this generator has no caller-side skip to return into: it must produce an
-     * activity every time).
+     * An empty generation (the deadline firing, an abort, or a model that returned nothing), or a
+     * non-empty one that is refused by {@link rejectIdleStatusText} (multiline, over the 80-char
+     * hard max, or reasoning/planning narration such as #122's "I need to pick one or two
+     * signals..." leak), must never be applied: composing either produces a status that is not a
+     * thought. Instead the last status this generator produced keeps standing — the same "refuse
+     * it rather than cache it" stance the session core's turn synopsis generator (`rejectSynopsis`
+     * in `src/agent/session/synopsis-generator.ts`) takes for a response it would not want to show,
+     * reached here by keeping the previous value rather than by returning null (this generator has
+     * no caller-side skip to return into: it must produce an activity every time).
+     *
+     * The cached previous status is itself re-validated with {@link rejectIdleStatusText} before
+     * being reused: without this, a previously-cached bad status (e.g. one cached in-memory just
+     * before this fix deployed, or from any future regression) would be reused, truncated by the
+     * compose functions, and reintroduce the exact same bug via the fallback path instead of the
+     * primary path.
      *
      * @param rawText - The trimmed generated text
-     * @returns `rawText` when it has content, else the cached previous status, else {@link DEFAULT_IDLE_TEXT}
+     * @returns `rawText` when it is usable as-is, else the re-validated cached previous status, else {@link DEFAULT_IDLE_TEXT}
      */
     function resolveIdleText(rawText: string): string {
-        if(rawText !== '') {
+        const reason = rawText === '' ? 'empty' : rejectIdleStatusText(rawText);
+        if(reason === null) {
             return rawText;
         }
         const previous = getPreviousStatus?.();
         // Stryker disable next-line llm: for any string, trim() !== '' and trim().length > 0 are equivalent
-        const fallback = previous !== undefined && previous.trim() !== '' ? previous : DEFAULT_IDLE_TEXT;
-        // Stryker disable next-line llm: previous is string | undefined and fallback is a string, so == and === coincide
-        logger.warn({ usedPreviousStatus: fallback === previous }, 'Idle status generation produced no text');
+        const previousIsUsable = previous !== undefined && previous.trim() !== '' && rejectIdleStatusText(previous) === null;
+        const fallback = previousIsUsable ? previous : DEFAULT_IDLE_TEXT;
+        logger.warn({ usedPreviousStatus: previousIsUsable, reason }, 'Idle status generation produced no usable text');
         return fallback;
     }
 
@@ -325,7 +397,7 @@ export function createIdleStatusGenerator(
 
                 const text = await generateTextWithSystemPrompt(systemPrompt, userPrompt, { stripMarkdown: true, timeoutMs: IDLE_GENERATION_TIMEOUT_MS, label: 'idle-status' });
                 // Stryker disable next-line MethodExpression: trim() is defensive — generateText() already returns trimmed output
-                const rawText = resolveIdleText(text.trim());
+                const rawText = resolveIdleText(text.trim().replace(SURROUNDING_QUOTES_PATTERN, '$1'));
 
                 const { name: finalStatus, digestText } = options?.prefix === undefined
                     ? composeDefaultIdleStatus(rawText)
