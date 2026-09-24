@@ -58,9 +58,20 @@ function makeConversation(overrides: Partial<BskyConversation> = {}): BskyConver
 // Mock BlueskyClient
 // ---------------------------------------------------------------------------
 
-const mockGetAuthorFeed     = mock(async (): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [] }));
-const mockListConversations = mock(async (): Promise<{ conversations: BskyConversation[], cursor?: string }> => ({ conversations: [] }));
-const mockGetMessages       = mock(async (): Promise<{ messages: BskyDirectMessage[], cursor?: string }> => ({ messages: [] }));
+const mockGetAuthorFeed = mock(async (
+    _actor: string,
+    _limit?: number,
+    _cursor?: string
+): Promise<{ items: BskyFeedItem[], cursor?: string }> => ({ items: [] }));
+const mockListConversations = mock(async (
+    _limit?: number,
+    _cursor?: string
+): Promise<{ conversations: BskyConversation[], cursor?: string }> => ({ conversations: [] }));
+const mockGetMessages = mock(async (
+    _convoId: string,
+    _limit?: number,
+    _cursor?: string
+): Promise<{ messages: BskyDirectMessage[], cursor?: string }> => ({ messages: [] }));
 
 function makeMockClient(): BlueskyClient {
     return {
@@ -220,6 +231,97 @@ describe('BskyHistoryProvider', () => {
             expect(results[0].summary).toContain('First post');
             expect(results[1].summary).toContain('Second post');
         });
+
+        test('filters feed entries to inclusive time boundaries', async () => {
+            mockGetAuthorFeed.mockImplementation(async () => ({
+                items: [
+                    makeFeedItem({ text: 'after', createdAt: '2026-03-28T12:00:01.000Z' }),
+                    makeFeedItem({ text: 'end', createdAt: '2026-03-28T12:00:00.000Z' }),
+                    makeFeedItem({ text: 'within', createdAt: '2026-03-28T11:00:00.000Z' }),
+                    makeFeedItem({ text: 'start', createdAt: '2026-03-28T10:00:00.000Z' }),
+                    makeFeedItem({ text: 'before', createdAt: '2026-03-28T09:59:59.000Z' }),
+                ],
+            }));
+
+            const { entries } = await provider.fetchHistory({
+                identifier: 'alice.bsky.social',
+                startTime:  new Date('2026-03-28T10:00:00.000Z'),
+                endTime:    new Date('2026-03-28T12:00:00.000Z'),
+            });
+
+            expect(entries.map(entry => entry.summary)).toEqual([
+                '@alice.bsky.social: end',
+                '@alice.bsky.social: within',
+                '@alice.bsky.social: start',
+            ]);
+        });
+
+        test('continues the feed cursor until it reaches the requested lower boundary', async () => {
+            mockGetAuthorFeed.mockImplementation(async (_actor, _limit, cursor) => (cursor === undefined
+                ? {
+                    items:  [makeFeedItem({ text: 'newer', createdAt: '2026-03-28T12:00:00.000Z' })],
+                    cursor: 'second-page',
+                }
+                : {
+                    items: [
+                        makeFeedItem({ text: 'in-window', createdAt: '2026-03-28T11:00:00.000Z' }),
+                        makeFeedItem({ text: 'at-start', createdAt: '2026-03-28T10:00:00.000Z' }),
+                    ],
+                    cursor: 'older-page',
+                }));
+
+            const result = await provider.fetchHistory({
+                identifier: 'alice.bsky.social',
+                startTime:  new Date('2026-03-28T10:00:00.000Z'),
+            });
+
+            expect(mockGetAuthorFeed).toHaveBeenNthCalledWith(1, 'alice.bsky.social', 10);
+            expect(mockGetAuthorFeed).toHaveBeenNthCalledWith(2, 'alice.bsky.social', 10, 'second-page');
+            expect(mockGetAuthorFeed).toHaveBeenCalledTimes(2);
+            expect(result.entries.map(entry => entry.summary)).toEqual([
+                '@alice.bsky.social: newer',
+                '@alice.bsky.social: in-window',
+                '@alice.bsky.social: at-start',
+            ]);
+            expect(result.truncated).toBe(false);
+        });
+
+        test('marks a feed entry cap after filtering as truncated when another cursor remains', async () => {
+            mockGetAuthorFeed.mockImplementation(async () => ({
+                items: [
+                    makeFeedItem({ text: 'after', createdAt: '2026-03-28T12:00:01.000Z' }),
+                    makeFeedItem({ text: 'first', createdAt: '2026-03-28T12:00:00.000Z' }),
+                    makeFeedItem({ text: 'second', createdAt: '2026-03-28T11:00:00.000Z' }),
+                ],
+                cursor: 'older-page',
+            }));
+
+            const result = await provider.fetchHistory({
+                identifier:  'alice.bsky.social',
+                maxMessages: 1,
+                endTime:     new Date('2026-03-28T12:00:00.000Z'),
+            });
+
+            expect(result.entries.map(entry => entry.summary)).toEqual(['@alice.bsky.social: first']);
+            expect(result.truncated).toBe(true);
+            expect(mockGetAuthorFeed).toHaveBeenCalledTimes(1);
+        });
+
+        test('marks a feed scan stopped at its page cap as truncated', async () => {
+            mockGetAuthorFeed.mockImplementation(async (_actor, _limit, cursor) => ({
+                items:  [makeFeedItem({ createdAt: '2026-03-28T12:00:00.000Z' })],
+                cursor: `page-${cursor === undefined ? 1 : Number(cursor.split('-').at(-1)) + 1}`,
+            }));
+
+            const result = await provider.fetchHistory({
+                identifier: 'alice.bsky.social',
+                endTime:    new Date('2026-03-28T11:59:59.000Z'),
+            });
+
+            expect(result.entries).toEqual([]);
+            expect(result.truncated).toBe(true);
+            expect(mockGetAuthorFeed).toHaveBeenCalledTimes(10);
+        });
     });
 
     // ---------------------------------------------------------------------------
@@ -336,6 +438,97 @@ describe('BskyHistoryProvider', () => {
             const { entries: results } = await provider.fetchHistory(conversationParams());
 
             expect(results[0].summary).toContain('Interesting message content');
+        });
+
+        test('finds a conversation on a later cursor page before fetching its messages', async () => {
+            const other = makeConversation({
+                members: [
+                    { did: 'did:plc:bob', handle: 'bob.bsky.social' },
+                    { did: 'did:plc:self', handle: 'me.bsky.social' },
+                ],
+            });
+            const alice = makeConversation({ id: 'convo-alice' });
+            mockListConversations.mockImplementation(async (_limit, cursor) => (cursor === undefined
+                ? { conversations: [other], cursor: 'second-page' }
+                : { conversations: [alice] }));
+            mockGetMessages.mockImplementation(async () => ({ messages: [makeMessage({ text: 'later discovery' })] }));
+
+            const result = await provider.fetchHistory(conversationParams());
+
+            expect(mockListConversations).toHaveBeenNthCalledWith(1);
+            expect(mockListConversations).toHaveBeenNthCalledWith(2, undefined, 'second-page');
+            expect(mockGetMessages).toHaveBeenCalledWith('convo-alice', 10);
+            expect(result.entries.map(entry => entry.summary)).toEqual(['later discovery']);
+            expect(result.truncated).toBe(false);
+        });
+
+        test('filters and pages direct messages to the inclusive lower time boundary', async () => {
+            mockListConversations.mockImplementation(async () => ({ conversations: [makeConversation()] }));
+            mockGetMessages.mockImplementation(async (_id, _limit, cursor) => (cursor === undefined
+                ? {
+                    messages: [makeMessage({ text: 'after', sentAt: '2026-03-28T12:00:01.000Z' })],
+                    cursor:   'older-messages',
+                }
+                : {
+                    messages: [
+                        makeMessage({ id: 'msg-2', text: 'end', sentAt: '2026-03-28T12:00:00.000Z' }),
+                        makeMessage({ id: 'msg-3', text: 'start', sentAt: '2026-03-28T10:00:00.000Z' }),
+                    ],
+                    cursor: 'irrelevant-older-messages',
+                }));
+
+            const result = await provider.fetchHistory(conversationParams({
+                startTime: new Date('2026-03-28T10:00:00.000Z'),
+                endTime:   new Date('2026-03-28T12:00:00.000Z'),
+            }));
+
+            expect(mockGetMessages).toHaveBeenNthCalledWith(1, 'convo-abc', 10);
+            expect(mockGetMessages).toHaveBeenNthCalledWith(2, 'convo-abc', 10, 'older-messages');
+            expect(mockGetMessages).toHaveBeenCalledTimes(2);
+            expect(result.entries.map(entry => entry.summary)).toEqual(['end', 'start']);
+            expect(result.truncated).toBe(false);
+        });
+
+        test('finds a conversation on the final allowed discovery page without truncating it', async () => {
+            mockListConversations.mockImplementation(async (_limit, cursor) => {
+                const page = cursor === undefined ? 1 : Number(cursor.split('-').at(-1)) + 1;
+                return page === 10
+                    ? { conversations: [makeConversation({ id: 'convo-at-cap' })], cursor: 'more-conversations-10' }
+                    : {
+                        conversations: [makeConversation({
+                            members: [
+                                { did: 'did:plc:bob', handle: 'bob.bsky.social' },
+                                { did: 'did:plc:self', handle: 'me.bsky.social' },
+                            ],
+                        })],
+                        cursor: `more-conversations-${page}`,
+                    };
+            });
+            mockGetMessages.mockImplementation(async () => ({ messages: [makeMessage({ text: 'found at cap' })] }));
+
+            const result = await provider.fetchHistory(conversationParams());
+
+            expect(mockListConversations).toHaveBeenCalledTimes(10);
+            expect(mockGetMessages).toHaveBeenCalledWith('convo-at-cap', 10);
+            expect(result.truncated).toBe(false);
+        });
+
+        test('does not treat discovery stopped at its page cap as a complete empty result', async () => {
+            mockListConversations.mockImplementation(async (_limit, cursor) => ({
+                conversations: [makeConversation({
+                    members: [
+                        { did: 'did:plc:bob', handle: 'bob.bsky.social' },
+                        { did: 'did:plc:self', handle: 'me.bsky.social' },
+                    ],
+                })],
+                cursor: `more-conversations-${cursor === undefined ? 1 : Number(cursor.split('-').at(-1)) + 1}`,
+            }));
+
+            const result = await provider.fetchHistory(conversationParams());
+
+            expect(mockListConversations).toHaveBeenCalledTimes(10);
+            expect(mockGetMessages).not.toHaveBeenCalled();
+            expect(result).toEqual({ platform: 'bsky', entries: [], coverage: 'complete', truncated: true, failures: [] });
         });
     });
 });
