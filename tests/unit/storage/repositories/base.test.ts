@@ -23,8 +23,8 @@ class TestRepository extends DynamoTableAccess {
         return this.getItem(key);
     }
 
-    async testDelete(key: DynamoDBKey) {
-        return this.deleteItem(key);
+    async testDelete(key: DynamoDBKey, options?: Parameters<DynamoTableAccess['deleteItem']>[1]) {
+        return this.deleteItem(key, options);
     }
 
     async testQuery(pk: string) {
@@ -126,6 +126,29 @@ describe('DynamoTableAccess', () => {
             expect(calls[0].args[0].input).toEqual({
                 TableName: 'TestTable',
                 Key:       { PK: 'pk-value', SK: 'sk-value' },
+            });
+        });
+
+        test('should forward conditional delete parameters', async () => {
+            ddbMock.on(DeleteCommand).resolves({});
+
+            await repository.testDelete(
+                { PK: 'pk-value', SK: 'sk-value' },
+                {
+                    condition: {
+                        ConditionExpression:       '#generation = :generation',
+                        ExpressionAttributeNames:  { '#generation': 'outboxRowGeneration' },
+                        ExpressionAttributeValues: { ':generation': 'row-123' },
+                    },
+                }
+            );
+
+            expect(ddbMock.commandCalls(DeleteCommand)[0]?.args[0].input).toEqual({
+                TableName:                 'TestTable',
+                Key:                       { PK: 'pk-value', SK: 'sk-value' },
+                ConditionExpression:       '#generation = :generation',
+                ExpressionAttributeNames:  { '#generation': 'outboxRowGeneration' },
+                ExpressionAttributeValues: { ':generation': 'row-123' },
             });
         });
     });

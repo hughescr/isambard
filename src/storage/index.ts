@@ -8,7 +8,7 @@ export { DynamoDBClientHolder } from './client-holder';
 export { createPrefixedKey, parsePrefixedKey, stripDynamoKeys } from './utils';
 
 // Base repository
-export { DynamoTableAccess } from './repositories/base';
+export { DynamoTableAccess, type DeleteItemOptions } from './repositories/base';
 export { epochSecondsSchema, createEpochSeconds, isEpochSeconds, type EpochSeconds } from './repositories/types';
 
 // Session Resume

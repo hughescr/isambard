@@ -556,7 +556,7 @@ src/
 │   ├── types.ts                        # Service types (ServiceName, HealthState, minimal logger interface)
 │   ├── index.ts                        # Public exports
 │   ├── outbox/                         # Reliable message delivery (outbox pattern)
-│   │   ├── backend.ts                  # DynamoDB outbox storage; paginated priority-ordered dequeue deletes malformed rows
+│   │   ├── backend.ts                  # DynamoDB outbox storage; paginated priority-ordered dequeue conditionally cleans malformed rows
 │   │   ├── drainer.ts                  # Outbox message drainer
 │   │   ├── discord-payload.ts          # Discord-api-types-typed outbox payload schemas
 │   │   ├── key-generator.ts            # Outbox DynamoDB key construction

@@ -23,6 +23,11 @@ export interface DynamoDBKey {
     SK: string
 }
 
+export interface DeleteItemOptions {
+    operation?: string
+    condition?: Pick<DeleteCommandInput, 'ConditionExpression' | 'ExpressionAttributeNames' | 'ExpressionAttributeValues'>
+}
+
 /**
  * Abstract base class wrapping common DynamoDB table operations.
  * Concrete repositories should extend this class.
@@ -84,13 +89,14 @@ export abstract class DynamoTableAccess {
         return result.Item;
     }
 
-    protected async deleteItem(key: DynamoDBKey, operation?: string): Promise<void> {
+    protected async deleteItem(key: DynamoDBKey, options: DeleteItemOptions = {}): Promise<void> {
         const params: DeleteCommandInput = {
             TableName: this.tableName,
             Key:       key,
+            ...options.condition,
         };
-        await (this.timeoutMs !== undefined && operation !== undefined
-            ? withDynamoTimeout(() => this.docClient.send(new DeleteCommand(params)), { timeoutMs: this.timeoutMs, operation })
+        await (this.timeoutMs !== undefined && options.operation !== undefined
+            ? withDynamoTimeout(() => this.docClient.send(new DeleteCommand(params)), { timeoutMs: this.timeoutMs, operation: options.operation })
             : this.docClient.send(new DeleteCommand(params)));
     }
 

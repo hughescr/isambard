@@ -37,6 +37,7 @@ describe('OutboxBackend', () => {
     let backend: OutboxBackend;
 
     beforeEach(() => {
+        mockLogger.debug.mockClear();
         mockLogger.warn.mockClear();
         mockLogger.error.mockClear();
         ddbMock = mockClient(DynamoDBDocumentClient);
@@ -48,6 +49,7 @@ describe('OutboxBackend', () => {
 
     afterEach(() => {
         jest.useRealTimers();
+        jest.restoreAllMocks();
         ddbMock.restore();
     });
 
@@ -68,6 +70,22 @@ describe('OutboxBackend', () => {
             expect(stored.destination).toBe('channel-123');
             expect(stored.priority).toBe('medium');
             expect(stored.epoch).toBe(1);
+            expect(stored.outboxRowGeneration).toEqual(expect.any(String));
+        });
+
+        test('rotates row generation for every write', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            jest.spyOn(crypto, 'randomUUID')
+                .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+                .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+
+            await backend.enqueue(makeItem());
+            await backend.markFailed(makeItem(), 'retry', { retryable: true });
+
+            const writes = ddbMock.commandCalls(PutCommand);
+            expect(writes).toHaveLength(2);
+            expect(writes[0]?.args[0].input.Item?.outboxRowGeneration).toBe('11111111-1111-4111-8111-111111111111');
+            expect(writes[1]?.args[0].input.Item?.outboxRowGeneration).toBe('22222222-2222-4222-8222-222222222222');
         });
 
         test('uses default TTL of 24 hours from now when item.ttl is undefined', async () => {
@@ -177,10 +195,51 @@ describe('OutboxBackend', () => {
             const deleteCalls = ddbMock.commandCalls(DeleteCommand);
             expect(deleteCalls).toHaveLength(1);
             expect(deleteCalls[0]?.args[0].input).toEqual({
-                TableName: 'TestTable',
-                Key:       { PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' },
+                TableName:                'TestTable',
+                Key:                      { PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' },
+                ConditionExpression:      'attribute_not_exists(#generation)',
+                ExpressionAttributeNames: { '#generation': 'outboxRowGeneration' },
             });
             expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+        });
+
+        test('conditionally deletes a malformed generated row by its generation', async () => {
+            const invalid = {
+                ...makeItem(),
+                destination:         '',
+                PK:                  'OUTBOX#discord',
+                SK:                  'ITEM#0#bad',
+                outboxRowGeneration: 'row-123',
+            };
+            ddbMock.on(DeleteCommand).resolves({});
+            ddbMock.on(QueryCommand).resolves({ Items: [invalid] });
+
+            await backend.dequeue('discord');
+
+            expect(ddbMock.commandCalls(DeleteCommand)[0]?.args[0].input).toEqual({
+                TableName:                 'TestTable',
+                Key:                       { PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' },
+                ConditionExpression:       '#generation = :generation',
+                ExpressionAttributeNames:  { '#generation': 'outboxRowGeneration' },
+                ExpressionAttributeValues: { ':generation': 'row-123' },
+            });
+        });
+
+        test('preserves a rewritten malformed row after conditional cleanup failure', async () => {
+            const cleanupError = Object.assign(new Error('rewritten'), { name: 'ConditionalCheckFailedException' });
+            const invalid = { ...makeItem(), destination: '', PK: 'OUTBOX#discord', SK: 'ITEM#0#bad', outboxRowGeneration: 'row-123' };
+            const valid = { ...makeItem(), id: 'aaaaaaaa-0000-4000-8000-000000000001', PK: 'OUTBOX#discord', SK: 'ITEM#1#good' };
+            ddbMock.on(DeleteCommand).rejects(cleanupError);
+            ddbMock.on(QueryCommand).resolves({ Items: [invalid, valid] });
+
+            const result = await backend.dequeue('discord');
+
+            expect(result.map(item => item.id)).toEqual([valid.id]);
+            expect(mockLogger.debug).toHaveBeenCalledWith(
+                { service: 'discord', pk: 'OUTBOX#discord', sk: 'ITEM#0#bad' },
+                'Preserved malformed outbox item rewritten before cleanup'
+            );
+            expect(mockLogger.error).not.toHaveBeenCalled();
         });
 
         test('does not reprocess a malformed item after deleting it', async () => {

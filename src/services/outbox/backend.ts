@@ -2,7 +2,7 @@ import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { OutboxKeyGenerator } from './key-generator';
 import { outboxItemSchema, type OutboxItem, type OutboxService, type OutboxDiscardReason } from './types';
-import { DynamoTableAccess } from '@/storage';
+import { DynamoTableAccess, type DeleteItemOptions } from '@/storage';
 
 // DynamoDB removes expired rows asynchronously; expiry is not an application discard disposition.
 const TTL_HOURS = 24;
@@ -20,13 +20,49 @@ export class OutboxBackend extends DynamoTableAccess {
      * (same id) overwrites any existing record.
      */
     async enqueue(item: OutboxItem): Promise<void> {
+        await this.putItem(this.createPersistedRow(item));
+    }
+
+    private createPersistedRow(item: OutboxItem): Record<string, unknown> {
         const keys = OutboxKeyGenerator.createKeys(item);
         const ttl = item.ttl ?? OutboxBackend.expiresAt(Date.now(), { hours: TTL_HOURS });
-        await this.putItem({
+        return {
             ...keys,
             ...item,
-            TTL: ttl,
-        });
+            TTL:                 ttl,
+            outboxRowGeneration: crypto.randomUUID(),
+        };
+    }
+
+    private static malformedRowDeleteCondition(raw: Record<string, unknown>): DeleteItemOptions['condition'] {
+        const names = { '#generation': 'outboxRowGeneration' };
+        if(typeof raw.outboxRowGeneration === 'string') {
+            return {
+                ConditionExpression:       '#generation = :generation',
+                ExpressionAttributeNames:  names,
+                ExpressionAttributeValues: { ':generation': raw.outboxRowGeneration },
+            };
+        }
+        return {
+            ConditionExpression:      'attribute_not_exists(#generation)',
+            ExpressionAttributeNames: names,
+        };
+    }
+
+    private async cleanupMalformedItem(raw: Record<string, unknown>, service: OutboxService, parseError: unknown): Promise<void> {
+        try {
+            await this.deleteItem(
+                { PK: raw.PK as string, SK: raw.SK as string },
+                { condition: OutboxBackend.malformedRowDeleteCondition(raw) }
+            );
+            logger.warn({ service, pk: raw.PK, sk: raw.SK, error: parseError }, 'Deleted malformed outbox item');
+        } catch (error: unknown) {
+            if(error instanceof Error && error.name === 'ConditionalCheckFailedException') {
+                logger.debug({ service, pk: raw.PK, sk: raw.SK }, 'Preserved malformed outbox item rewritten before cleanup');
+                return;
+            }
+            logger.error({ service, pk: raw.PK, sk: raw.SK, error }, 'Failed to delete malformed outbox item');
+        }
     }
 
     /**
@@ -53,13 +89,8 @@ export class OutboxBackend extends DynamoTableAccess {
                 if(parsed.success) {
                     valid.push(parsed.data);
                 } else {
-                    try {
-                        // eslint-disable-next-line no-await-in-loop -- malformed rows are deleted before advancing the paginated read loop
-                        await this.deleteItem({ PK: raw.PK as string, SK: raw.SK as string });
-                        logger.warn({ service, pk: raw.PK, sk: raw.SK, error: parsed.error }, 'Deleted malformed outbox item');
-                    } catch (error: unknown) {
-                        logger.error({ service, pk: raw.PK, sk: raw.SK, error }, 'Failed to delete malformed outbox item');
-                    }
+                    // eslint-disable-next-line no-await-in-loop -- malformed rows are deleted before advancing the paginated read loop
+                    await this.cleanupMalformedItem(raw, service, parsed.error);
                 }
             }
             cursor = page.LastEvaluatedKey;
@@ -84,9 +115,7 @@ export class OutboxBackend extends DynamoTableAccess {
 
     /** Persist retry metadata; a missing item.ttl refreshes the default TTL on a retry. */
     private async persistFailure(item: OutboxItem): Promise<void> {
-        const keys = OutboxKeyGenerator.createKeys(item);
-        const ttl = item.ttl ?? OutboxBackend.expiresAt(Date.now(), { hours: TTL_HOURS });
-        await this.putItem({ ...keys, ...item, TTL: ttl });
+        await this.putItem(this.createPersistedRow(item));
     }
 
     async markFailed(item: OutboxItem, error: string, options: { retryable: boolean }): Promise<void> {

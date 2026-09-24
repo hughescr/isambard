@@ -334,7 +334,7 @@ export class ChannelRegistryBackend extends DynamoTableAccess {
                 PK: `CHANNEL#${channelId}`,
                 SK: 'METADATA',
             },
-            'ChannelRegistry.deleteChannel'
+            { operation: 'ChannelRegistry.deleteChannel' }
         );
     }
 }
