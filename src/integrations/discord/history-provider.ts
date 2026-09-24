@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import type { HistoryEntry, HistoryFetchParams, MCPChannelRegistry, MCPDMTracker, MCPMessageSearchService, PlatformHistoryProvider } from '@/agent';
+import type { HistoryEntry, HistoryFetchParams, DiscordMcpChannelRegistry, MCPDMTracker, MCPMessageSearchService, PlatformHistoryProvider } from '@/agent';
 
 /**
  * Maximum number of unmuted channels to search for history.
@@ -105,7 +105,7 @@ export class DiscordHistoryProvider implements PlatformHistoryProvider {
 
     constructor(
         private readonly searchService:   MCPMessageSearchService,
-        private readonly channelRegistry: MCPChannelRegistry,
+        private readonly channelRegistry: DiscordMcpChannelRegistry,
         private readonly botUserId:       string,
         private readonly dmTracker?:      MCPDMTracker
     ) {}

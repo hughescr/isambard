@@ -3,8 +3,8 @@ import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, MessageCreateOptions } from 'discord.js';
 import { createDiscordMCPServer } from '../../../src/agent/discord-mcp-server';
+import type { DiscordMcpChannelRegistry, MCPMessageSearchService } from '../../../src/agent/discord-ports';
 import type { QuestionRegistry } from '../../../src/agent/question-registry';
-import type { MCPChannelRegistry, MCPMessageSearchService } from '../../../src/agent/types';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
 import type { ChannelId, GuildId } from '../../../src/integrations/discord/types';
 import { mockFsPromises, mockLogger, resetMockFsPrefix, textContent } from '../../setup';
@@ -3054,7 +3054,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 searchService:    mockSearchService,
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-                channelRegistry:  mockUnmutedChannelRegistry as unknown as MCPChannelRegistry,
+                channelRegistry:  mockUnmutedChannelRegistry as unknown as DiscordMcpChannelRegistry,
                 dmTracker:        mockDMTracker,
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
@@ -3115,7 +3115,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 searchService:    mockSearchService,
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-                channelRegistry:  mockAllChannelsRegistry as unknown as MCPChannelRegistry,
+                channelRegistry:  mockAllChannelsRegistry as unknown as DiscordMcpChannelRegistry,
                 dmTracker:        mockDMTracker,
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
@@ -3178,7 +3178,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 searchService:    mockSearchService,
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-                channelRegistry:  mockExcludeMutedRegistry as unknown as MCPChannelRegistry,
+                channelRegistry:  mockExcludeMutedRegistry as unknown as DiscordMcpChannelRegistry,
                 dmTracker:        mockDMTracker,
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
@@ -3210,7 +3210,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 searchService:    mockSearchService,
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-                channelRegistry:  mockErrorChannelRegistry as unknown as MCPChannelRegistry,
+                channelRegistry:  mockErrorChannelRegistry as unknown as DiscordMcpChannelRegistry,
                 dmTracker:        mockDMTracker,
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
@@ -3555,7 +3555,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 searchService:    mockSearchService,
                 client:           mockClient as unknown as Client,
                 questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
-                channelRegistry:  mockThrowingRegistry as unknown as MCPChannelRegistry,
+                channelRegistry:  mockThrowingRegistry as unknown as DiscordMcpChannelRegistry,
                 dmTracker:        mockDMTracker,
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,

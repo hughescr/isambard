@@ -9,7 +9,7 @@ export interface MessageToClassify {
     authorId:             string
     channelId:            string
     threadId?:            string
-    referencedMessageId?: string  // Discord reply reference
+    referencedMessageId?: string  // Platform message ID (Discord snowflake today) for a reply reference
     isBotMentioned:       boolean // Whether the bot was @mentioned in the message
     targetUserId?:        string  // Who the question was directed at (advisory)
 }

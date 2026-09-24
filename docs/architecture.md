@@ -11,7 +11,7 @@ Isambard is a self-improving agentic thought partner built on the Claude Agent S
 | `src/config/` | Zod-validated configuration loading from environment variables. | Foundation |
 | `src/storage/` | DynamoDB client, repository base, memory tool subsystem, memory-vec embedding + memory-vec-store vector index, contacts, person allowlist, session journal, session resume persistence. | Data |
 | `src/services/` | Resilience infrastructure: health registry, reconnection loop, service lifecycle state machine, outbox, approval saga, allowlist saga, rate limiters, error boundary, shared outbound-approval-handler base. | Infrastructure |
-| `src/agent/` | Platform-agnostic Claude agent: MCP servers, perch scheduler, answer classifier, question registry, stream tracker, context builder, history providers. | Agent |
+| `src/agent/` | Agent core plus per-platform MCP adapters: scheduler, classifier, registry, stream tracker, context builder, history providers, and MCP ports. It never imports `src/integrations/discord/`; Discord-specific MCP ports live in `discord-ports.ts`. | Agent |
 | `src/integrations/discord/` | Discord bot: channel registry, inbox, catch-up, ledger-composed presence, live task-board embeds, message history, attachments, slash commands. | Integration |
 | `src/integrations/email/` | WildDuck HTTP API client with SSE push, outbound approval workflow, rate limiter. | Integration |
 | `src/integrations/bsky/` | AT Protocol client: feeds, posts, DMs, social graph, checkpoint tracking, rejection backend. | Integration |
@@ -80,7 +80,7 @@ Auto-loading of `/state/` items uses `sigmoidScore()`, which combines access fre
 
 ## Agent Subsystem
 
-The agent module is **platform-agnostic**. It receives `MessageContext` objects (text, optional `PlatformImage` attachments) and emits stream events — it has no knowledge of Discord, email, or Bluesky at the type level.
+The agent module contains the core plus per-platform MCP adapters. Its enforced dependency invariant is that `src/agent/` never imports `src/integrations/discord/`; Discord integration code calls into the agent, never the reverse. Discord-specific MCP ports are declared in `src/agent/discord-ports.ts`, and `src/agent/discord-mcp-server.ts` owns the agent module's single `discord.js` type import.
 
 The agent exposes its capabilities to Claude through a suite of **custom MCP servers**: memory (view, store, search, log), Discord message history, email (inbox, send, archive, reply, drafts), Bluesky (feeds, posts, DMs, social graph, rejection management), Discord inbox (unread overview, channel summary), CalDAV (calendar events), contacts (lookup, search, create, update, delete), media processing (video analysis, spectrograms), Wikipedia, user context, and health (read-only per-service status, deliberately reachable during an outage). Browser automation (`src/agent/browser-mcp-server.ts`) is attached only for the `conversation` role, and only when a `browserAdapter` and its byte limits are configured (`src/app/mcp-servers.ts`'s `createMcpServerInstances`); the perch role never gets a browser MCP server, and an unconfigured deployment gets none at all.
 

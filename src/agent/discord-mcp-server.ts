@@ -4,13 +4,19 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Client, TextChannel, GuildTextBasedChannel, Message, MessageCreateOptions } from 'discord.js';
 import { z } from 'zod';
+import type { DiscordMcpChannelRegistry, MCPDMTracker, MCPMessageSearchService, MCPMessageSplitter, MCPRetryHelper } from './discord-ports';
 import { withHealthGuard, withToolErrorHandling } from './mcp-helpers';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
-import { createChannelId, createUserId, type UserId, type MCPChannelRegistry, type MCPDMTracker, type MCPMessageSearchService, type MCPMessageSplitter, type MCPQuestionButtonBuilder, type MCPRetryHelper } from './types';
+import { createChannelId, createUserId, type UserId } from './types';
 import { InvariantViolationError, PathSecurityError } from '@/errors';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { validateFilePaths, formatLocalDateTime } from '@/utils';
+
+/** Button-builder port for question messages sent by the Discord MCP server. */
+interface MCPQuestionButtonBuilder {
+    buildQuestionButtons(config: { questionId: string, options: { label: string, value: string }[] }): NonNullable<MessageCreateOptions['components']>
+}
 
 /**
  * Validates a tool-supplied requestingUserId against the person allowlist.
@@ -471,7 +477,7 @@ interface DiscordMCPServerOptions {
     /** Registry for tracking pending questions awaiting user responses */
     questionRegistry:  QuestionRegistry
     /** Channel registry for name resolution and mute management */
-    channelRegistry:   MCPChannelRegistry
+    channelRegistry:   DiscordMcpChannelRegistry
     /** DM tracker for username-to-channel resolution */
     dmTracker:         MCPDMTracker
     /** Message splitter for chunking long messages */

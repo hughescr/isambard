@@ -14,7 +14,8 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  * 3. config     - Configuration loading, minimal dependencies
  * 4. storage    - Data layer, independent of application/agent
  * 4b. services  - Service health, lifecycle, outbox infrastructure
- * 5. agent      - Platform-agnostic AI agent logic
+ * 5. agent      - Agent core plus per-platform MCP adapters; never imports src/integrations/discord
+ *                 Discord-specific MCP ports live in src/agent/discord-ports.ts
  * 6. discord    - Discord integration, depends on agent
  *    email      - Email integration, depends on agent
  *    bsky       - Bluesky integration, depends on agent

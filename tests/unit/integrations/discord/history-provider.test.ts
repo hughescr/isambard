@@ -17,7 +17,7 @@
 
 import { describe, expect, test, mock, beforeEach } from 'bun:test';
 import { mockLogger } from '../../../setup';
-import type { MCPMessageSearchService, MCPChannelRegistry, MCPDMTracker, MCPChannelInfo, ChannelId } from '@/agent';
+import type { MCPMessageSearchService, DiscordMcpChannelRegistry, MCPDMTracker, DiscordMcpChannelInfo, ChannelId } from '@/agent';
 import { DiscordHistoryProvider } from '@/integrations/discord/history-provider';
 
 // ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ const CHANNEL_3_ID = 'channel-3' as ChannelId;
 const CHANNEL_4_ID = 'channel-4' as ChannelId;
 const DM_CHANNEL_ID = 'dm-channel-1' as ChannelId;
 
-const UNMUTED_CHANNELS: MCPChannelInfo[] = [
+const UNMUTED_CHANNELS: DiscordMcpChannelInfo[] = [
     { channelId: CHANNEL_1_ID, channelName: 'general',  guildId: 'guild-1', isMuted: false },
     { channelId: CHANNEL_2_ID, channelName: 'random',   guildId: 'guild-1', isMuted: false },
     { channelId: CHANNEL_3_ID, channelName: 'projects', guildId: 'guild-1', isMuted: false },
@@ -71,13 +71,13 @@ function createMockChannelRegistry(): {
     muteChannel:        ReturnType<typeof mock>
     unmuteChannel:      ReturnType<typeof mock>
     getAllChannels:     ReturnType<typeof mock>
-} & MCPChannelRegistry {
+} & DiscordMcpChannelRegistry {
     return {
-        getUnmutedChannels: mock(async (): Promise<MCPChannelInfo[]> => []),
+        getUnmutedChannels: mock(async (): Promise<DiscordMcpChannelInfo[]> => []),
         resolveChannelId:   mock(() => CHANNEL_1_ID),
         muteChannel:        mock(async () => {}),
         unmuteChannel:      mock(async () => {}),
-        getAllChannels:     mock((): MCPChannelInfo[] => []),
+        getAllChannels:     mock((): DiscordMcpChannelInfo[] => []),
     };
 }
 

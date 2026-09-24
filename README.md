@@ -246,7 +246,7 @@ src/
 │   │   ├── context-policy.ts        # ContextPolicy: per-user memory/events/state/calendar/health delta gates
 │   │   ├── calendar-delta.ts        # Calendar agenda delta primitive (diffing, day-window)
 │   │   ├── catchup-text.ts          # Platform-neutral catch-up envelope body text
-│   │   ├── discord-envelope-input.ts # Platform-agnostic input for a Discord-originated turn envelope
+│   │   ├── discord-envelope-input.ts # Discord message input translated at the integration boundary
 │   │   ├── compaction-guard.ts      # Host-driven /compact submission at a context-usage threshold
 │   │   ├── compaction-telemetry.ts  # Per-compaction interval telemetry records
 │   │   ├── compaction-tuner.ts      # Nudges the live compaction threshold toward a target interval
@@ -289,7 +289,8 @@ src/
 │   ├── event-summarizer.ts             # LLM-based event summarization for context compression
 │   ├── health-mcp-server.ts            # MCP server: read-only per-service health status
 │   ├── identity-cache.ts               # Write-through in-memory cache for the agent's core identity context
-│   ├── inbox-mcp-server.ts             # MCP server: Discord inbox operations
+│   ├── discord-inbox-mcp-server.ts     # MCP server: Discord inbox operations
+│   ├── discord-ports.ts                # Discord-specific MCP port contracts
 │   ├── live-signals.ts                 # LiveSignals aggregator
 │   ├── mcp-helpers.ts                  # Shared MCP server utilities
 │   ├── media-mcp-server.ts             # MCP server: video/audio media processing

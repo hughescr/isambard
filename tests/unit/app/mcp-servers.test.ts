@@ -5,9 +5,9 @@ import type { BrowserAdapter } from '@/agent/browser';
 import * as browserMcpModule from '@/agent/browser-mcp-server';
 import * as bskyMcpModule from '@/agent/bsky-mcp-server';
 import * as contactsMcpModule from '@/agent/contacts-mcp-server';
+import * as discordInboxMcpModule from '@/agent/discord-inbox-mcp-server';
 import * as discordMcpModule from '@/agent/discord-mcp-server';
 import * as healthMcpModule from '@/agent/health-mcp-server';
-import * as inboxMcpModule from '@/agent/inbox-mcp-server';
 import * as mediaMcpModule from '@/agent/media-mcp-server';
 import * as memoryMcpModule from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
@@ -85,7 +85,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue(mockDiscordMcpServer);
 
         const mockInboxMcpServer = { name: 'inbox', version: '1.0.0' } as unknown as McpServerInstance;
-        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue(mockInboxMcpServer);
+        const createInboxMcpServerSpy = spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue(mockInboxMcpServer);
 
         const mockWikipediaMcpServer = { name: 'wikipedia', version: '1.0.0' } as unknown as McpServerInstance;
         const createWikipediaMcpServerSpy = spyOn(wikipediaMcpModule, 'createWikipediaMCPServer').mockReturnValue(mockWikipediaMcpServer);
@@ -113,7 +113,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createWikipediaMcpServerSpy
         );
 
@@ -131,7 +131,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createMediaMcpServerSpy
         );
 
@@ -175,7 +175,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             createMemoryMcpServerSpy,
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
         buildConversationServers(mockOptions);
@@ -197,7 +197,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             createMemoryMcpServerSpy,
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
         buildConversationServers(optionsWithRecordAccess);
@@ -214,7 +214,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createDiscordMcpServerSpy,
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
         buildConversationServers(mockOptions);
@@ -237,7 +237,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createDiscordMcpServerSpy,
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
         const mockPersonAllowlist = {} as unknown as PersonAllowlist;
@@ -249,9 +249,9 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         );
     });
 
-    test('should pass correct args to createInboxMCPServer', () => {
+    test('should pass correct args to createDiscordInboxMCPServer', () => {
         // Mock all three MCP server creation functions
-        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+        const createInboxMcpServerSpy = spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance);
 
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
@@ -261,7 +261,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
 
         buildConversationServers(mockOptions);
 
-        // Verify createInboxMCPServer was called with correct args
+        // Verify createDiscordInboxMCPServer was called with correct args
         expect(createInboxMcpServerSpy).toHaveBeenCalledTimes(1);
         expect(createInboxMcpServerSpy).toHaveBeenCalledWith(
             mockOptions.inboxManager,
@@ -287,7 +287,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             createMemoryMcpServerSpy,
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
         expect(() => buildConversationServers(mockOptions)).toThrow('Memory MCP server creation failed');
@@ -299,19 +299,19 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
             throw new Error('Discord MCP server creation failed');
         });
 
-        // Mock createInboxMCPServer (shouldn't be called due to early failure)
+        // Mock createDiscordInboxMCPServer (shouldn't be called due to early failure)
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createDiscordMcpServerSpy,
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
         );
 
         expect(() => buildConversationServers(mockOptions)).toThrow('Discord MCP server creation failed');
     });
 
-    test('should throw when createInboxMCPServer throws', () => {
-        // Mock createInboxMCPServer to throw
-        const createInboxMcpServerSpy = spyOn(inboxMcpModule, 'createInboxMCPServer').mockImplementation(() => {
+    test('should throw when createDiscordInboxMCPServer throws', () => {
+        // Mock createDiscordInboxMCPServer to throw
+        const createInboxMcpServerSpy = spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockImplementation(() => {
             throw new Error('Inbox MCP server creation failed');
         });
 
@@ -330,7 +330,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createBskyMcpServerSpy
         );
 
@@ -347,7 +347,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createBskyMcpServerSpy
         );
 
@@ -372,7 +372,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createBskyMcpServerSpy
         );
 
@@ -410,7 +410,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createBrowserMcpServerSpy
         );
 
@@ -440,7 +440,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createBrowserMcpServerSpy
         );
 
@@ -462,7 +462,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createBrowserMcpServerSpy
         );
 
@@ -492,7 +492,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createBrowserMcpServerSpy
         );
 
@@ -515,7 +515,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         spies.push(
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance),
             createBrowserMcpServerSpy
         );
 
@@ -553,7 +553,7 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
             spyOn(memoryMcpModule, 'createMemoryMCPServer').mockImplementation(() => freshServerConfig('memory')),
             spyOn(discordMcpModule, 'createDiscordMCPServer').mockImplementation(() => freshServerConfig('discord')),
             spyOn(healthMcpModule, 'createHealthMCPServer').mockImplementation(() => freshServerConfig('health')),
-            spyOn(inboxMcpModule, 'createInboxMCPServer').mockImplementation(() => freshServerConfig('inbox')),
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockImplementation(() => freshServerConfig('inbox')),
             spyOn(wikipediaMcpModule, 'createWikipediaMCPServer').mockImplementation(() => freshServerConfig('wikipedia')),
             spyOn(mediaMcpModule, 'createMediaMCPServer').mockImplementation(() => freshServerConfig('media'))
         );

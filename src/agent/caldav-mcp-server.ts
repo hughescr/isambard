@@ -53,7 +53,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
      * Resolves a user name to a Discord user ID for registry lookup.
      * Returns either the resolved branded user ID, or a CallToolResult to return to the agent.
      */
-    async function resolveUserId(user: string): Promise<UserId | CallToolResult> {
+    async function resolveDiscordUserId(user: string): Promise<UserId | CallToolResult> {
         const result = await resolveUser(user);
         switch(result.status) {
             case 'resolved': {
@@ -89,7 +89,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 },
                 withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
                     withToolErrorHandling('getCalendarEvents', async (args): Promise<CallToolResult> => {
-                        const resolved = await resolveUserId(args.user);
+                        const resolved = await resolveDiscordUserId(args.user);
                         if(typeof resolved !== 'string') {
                             return resolved; // MCP result (ambiguous or not_found)
                         }
@@ -118,7 +118,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 },
                 withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
                     withToolErrorHandling('getUpcomingEvents', async (args): Promise<CallToolResult> => {
-                        const resolved = await resolveUserId(args.user);
+                        const resolved = await resolveDiscordUserId(args.user);
                         if(typeof resolved !== 'string') {
                             return resolved; // MCP result (ambiguous or not_found)
                         }
@@ -150,7 +150,7 @@ export function createCaldavMCPServer(options: CaldavMCPServerOptions) {
                 },
                 withHealthGuard(options.healthRegistry, 'caldav', options.reconnectionLoop,
                     withToolErrorHandling('listUserCalendars', async (args): Promise<CallToolResult> => {
-                        const resolved = await resolveUserId(args.user);
+                        const resolved = await resolveDiscordUserId(args.user);
                         if(typeof resolved !== 'string') {
                             return resolved; // MCP result (ambiguous or not_found)
                         }

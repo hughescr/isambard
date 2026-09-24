@@ -3,9 +3,10 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { chain } from 'lodash-es';
 import { z } from 'zod';
+import type { MCPInboxManager, DiscordMcpChannelRegistry, MCPChannelSummaryResponse, MCPMessageMetadata } from './discord-ports';
 import { mcpJsonResult, withHealthGuard, withToolErrorHandling } from './mcp-helpers';
 import { generateTextWithSystemPrompt } from './text-generator';
-import { createChannelId, type MCPInboxManager, type MCPChannelRegistry, type MCPChannelSummaryResponse, type MCPMessageMetadata } from './types';
+import { createChannelId } from './types';
 import { InvariantViolationError } from '@/errors';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 
@@ -22,7 +23,7 @@ Create a concise summary (2-4 sentences) that captures:
 Keep it factual and actionable. The assistant will decide whether to read full messages based on this summary.`;
 
 /**
- * Creates an MCP server for inbox operations.
+ * Creates an MCP server for Discord inbox operations.
  *
  * Provides tools for:
  * - Getting high-level overview of unread messages across all channels
@@ -41,9 +42,9 @@ Keep it factual and actionable. The assistant will decide whether to read full m
  * @param inboxManager - Inbox manager for accessing unread messages
  * @param channelRegistry - Channel registry for resolving channel names
  */
-export function createInboxMCPServer(
+export function createDiscordInboxMCPServer(
     inboxManager: MCPInboxManager,
-    channelRegistry: MCPChannelRegistry,
+    channelRegistry: DiscordMcpChannelRegistry,
     healthRegistry?: ServiceHealthRegistry,
     reconnectionLoop?: ReconnectionLoop
 ) {

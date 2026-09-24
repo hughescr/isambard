@@ -28,8 +28,8 @@ import {
 } from '@/agent';
 import * as staticAgentIndexModule from '@/agent';
 import * as staticContextBuilderModule from '@/agent/context-builder';
+import * as staticDiscordInboxMcpModule from '@/agent/discord-inbox-mcp-server';
 import * as staticDiscordMcpModule from '@/agent/discord-mcp-server';
-import * as staticInboxMcpModule from '@/agent/inbox-mcp-server';
 import * as staticMemoryMcpModule from '@/agent/memory-mcp-server';
 import * as staticPluginLoaderModule from '@/agent/plugin-loader';
 import * as staticQuestionRegistryModule from '@/agent/question-registry';
@@ -181,7 +181,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
             load: mock(async () => {}),
         } as unknown as InstanceType<typeof staticPersonAllowlistModule.PersonAllowlist>)),
         spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>),
-        spyOn(staticInboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticInboxMcpModule.createInboxMCPServer>),
+        spyOn(staticDiscordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordInboxMcpModule.createDiscordInboxMCPServer>),
         // @ts-expect-error - Mocking constructor
         spyOn(staticCheckpointModule, 'CheckpointManager').mockImplementation(() => ({} as unknown as InstanceType<typeof staticCheckpointModule.CheckpointManager>)),
         // @ts-expect-error - Mocking constructor
@@ -675,7 +675,7 @@ describe('createApp', () => {
             const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const createInboxMcpSpy = spyOn(staticInboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticInboxMcpModule.createInboxMCPServer>);
+            const createInboxMcpSpy = spyOn(staticDiscordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordInboxMcpModule.createDiscordInboxMCPServer>);
             spies.push(createInboxMcpSpy);
 
             // @ts-expect-error - Mocking constructor
@@ -1744,7 +1744,7 @@ describe('createApp', () => {
             const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const createInboxMcpSpy = spyOn(staticInboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticInboxMcpModule.createInboxMCPServer>);
+            const createInboxMcpSpy = spyOn(staticDiscordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordInboxMcpModule.createDiscordInboxMCPServer>);
             spies.push(createInboxMcpSpy);
 
             // @ts-expect-error - Mocking constructor
@@ -2667,7 +2667,7 @@ describe('createApp', () => {
             const createContextBuilderSpy = spyOn(staticContextBuilderModule, 'createContextBuilder').mockReturnValue({} as unknown as ReturnType<typeof staticContextBuilderModule.createContextBuilder>);
             spies.push(createContextBuilderSpy);
 
-            const createInboxMcpSpy = spyOn(staticInboxMcpModule, 'createInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticInboxMcpModule.createInboxMCPServer>);
+            const createInboxMcpSpy = spyOn(staticDiscordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as ReturnType<typeof staticDiscordInboxMcpModule.createDiscordInboxMCPServer>);
             spies.push(createInboxMcpSpy);
 
             // @ts-expect-error - Mocking constructor

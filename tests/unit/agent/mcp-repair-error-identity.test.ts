@@ -2,7 +2,7 @@ import { expect, mock, spyOn, test } from 'bun:test';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { createCaldavMCPServer } from '../../../src/agent/caldav-mcp-server';
 import { createContactsMCPServer } from '../../../src/agent/contacts-mcp-server';
-import { createInboxMCPServer } from '../../../src/agent/inbox-mcp-server';
+import { createDiscordInboxMCPServer } from '../../../src/agent/discord-inbox-mcp-server';
 import { createMediaMCPServer } from '../../../src/agent/media-mcp-server';
 import * as mediaUtils from '../../../src/utils';
 import { mockLogger } from '../../setup';
@@ -60,9 +60,9 @@ test('contact tool failures retain the operation name in diagnostic logs', async
 test('inbox tool failures retain the operation name in diagnostic logs', async () => {
     expect.assertions(10);
     const failures = new Proxy({}, { get: () => throwBackendError });
-    const server = createInboxMCPServer(
-        failures as Parameters<typeof createInboxMCPServer>[0],
-        failures as Parameters<typeof createInboxMCPServer>[1]
+    const server = createDiscordInboxMCPServer(
+        failures as Parameters<typeof createDiscordInboxMCPServer>[0],
+        failures as Parameters<typeof createDiscordInboxMCPServer>[1]
     );
     await expectDiagnosticIdentity(server, 'getUnreadOverview', {});
     await expectDiagnosticIdentity(server, 'getChannelSummary', { channelId: '123' });

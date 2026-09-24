@@ -1,5 +1,5 @@
 /**
- * Platform-agnostic input for one Discord message being turned into a conductor turn envelope
+ * Discord message input translated at the integration boundary into a conductor turn envelope
  * (P9, design section 3.1/6). This type lives in the agent layer (`src/agent/session`)
  * deliberately: no file under `src/agent` may import from `src/integrations/discord`, so
  * everything Discord-shaped about a message — the raw `discord.js` `Message`, its attachments,

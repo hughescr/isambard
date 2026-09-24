@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createCaldavMCPServer } from '../../../src/agent/caldav-mcp-server';
 import { createContactsMCPServer } from '../../../src/agent/contacts-mcp-server';
-import { createInboxMCPServer } from '../../../src/agent/inbox-mcp-server';
+import { createDiscordInboxMCPServer } from '../../../src/agent/discord-inbox-mcp-server';
 import { createMediaMCPServer } from '../../../src/agent/media-mcp-server';
 import { createMemoryMCPServer } from '../../../src/agent/memory-mcp-server';
 import { createPersonContextMCPServer } from '../../../src/agent/person-context-mcp-server';
@@ -64,9 +64,9 @@ test('MCP tool catalog exposes stable descriptions, input help, and annotations'
             resolveUser: async () => ({ status: 'not_found' }),
         })),
         contacts: serverMetadata(createContactsMCPServer({ backend: unusedBackend as unknown as Parameters<typeof createContactsMCPServer>[0]['backend'], sendContactApprovalRequest: async () => { /* intentionally empty */ } })),
-        inbox:    serverMetadata(createInboxMCPServer(
-            unusedBackend as unknown as Parameters<typeof createInboxMCPServer>[0],
-            unusedBackend as unknown as Parameters<typeof createInboxMCPServer>[1]
+        inbox:    serverMetadata(createDiscordInboxMCPServer(
+            unusedBackend as unknown as Parameters<typeof createDiscordInboxMCPServer>[0],
+            unusedBackend as unknown as Parameters<typeof createDiscordInboxMCPServer>[1]
         )),
         media:          serverMetadata(createMediaMCPServer()),
         memory:         serverMetadata(createMemoryMCPServer(unusedBackend)),

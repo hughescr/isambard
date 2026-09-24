@@ -1,7 +1,7 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createPersonContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator, type SessionRole } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createDiscordInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createPersonContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator, type SessionRole } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend, type BskyReplyInput } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
@@ -367,7 +367,7 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         personAllowlist:  options.personAllowlist,
     });
 
-    const inboxMcpServer = createInboxMCPServer(
+    const inboxMcpServer = createDiscordInboxMCPServer(
         options.inboxManager,
         {
             resolveChannelId:   nameOrId => resolveChannelId(nameOrId, options.channelRegistry),

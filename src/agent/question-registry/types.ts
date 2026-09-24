@@ -20,7 +20,7 @@ export interface ConversationLocation {
 
 export interface PendingQuestion extends ConversationLocation {
     questionId:      string              // UUID
-    originMessageId: string         // Discord message ID of the question
+    originMessageId: string         // Platform message ID (Discord snowflake today) of the question
     triggerUserId:   UserId           // User who started the conversation
     questionText:    string
     options?:        QuestionOption[]      // For button-based questions
