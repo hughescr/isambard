@@ -246,7 +246,9 @@ export interface ShutdownOptions {
  *   `humanWaitTargetMs` (or, while a tool was still pending, `humanWaitCeilingMs`).
  * - `'compaction_ceiling'` — a `/compact` turn outlived the compaction guard's ceiling.
  * - `'interrupt_current'` — an explicit {@link Conductor.interruptCurrent} call.
- * - `'shutdown'` — {@link Conductor.shutdown}'s `turnWaitMs` elapsed with the turn still running.
+ * - `'shutdown'` — {@link Conductor.shutdown}'s `turnWaitMs` elapsed with the turn still running;
+ *   also used when shutdown's hard deadline closed the session on a running turn before any
+ *   interrupt was sent (#120).
  */
 export type CancellationSource = 'caller_signal' | 'human_preempt' | 'human_wait' | 'compaction_ceiling' | 'interrupt_current' | 'shutdown';
 
@@ -278,8 +280,9 @@ type TurnResultArm
  * - `'completed'` — the SDK returned a successful result; `response` is its final text.
  * - `'failed'` — an error result that was not (or could no longer be) retried, or a non-success
  *   result the SDK did not flag `is_error`; `error` describes it.
- * - `'interrupted'` — the turn reached the SDK and was interrupted; `cancellationSource` says who
- *   asked. An interrupted turn never carries a reply.
+ * - `'interrupted'` — the turn reached the SDK and was interrupted, or was cut off when
+ *   {@link Conductor.shutdown} closed its session before its result frame arrived (#120);
+ *   `cancellationSource` says who asked. An interrupted turn never carries a reply.
  * - `'withdrawn'` — the envelope was still held host-side when the caller's signal aborted, so
  *   it never reached the SDK and has no partial work.
  *
@@ -526,6 +529,14 @@ export interface Conductor {
     subscribeTurn:                 (handler: (turnId: string, frame: SDKMessage) => void) => () => void
     /** A snapshot of the conductor's state; its `lifecycle` is a projection with a fixed precedence (see `currentLifecycle` in `createConductor`). */
     status:                        () => ConductorStatus
+    /**
+     * Ends the conductor for good; a second call while one is running is a no-op. Rejects every
+     * submit still queued, waits up to `turnWaitMs` for a running turn to finish and then
+     * interrupts it, journals `session_ended`/`shutdown` and flushes, and closes the session
+     * handle — all bounded by `deadlineMs`, after which it closes regardless. A turn still running
+     * at the close resolves `status: 'interrupted'` with the source that first asked for an
+     * interrupt, or `'shutdown'` (#120); frames the closed handle still forwards are ignored.
+     */
     shutdown:                      (options: ShutdownOptions) => Promise<void>
     /** The compaction guard's live threshold percentage — see {@link CompactionGuard.getThresholdPercent}. */
     getCompactionThresholdPercent: () => number
@@ -1297,6 +1308,53 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     /**
+     * Settles the turn still running when {@link shutdown} closes the session handle (#120), as
+     * `interrupted` with the source that first asked for the interrupt — or `'shutdown'` when the
+     * hard deadline closed the session before any interrupt was sent. A no-op when no turn is
+     * running, including when the turn's own result frame already settled it through
+     * {@link afterResult} during shutdown's journal flush.
+     *
+     * Without this the turn never settles: on the real SDK, shutdown's interrupt is acknowledged
+     * and the close runs ~2 ms later, before the interrupted turn's result frame arrives (#41
+     * Part A, case A6); {@link handleMidLifeClosed} ignores closes while shutting down; and
+     * {@link rejectAllQueued} only drains `pendingQueue`. The submitter's promise (or an adopted
+     * wake's {@link CreateConductorParams.onWakeTurnSettled}) would stay pending forever.
+     *
+     * Journals the same reply-less `turn_completed` row an interrupted turn gets when its result
+     * arrives in time. Also clears the turn's human-wait escalation timer and releases shutdown's
+     * own turn-end waiter, so no timer outlives the conductor. Deliberately injects no
+     * continuation note: `pendingQueue` never drains again once shutdown has begun.
+     */
+    function settleTurnCutOffByShutdown(): void {
+        const turn = currentTurn;
+        if(turn === null) {
+            return;
+        }
+        currentTurn = null;
+        if(turn.escalationTimer !== undefined) {
+            clock.clearTimer(turn.escalationTimer);
+        }
+        resolveTurnEndedWaiters();
+        const cancellationSource = turn.interruptSource ?? 'shutdown';
+        logger.info({ turnId: turn.id, kind: turn.kind, cancellationSource }, 'Conductor shutdown settled the turn still running as interrupted');
+        if(turn.item === undefined) {
+            return;
+        }
+        const { item } = turn;
+        clearAbortListener(item);
+        journal.append({ type: 'turn_completed', at: now(), envelopeId: item.envelope.id, kind: turn.kind });
+        item.deferred.resolve({
+            status:              'interrupted',
+            envelopeId:          item.envelope.id,
+            response:            null,
+            sessionId:           currentSessionId,
+            contextUsagePercent: ledgerStore.get().context.percentage,
+            partialWork:         turn.tracker.getProgress(),
+            cancellationSource,
+        });
+    }
+
+    /**
      * The {@link Deferred} for an adopted wake turn's synthesized {@link QueuedItem} (R2): no
      * external caller is waiting on a promise for this turn, so `resolve` routes the settled
      * {@link TurnResult} to {@link onWakeTurnSettled} instead (when one was provided). The
@@ -1479,6 +1537,13 @@ export function createConductor(params: CreateConductorParams): Conductor {
     }
 
     function onFrame(frame: SDKMessage): void {
+        if(closed) {
+            // The session handle keeps forwarding frames until its stream ends, and a real SDK
+            // stream can still hold frames buffered behind shutdown's close. Shutdown has already
+            // settled the turn they belong to (#120), so any of them opening a spontaneous turn,
+            // consuming a pending adoption, or settling anything would misattribute it.
+            return;
+        }
         if(frame.type === 'result' && currentTurn !== null && resultBelongsElsewhere(currentTurn, frame)) {
             logger.warn({ echoed: echoedUserMessageUuids(frame), turnId: currentTurn.id }, 'Ignoring a result frame that answers a different message than the current turn');
             return;
@@ -2499,7 +2564,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
         await Promise.race([graceful, deadline]);
         clock.clearTimer(deadlineTimer);
         currentHandleRef?.close();
+        // Set before settling, so no frame the closed handle still forwards (see onFrame) can open
+        // or settle a turn after this point.
         closed = true;
+        settleTurnCutOffByShutdown();
     }
 
     return {

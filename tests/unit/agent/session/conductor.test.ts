@@ -11,7 +11,7 @@ import { FakeJournal } from '../../../helpers/fake-journal';
 import { fakeQueryFn, type FakeQuery, type FakeQueryFnOptions } from '../../../helpers/fake-query';
 import { FakeResumeStore } from '../../../helpers/fake-resume-store';
 import * as frames from '../../../helpers/sdk-frames';
-import { createConductor, type BootBundleRequest, type Conductor, type CreateConductorParams } from '@/agent/session/conductor';
+import { createConductor, type BootBundleRequest, type Conductor, type CreateConductorParams, type TurnResult } from '@/agent/session/conductor';
 import { createCostCeiling } from '@/agent/session/cost-ceiling';
 import { createLedgerStore, type LedgerStore } from '@/agent/session/ledger';
 import { createTaskLaunchRegistry } from '@/agent/session/task-launch-registry';
@@ -3250,6 +3250,47 @@ describe('createConductor', () => {
     });
 
     describe('shutdown()', () => {
+        /** Records what `promise` settles with, without awaiting it — so a turn that never settles fails its assertion as `undefined` instead of hanging the test (#120). */
+        function settledValueOf(promise: Promise<TurnResult>): { value: TurnResult | undefined } {
+            const box: { value: TurnResult | undefined } = { value: undefined };
+            void promise.then((result) => {
+                box.value = result;
+                return undefined;
+            });
+            return box;
+        }
+
+        /** Opens a session whose ledger holds a 42% context usage (polled after one completed turn), then starts discord envelope E on chan-1 and streams part of an answer — the turn shutdown will cut off. */
+        async function openWithTurnInFlight(h: Harness, signal?: AbortSignal): Promise<{ envelope: DiscordQueryEnvelope, outcome: { value: TurnResult | undefined } }> {
+            await openWith(h, 'sess-1');
+            h.instances[0].scriptContextUsage(frames.contextUsage({ percentage: 42 }));
+            const first = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
+            await flush();
+            h.instances[0].emit(frames.resultSuccess());
+            await first;
+            await flush();
+            const envelope = discordEnvelope({ channelId: createChannelId('chan-1') });
+            const outcome = settledValueOf(h.conductor.submit(envelope, {
+                priority: 'urgent', requestingChannelId: createChannelId('chan-1'), ...(signal === undefined ? {} : { signal }),
+            }));
+            await flush();
+            h.instances[0].emit(frames.assistantText('half an answer'));
+            await flush();
+            return { envelope, outcome };
+        }
+
+        /** The #41 A6 sequence: shutdown's turn wait elapses, its interrupt is acknowledged, and no result frame ever arrives before the close. */
+        async function shutdownWithAcknowledgedInterruptAndNoResult(h: Harness): Promise<void> {
+            const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 1000, deadlineMs: 5000 });
+            await flush();
+            h.clock.advance(1000);
+            await flush();
+            expect(h.instances[0].interruptCalls).toBe(1);
+            h.instances[0].resolveInterrupt();
+            await shutdownPromise;
+            await flush();
+        }
+
         it('with no running turn: flushes the journal and closes immediately', async () => {
             const h = build();
             await openWith(h);
@@ -3285,9 +3326,12 @@ describe('createConductor', () => {
             h.instances[0].emit(frames.resultInterrupted());
             await shutdownPromise;
             await expect(submitted).resolves.toMatchObject({ status: 'interrupted', cancellationSource: 'shutdown' });
+            await flush();
 
             expect(h.journal.flushCount).toBe(1);
             expect(h.instances[0].closeCalls).toBe(1);
+            // Whichever settles the turn first — its in-time result frame or shutdown's close (#120) — exactly one row.
+            expect(h.journal.byKind('turn_completed')).toHaveLength(1);
         });
 
         it('honors the caller-supplied turnWaitMs, not a hardcoded or dropped wait — no interrupt until it elapses', async () => {
@@ -3368,7 +3412,7 @@ describe('createConductor', () => {
         it('a hard deadline forces close even if the turn never ends and interrupt never resolves', async () => {
             const h = build();
             await openWith(h);
-            void h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
+            const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
             await flush();
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 1000, deadlineMs: 5000 });
@@ -3378,10 +3422,13 @@ describe('createConductor', () => {
             expect(h.instances[0].interruptCalls).toBe(1);
             // interrupt() never resolves and the turn never ends — only the deadline can save us.
 
+            const outcome = settledValueOf(submitted);
             h.clock.advance(4000);
             await shutdownPromise;
+            await flush();
 
             expect(h.instances[0].closeCalls).toBe(1);
+            expect(outcome.value).toMatchObject({ status: 'interrupted', cancellationSource: 'shutdown' });
         });
 
         it('rejects everything still waiting in pendingQueue, not just later submits, once shutdown begins', async () => {
@@ -3487,6 +3534,190 @@ describe('createConductor', () => {
             // itself (it would otherwise outlive the process), before shutdown()'s final close.
             expect(h.instances[1].closeCalls).toBe(1);
             expect(h.journal.flushCount).toBe(1);
+        });
+
+        describe('a turn still in flight when shutdown closes the session (#120)', () => {
+            it('a turn whose interrupt is acknowledged but whose result frame never arrives settles as interrupted when shutdown closes the session', async () => {
+                const h = build();
+                const { envelope, outcome } = await openWithTurnInFlight(h);
+
+                await shutdownWithAcknowledgedInterruptAndNoResult(h);
+
+                expect(outcome.value).toEqual({
+                    status:              'interrupted',
+                    envelopeId:          envelope.id,
+                    response:            null,
+                    sessionId:           'sess-1',
+                    contextUsagePercent: 42,
+                    partialWork:         { thinking: '', text: 'half an answer', pendingToolUse: null, sessionId: undefined },
+                    cancellationSource:  'shutdown',
+                });
+                expect(h.journal.byKind('turn_completed').filter(entry => entry.envelopeId === envelope.id)).toEqual([
+                    { type: 'turn_completed', at: expect.any(Date), envelopeId: envelope.id, kind: 'discord' },
+                ]);
+                expect(h.logger.info).toHaveBeenCalledWith(
+                    { turnId: envelope.id, kind: 'discord', cancellationSource: 'shutdown' },
+                    'Conductor shutdown settled the turn still running as interrupted'
+                );
+                expect(h.conductor.status().turn).toBeNull();
+                expect(h.conductor.status().lifecycle).toBe('closed');
+                expect(h.instances[0].closeCalls).toBe(1);
+                expect(h.clock.pending()).toBe(0);
+            });
+
+            it('the hard deadline settles a turn shutdown never got to interrupt, and leaves no turn-wait timer behind', async () => {
+                const h = build();
+                const { envelope, outcome } = await openWithTurnInFlight(h);
+
+                const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 5000 });
+                await flush();
+                h.clock.advance(5000);
+                await shutdownPromise;
+                await flush();
+
+                expect(outcome.value).toMatchObject({ status: 'interrupted', envelopeId: envelope.id, cancellationSource: 'shutdown' });
+                expect(h.instances[0].interruptCalls).toBe(0);
+                expect(h.clock.pending()).toBe(0);
+                expect(h.journal.byKind('session_ended')).toHaveLength(1);
+                expect(h.journal.byKind('shutdown')).toHaveLength(1);
+                expect(h.journal.byKind('turn_completed').filter(entry => entry.envelopeId === envelope.id)).toHaveLength(1);
+                expect(h.journal.flushCount).toBe(1);
+            });
+
+            it('a turn another source already interrupted keeps that source when shutdown settles it', async () => {
+                const h = build();
+                const { outcome } = await openWithTurnInFlight(h);
+                void h.conductor.interruptCurrent();
+                await flush();
+
+                await shutdownWithAcknowledgedInterruptAndNoResult(h);
+
+                expect(outcome.value).toMatchObject({ status: 'interrupted', cancellationSource: 'interrupt_current' });
+                expect(h.instances[0].interruptCalls).toBe(1);
+                expect(h.logger.info).toHaveBeenCalledWith(
+                    expect.objectContaining({ cancellationSource: 'interrupt_current' }),
+                    'Conductor shutdown settled the turn still running as interrupted'
+                );
+            });
+
+            it('a bare spontaneous turn in flight at shutdown is dropped without a journal row and its human-wait escalation timer is cleared', async () => {
+                const h = build();
+                await openWith(h);
+                h.instances[0].emit(frames.assistantText('thinking out loud'));
+                await flush();
+                const queued = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
+                await flush();
+                expect(h.clock.pending()).toBe(1);
+
+                const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 1000 });
+                await expect(queued).rejects.toThrow('shutting down');
+                h.clock.advance(1000);
+                await shutdownPromise;
+                await flush();
+
+                expect(h.conductor.status().lifecycle).toBe('closed');
+                expect(h.clock.pending()).toBe(0);
+                expect(h.journal.byKind('turn_completed')).toEqual([]);
+                expect(h.logger.info).toHaveBeenCalledWith(
+                    { turnId: 'notification-0', kind: 'notification', cancellationSource: 'shutdown' },
+                    'Conductor shutdown settled the turn still running as interrupted'
+                );
+            });
+
+            it('shutdown settlement removes the caller\'s abort listener, so a later abort does nothing', async () => {
+                const h = build();
+                const controller = new AbortController();
+                const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
+                const { outcome } = await openWithTurnInFlight(h, controller.signal);
+
+                const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 5000 });
+                await flush();
+                expect(removeSpy).not.toHaveBeenCalled();
+                h.clock.advance(5000);
+                await shutdownPromise;
+                await flush();
+
+                expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+                const settled = outcome.value;
+                controller.abort();
+                await flush();
+                expect(h.instances[0].interruptCalls).toBe(0);
+                expect(outcome.value).toBe(settled);
+                expect(settled).toMatchObject({ status: 'interrupted', cancellationSource: 'shutdown' });
+            });
+
+            it('an adopted wake turn in flight at shutdown reaches onWakeTurnSettled as interrupted', async () => {
+                const onWakeTurnSettled = jest.fn();
+                const h = build({ onWakeTurnSettled });
+                await openWith(h);
+                h.conductor.adoptWakeTurn({ taskId: 'agent-X', toolUseId: 'tool-T', summary: 'done' });
+                h.instances[0].emit(frames.assistantText('root wake reply, cut off'));
+                await flush();
+                expect(h.conductor.status().turn).toMatchObject({ kind: 'task' });
+
+                const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 5000 });
+                await flush();
+                h.clock.advance(5000);
+                await shutdownPromise;
+                await flush();
+
+                expect(onWakeTurnSettled).toHaveBeenCalledTimes(1);
+                expect(onWakeTurnSettled).toHaveBeenCalledWith(
+                    expect.objectContaining({ kind: 'task', text: 'done' }),
+                    expect.objectContaining({ status: 'interrupted', response: null, cancellationSource: 'shutdown' })
+                );
+            });
+
+            it('a result frame arriving after shutdown settled the turn is ignored', async () => {
+                const h = build();
+                const { envelope, outcome } = await openWithTurnInFlight(h);
+                await shutdownWithAcknowledgedInterruptAndNoResult(h);
+                const settled = outcome.value;
+
+                h.instances[0].emit(frames.resultInterrupted());
+                await flush();
+
+                expect(outcome.value).toBe(settled);
+                expect(h.journal.byKind('turn_completed').filter(entry => entry.envelopeId === envelope.id)).toHaveLength(1);
+            });
+
+            it('a late root assistant frame and result after shutdown open no new turn and journal nothing', async () => {
+                const h = build();
+                const { outcome } = await openWithTurnInFlight(h);
+                await shutdownWithAcknowledgedInterruptAndNoResult(h);
+                const settled = outcome.value;
+                const rowsAtClose = h.journal.entries().length;
+
+                h.instances[0].emit(frames.assistantText('buffered behind the close'));
+                await flush();
+                expect(h.conductor.status().turn).toBeNull();
+                h.instances[0].emit(frames.resultSuccess({ result: 'buffered behind the close' }));
+                await flush();
+
+                expect(h.conductor.status().turn).toBeNull();
+                expect(h.journal.entries()).toHaveLength(rowsAtClose);
+                expect(outcome.value).toBe(settled);
+            });
+
+            it('a pending wake adoption is not consumed by frames arriving after shutdown settled the running turn', async () => {
+                const onWakeTurnSettled = jest.fn();
+                const h = build({ onWakeTurnSettled });
+                const { outcome } = await openWithTurnInFlight(h);
+                h.conductor.adoptWakeTurn({ taskId: 'agent-X', toolUseId: 'tool-T', summary: 'done' });
+                await shutdownWithAcknowledgedInterruptAndNoResult(h);
+                const rowsAtClose = h.journal.entries().length;
+
+                h.instances[0].emit(frames.assistantText('root wake reply, after the close'));
+                await flush();
+                h.instances[0].emit(frames.resultSuccess({ result: 'root wake reply, after the close' }));
+                await flush();
+
+                expect(h.conductor.status().turn).toBeNull();
+                expect(h.journal.entries()).toHaveLength(rowsAtClose);
+                expect(h.journal.byKind('envelope_submitted').filter(entry => entry.kind === 'task')).toEqual([]);
+                expect(onWakeTurnSettled).not.toHaveBeenCalled();
+                expect(outcome.value).toMatchObject({ status: 'interrupted', cancellationSource: 'shutdown' });
+            });
         });
     });
 
