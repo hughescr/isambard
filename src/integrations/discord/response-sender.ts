@@ -152,7 +152,8 @@ export function queuedOutboxIdsFromPartialResponse(response: Extract<SendEnvelop
  *
  * A `discord`/`notification` kind with no `channelId` is a programming error (there is no origin
  * to route to) and throws {@link InvariantViolationError} rather than silently dropping the
- * response. A missing well-known channel for `catchup`/`perch` has no channel to fall back to, so
+ * response. An origin wins even for mapped kinds; a missing well-known channel for
+ * `catchup`/`perch`/`wrapup` has no channel to fall back to, so
  * it resolves to `skipped`; `@@NO_RESPONSE@@` also resolves to `skipped` with reason `no-response`.
  * With `config.discordCapability` (wired at every production call site), all queued chunks resolve
  * to `queued`, a sent/queued mix resolves to `partial`, and any unavailable chunk resolves to

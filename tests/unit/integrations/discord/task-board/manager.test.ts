@@ -516,6 +516,23 @@ describe('TaskBoardManager', () => {
             expect(editMessage).not.toHaveBeenCalled();
         });
 
+        test('an abandoned key never retries even if a later running view arrives', async () => {
+            sendPayloadToChannel = mock(async () => {
+                throw new Error('send failed');
+            });
+            const manager = makeManager();
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([distinct('second')]);
+            await settle();
+            manager.applyViews([distinct('third')]);
+            manager.applyViews([settled('fourth', new Date(clockMs))]);
+            advance(10_000);
+            await settle();
+            expect(sendPayloadToChannel).toHaveBeenCalledTimes(2);
+            expect(editMessage).not.toHaveBeenCalled();
+        });
+
         test('does not start a second retry while the first retry is still in flight', async () => {
             sendPayloadToChannel = mock(async () => {
                 throw new Error('discord is sad');
@@ -614,6 +631,78 @@ describe('TaskBoardManager', () => {
             manager.applyViews([settled('second', new Date(clockMs))]);
             await settle();
             expect(editMessage).toHaveBeenCalledTimes(3);
+        });
+
+        test('ignores a stale finished update after another task has started on the same board', async () => {
+            const manager = makeManager();
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([settled('first', new Date(clockMs))]);
+            await settle();
+            manager.applyViews([distinct('second')]);
+            manager.applyViews([settled('first', new Date(clockMs))]);
+            await settle();
+            advance(3000);
+            await settle();
+            expect(embedOf(editMessage.mock.calls, editMessage.mock.calls.length - 1).data.fields?.[0].name).toContain('second');
+            expect(embedOf(editMessage.mock.calls, editMessage.mock.calls.length - 1).data.color).toBe(0x4E_8F_E6);
+        });
+
+        test('a superseded final edit failure is not logged as a dropped board', async () => {
+            let rejectFinal: ((error: Error) => void) | undefined;
+            editMessage = mock(async () => {
+                if(!rejectFinal) {
+                    return new Promise<Message>((_resolve, reject) => {
+                        rejectFinal = reject;
+                    });
+                }
+                return sentMessage;
+            });
+            const manager = makeManager();
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([settled('first', new Date(clockMs))]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+            manager.applyViews([distinct('second')]);
+            rejectFinal?.(new Error('superseded failure'));
+            await settle();
+
+            expect((logger.debug.mock.calls as [Record<string, unknown>][]).filter(call => call[0].msg === 'Task board update resolved after the board was dropped; discarding')).toHaveLength(0);
+            expect(logger.warn).not.toHaveBeenCalled();
+            advance(3000);
+            await settle();
+            expect(embedOf(editMessage.mock.calls, 1).data.fields?.[0].name).toContain('second');
+        });
+
+        test('a final edit finishing after new work starts does not freeze the next completion', async () => {
+            let resolveFinal: ((message: Message) => void) | undefined;
+            editMessage = mock(async () => {
+                if(!resolveFinal) {
+                    return new Promise<Message>((resolve) => {
+                        resolveFinal = resolve;
+                    });
+                }
+                return sentMessage;
+            });
+            const manager = makeManager();
+            manager.applyViews([distinct('first')]);
+            await settle();
+            manager.applyViews([settled('first', new Date(clockMs))]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(1);
+            manager.applyViews([distinct('second')]);
+            manager.applyViews([settled('first', new Date(clockMs))]);
+            resolveFinal?.(sentMessage);
+            await settle();
+            advance(3000);
+            await settle();
+            expect(embedOf(editMessage.mock.calls, 1).data.fields?.[0].name).toContain('second');
+            expect(embedOf(editMessage.mock.calls, 1).data.color).toBe(0x4E_8F_E6);
+            manager.applyViews([settled('second', new Date(clockMs))]);
+            await settle();
+            expect(editMessage).toHaveBeenCalledTimes(3);
+            expect(embedOf(editMessage.mock.calls, 2).data.fields?.[0].name).toContain('second');
         });
 
         test('finalises the board once the retry lands, so a later terminal view is ignored', async () => {

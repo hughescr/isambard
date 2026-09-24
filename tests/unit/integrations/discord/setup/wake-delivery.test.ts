@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, it, jest } from 'bun:test';
 import { type DeliverableEnvelope, type TurnResult, type SendOutcome  } from '@/agent';
 import { createChannelId } from '@/agent/types';
+import { ResponseRouter } from '@/integrations/discord/channel-registry';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import type { SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
 import { createWakeTurnDelivery, type CreateWakeTurnDeliveryParams } from '@/integrations/discord/setup/wake-delivery';
@@ -55,6 +56,7 @@ function build(overrides: Partial<CreateWakeTurnDeliveryParams> = {}) {
             targetChannelId: 'fallback-channel-id', shouldSend: true, content, isFallback: true,
         })),
         resolveEnvelopeTarget: jest.fn(),
+        resolveDeliveryTarget: ResponseRouter.prototype.resolveDeliveryTarget,
     };
     const client = {};
     const rateLimiter = {};

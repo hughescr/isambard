@@ -13,7 +13,7 @@ import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { createUserId, createChannelId, createGuildId } from '../types';
+import { createUserId, createChannelId, createGuildId, type ExchangeSpeaker } from '../types';
 import { type AnswerClassifier, type QuestionRegistry } from '@/agent';
 import { createReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import { safeAsyncHandler } from '@/utils';
@@ -172,7 +172,7 @@ interface SetupMessageProcessingParams {
     client:           Client
     readyClient:      Client
     channelRegistry:  ChannelRegistryManager
-    addRecentMessage: (content: string, author: 'user' | 'izzy') => void
+    addRecentMessage: (content: string, author: ExchangeSpeaker) => void
     coordinator:      MessageCoordinator
     questionRegistry: QuestionRegistry
     answerClassifier: AnswerClassifier

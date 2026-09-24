@@ -26,7 +26,7 @@ export { DMTracker } from './dm-tracker';
 export { resolveChannelId } from './resolve';
 
 // Response router
-export { ENVELOPE_KIND_TO_CHANNEL, ResponseRouter } from './response-router';
+export { ResponseRouter, type EnvelopeDeliveryTarget } from './response-router';
 export type { EnvelopeRoutingResult, RoutingResult } from './response-router';
 
 // Discovery

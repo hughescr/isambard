@@ -218,8 +218,9 @@ export type Envelope = QueryEnvelope | AccumulationEnvelope | AdoptedPeerEnvelop
 /**
  * What a settled turn's reply delivery reads from its envelope. Wider than {@link Envelope} on
  * purpose: the perch conductor relabels an adopted `task` wake as `kind: 'perch'` so its reply
- * routes to the perch channel, while keeping whatever channel the task's launch record carried —
- * a pairing no envelope contract allows, and one delivery has no reason to forbid.
+ * routes to the perch channel. The delivery projection drops the task launch channel, while
+ * the original envelope and persisted journal retain it for recovery. This delivery-only
+ * projection is deliberately wider than the submitted envelope contracts.
  */
 export interface DeliverableEnvelope {
     id:         string

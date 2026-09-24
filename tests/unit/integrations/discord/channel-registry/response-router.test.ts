@@ -4,6 +4,7 @@ import { ENVELOPE_KIND_TO_CHANNEL, ResponseRouter } from '../../../../../src/int
 import { NO_RESPONSE_SENTINEL } from '../../../../../src/integrations/discord/channel-registry/sentinel';
 import type { ChannelMetadata } from '../../../../../src/integrations/discord/channel-registry/types';
 import { createChannelId, createGuildId } from '../../../../../src/integrations/discord/types';
+import { ENVELOPE_KINDS } from '@/agent';
 import { WellKnownChannelNotFoundError } from '@/errors';
 
 describe('ResponseRouter', () => {
@@ -68,15 +69,47 @@ describe('ResponseRouter', () => {
     });
 
     describe('ENVELOPE_KIND_TO_CHANNEL', () => {
-        it('maps catchup and perch envelope kinds to their well-known channels, and nothing else', () => {
+        it('maps catchup, perch and wrapup envelope kinds to their well-known channels, and nothing else', () => {
             expect(ENVELOPE_KIND_TO_CHANNEL).toEqual({
                 catchup: 'catch-up',
                 perch:   'perch-time',
+                wrapup:  'perch-time',
             });
         });
     });
 
+    describe('resolveDeliveryTarget', () => {
+        it('uses the recorded origin ahead of each mapped channel without consulting the registry', () => {
+            for(const kind of ['catchup', 'perch', 'wrapup'] as const) {
+                expect(router.resolveDeliveryTarget({ kind, channelId: ORIGIN_CHANNEL })).toEqual({ kind: 'origin', channelId: ORIGIN_CHANNEL });
+            }
+            expect(mockManager.getWellKnownChannel).not.toHaveBeenCalled();
+        });
+
+        it('classifies every kind without an origin explicitly', () => {
+            for(const kind of ENVELOPE_KINDS) {
+                const channel = ENVELOPE_KIND_TO_CHANNEL[kind];
+                expect(router.resolveDeliveryTarget({ kind })).toEqual(channel === undefined
+                    ? { kind: 'fallback' }
+                    : { kind: 'well-known', channel });
+            }
+            expect(mockManager.getWellKnownChannel).not.toHaveBeenCalled();
+        });
+    });
+
     describe('resolveEnvelopeTarget', () => {
+        it('routes a mapped kind with an origin to the origin, not the well-known channel', async () => {
+            const result = await router.resolveEnvelopeTarget('catchup', 'Reply', ORIGIN_CHANNEL);
+            expect(result).toEqual({ targetChannelId: ORIGIN_CHANNEL, shouldSend: true, content: 'Reply' });
+            expect(mockManager.getWellKnownChannel).not.toHaveBeenCalled();
+        });
+
+        it('routes a channel-less wrapup to perch-time', async () => {
+            mockManager.getWellKnownChannel = mock(() => Promise.resolve({ channelId: PERCH_CHANNEL } as ChannelMetadata));
+            const result = await router.resolveEnvelopeTarget('wrapup', 'Wrapup');
+            expect(mockManager.getWellKnownChannel).toHaveBeenCalledWith('perch-time');
+            expect(result.targetChannelId).toBe(PERCH_CHANNEL);
+        });
         const CATCHUP_META: ChannelMetadata = {
             channelId:    CATCHUP_CHANNEL,
             guildId:      createGuildId('111222333444555666'),

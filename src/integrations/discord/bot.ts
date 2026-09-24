@@ -28,7 +28,7 @@ import { setupPerchDriverAndScheduler } from './setup/perch-setup';
 import { setupConductorPresence } from './setup/presence-setup';
 import { createWakeTurnDelivery } from './setup/wake-delivery';
 import { setupTaskBoard } from './task-board/setup';
-import { createUserId, type ChannelId } from './types';
+import { createUserId, type ChannelId, type ExchangeSpeaker, type RecentMessage } from './types';
 import { QuestionRegistry, AnswerClassifier, classifyWithHaiku, createTaskListReader, LiveSignals, systemClock, createShutdown, type IdentityCache, type PerchDriver, type PerchScheduler, type PerchConfig, type ContextBuilder, type ActivityLogger, type RecentTool, type RecentChannel, type Conductor, type LedgerStore, type ContextPolicy, type SessionJournal, type Clock, type Shutdown, type ShutdownSession, type NotifyFn, type NotificationBridge, type DeliverableEnvelope, type Envelope, type TimeHeaderProvider, type PerchSlotHooks, type TurnResult  } from '@/agent';
 import {
     DEFAULT_TASK_BOARD_CONFIG,
@@ -599,11 +599,10 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     const getLastSessionId = (): string | undefined => lastSessionId;
 
     // Track recent messages (user + bot) for context-aware idle status generation
-    interface RecentMessage { author: 'user' | 'izzy', content: string, timestamp: number }
     const MAX_RECENT_MESSAGES = 10; // Increased from 5 since we track both sides
     const recentMessages: RecentMessage[] = [];
 
-    const addRecentMessage = (content: string, author: 'user' | 'izzy' = 'user'): void => {
+    const addRecentMessage = (content: string, author: ExchangeSpeaker = 'user'): void => {
         // Stryker disable next-line llm: timestamp is only ever read by getRecentContext's sort, and a uniform offset preserves that order.
         recentMessages.push({ author, content: content.slice(0, 200), timestamp: Date.now() });
         if(recentMessages.length > MAX_RECENT_MESSAGES) {
@@ -1100,7 +1099,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
                         clock,
                         contextBuilder,
                         activityLogger,
-                        channelRegistry,
                         responseRouter,
                         client:        readyClient,
                         rateLimiter,

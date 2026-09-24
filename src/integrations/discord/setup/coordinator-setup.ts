@@ -14,7 +14,7 @@ import type { InboxManager } from '../inbox';
 import { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
-import { createChannelId, type ChannelId, type DiscordMessageContext } from '../types';
+import { createChannelId, type ChannelId, type DiscordMessageContext, type ExchangeSpeaker } from '../types';
 import { createConductorProcessor, type DiscordEnvelopeDeps } from './conductor-processor';
 import {
     type PlatformImage, type ActivityLogger, type Conductor, type ContextPolicy, type ContextBuilder, type TimeHeaderProvider, generateText
@@ -124,7 +124,7 @@ interface SetupCoordinatorParams {
     readyClient:        Client
     channelRegistry:    ChannelRegistryManager
     setLastSessionId?:  (sessionId: string | undefined) => void
-    addRecentMessage?:  (content: string, author: 'user' | 'izzy') => void
+    addRecentMessage?:  (content: string, author: ExchangeSpeaker) => void
     /** Push a channel into the recent-channels ring buffer on successful response send. */
     addRecentChannel?:  (channelId: ChannelId) => void
     activityLogger?:    ActivityLogger

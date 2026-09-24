@@ -133,8 +133,12 @@ Pure functions, no I/O, no LLM:
   second sub-agent launched in the same turn) thaws it and resumes throttled edits on the **same
   message**. A key is forgotten only when it leaves `views` or on `stop()`.
   A final edit that fails is retried once an `editIntervalMs` later, rendering whatever the latest
-  view is by then; a second failure warns and gives up. That retry has to be the manager's own
-  timer, because `setup.ts`'s refresh interval stops as soon as nothing is running. Views for keys
+  view is by then; a second failure warns and gives up. The closed `BoardPhase` union distinguishes
+  sending (first/second attempt), retry-pending, live, edit-pending, finalizing (in flight or retry
+  waiting), finalized and abandoned. A final edit settling after a new running view cannot refreeze
+  the board, and a late repeat of the prior finished view cannot replace new running work. That
+  retry has to be the manager's own timer, because `setup.ts`'s refresh interval stops as soon as
+  nothing is running. Views for keys
   whose message send failed are retried once on the next apply, then abandoned with a warn log
   (the entry is kept so the board is never re-sent). Every fire-and-forget completion re-checks
   that its entry is still the live one for its key before editing Discord or arming a timer, so a

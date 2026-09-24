@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import { DateTime } from 'luxon';
 import type { DiscordCapability } from '../capability';
-import type { ChannelRegistryManager, ResponseRouter } from '../channel-registry';
+import type { ResponseRouter } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
 import {
@@ -20,8 +20,6 @@ interface SetupPerchDriverParams {
     clock:              Clock
     contextBuilder?:    Pick<ContextBuilder, 'buildPerchContext'>
     activityLogger?:    ActivityLogger
-    /** Resolves the well-known `perch-time` channel id for a `wrapup` turn's delivery (a `perch` turn resolves it itself via `ENVELOPE_KIND_TO_CHANNEL`). */
-    channelRegistry:    ChannelRegistryManager
     responseRouter:     ResponseRouter
     client:             Client
     rateLimiter:        DiscordRateLimiter
@@ -44,15 +42,14 @@ interface SetupPerchDriverParams {
  * message) is left entirely alone — `handlers.ts`'s own `submitPerchChannelMessage` already
  * delivers that one itself, keyed to the ORIGINATING channel rather than the well-known one.
  *
- * `perch` resolves its target channel via `sendEnvelopeResponse`'s own `ENVELOPE_KIND_TO_CHANNEL`
- * mapping; `wrapup` is not in that mapping (it is not itself a live-Discord-message kind), so this
- * wrapper resolves the well-known channel id itself and passes it through explicitly.
+ * Both `perch` and `wrapup` classify as well-known delivery targets in the router; the sender
+ * resolves the channel and turns a missing channel into an intentional skip.
  */
 function wrapConductorWithDelivery(
     conductor: Pick<Conductor, 'submit' | 'interruptCurrent' | 'deliver' | 'status'>,
-    deps: Pick<SetupPerchDriverParams, 'channelRegistry' | 'responseRouter' | 'client' | 'rateLimiter' | 'discordCapability'>
+    deps: Pick<SetupPerchDriverParams, 'responseRouter' | 'client' | 'rateLimiter' | 'discordCapability'>
 ): Pick<Conductor, 'submit' | 'interruptCurrent' | 'status'> {
-    const { channelRegistry, responseRouter, client, rateLimiter, discordCapability } = deps;
+    const { responseRouter, client, rateLimiter, discordCapability } = deps;
 
     async function deliverResult(envelope: QueryEnvelope, result: TurnResult): Promise<void> {
         if(!result.response || (envelope.kind !== 'perch' && envelope.kind !== 'wrapup')) {
@@ -60,12 +57,10 @@ function wrapConductorWithDelivery(
         }
         try {
             await conductor.deliver(envelope.id, async () => {
-                const perchTimeChannel = envelope.kind === 'wrapup' ? await channelRegistry.getWellKnownChannel('perch-time') : null;
-                const channelId = perchTimeChannel?.channelId;
                 const sendResult = await sendEnvelopeResponse({
                     envelopeId: envelope.id,
                     kind:       envelope.kind,
-                    channelId,
+                    channelId:  undefined,
                     text:       result.response,
                     responseRouter,
                     client,
@@ -120,12 +115,12 @@ export function setupPerchDriverAndScheduler(params: SetupPerchDriverParams): {
     driver:    PerchDriver
     scheduler: PerchScheduler
 } {
-    const { conductor, perchConfig, clock, contextBuilder, activityLogger, channelRegistry, responseRouter, client, rateLimiter, discordCapability, isPerchPaused, timeHeader, slotHooks } = params;
+    const { conductor, perchConfig, clock, contextBuilder, activityLogger, responseRouter, client, rateLimiter, discordCapability, isPerchPaused, timeHeader, slotHooks } = params;
 
     const getCurrentLocalHour = (): number => DateTime.now().setZone(perchConfig.timezone).hour;
 
     const deliveringConductor = wrapConductorWithDelivery(conductor, {
-        channelRegistry, responseRouter, client, rateLimiter, discordCapability,
+        responseRouter, client, rateLimiter, discordCapability,
     });
 
     const driver = createPerchDriver({

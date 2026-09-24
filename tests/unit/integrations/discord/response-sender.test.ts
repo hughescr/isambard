@@ -17,7 +17,7 @@ import { mockLogger } from '../../../setup';
 import { InvariantViolationError } from '@/errors';
 import { WellKnownChannelNotFoundError } from '@/errors/discord';
 import type { DiscordCapability } from '@/integrations/discord/capability';
-import type { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
+import { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
 import type { ChannelId } from '@/integrations/discord/types';
@@ -68,6 +68,23 @@ describe('sendEnvelopeResponse', () => {
         mockLogger.info.mockClear();
         mockLogger.warn.mockClear();
         mockLogger.error.mockClear();
+    });
+
+    test('a mapped kind with an origin sends to its start channel without well-known lookup', async () => {
+        const getWellKnownChannel = mock(async () => null);
+        const responseRouter = new ResponseRouter({ manager: { getWellKnownChannel } as never });
+        const result = await sendEnvelopeResponse({
+            envelopeId:  'origin-catchup',
+            kind:        'catchup',
+            channelId:   'target-channel-456' as ChannelId,
+            text:        'Reply to the start channel',
+            responseRouter,
+            client:      mockClient,
+            rateLimiter: mockRateLimiter,
+        });
+        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['msg-123'] });
+        expect(getWellKnownChannel).not.toHaveBeenCalled();
+        expect(mockSendToChannel).toHaveBeenCalledTimes(1);
     });
 
     test('sends chunks to the resolved channel', async () => {

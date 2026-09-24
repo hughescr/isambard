@@ -15,6 +15,16 @@ export const DM_SCOPE = 'DM' as const;
 /** A channel's Discord guild or the direct-message scope sentinel. */
 export type ChannelScope = GuildId | typeof DM_SCOPE;
 
+/** Speaker in the recent Discord exchange ring. */
+export type ExchangeSpeaker = 'user' | 'izzy';
+
+/** One recent exchange, newest first in the bounded ring. */
+export interface RecentMessage {
+    author:    ExchangeSpeaker
+    content:   string
+    timestamp: number
+}
+
 /** Schema for a channel's guild or direct-message scope. */
 export const channelScopeSchema = z.union([guildIdSchema, z.literal(DM_SCOPE)]);
 

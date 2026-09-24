@@ -10,7 +10,7 @@ import type { MessageCoordinator } from './message-coordinator';
 import type { DiscordRateLimiter } from './rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from './response-sender';
 import { withDiscordRetry } from './retry';
-import { type DiscordMessageContext, type UserId, type ChannelId, createChannelId, createUserId, isDmScope, scopeOf  } from './types';
+import { type DiscordMessageContext, type UserId, type ChannelId, type ExchangeSpeaker, createChannelId, createUserId, isDmScope, scopeOf  } from './types';
 import { buildDiscordEnvelope, formatTimeHeader, type QuestionRegistry, type AnswerClassifier, type Conductor, type ContextBuilder, type TimeHeaderProvider } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
 import { resolveTimezone } from '@/utils';
@@ -114,7 +114,7 @@ interface MessageHandlerOptions {
     /**
      * Optional callback to track recent message content for context-aware idle status.
      */
-    addRecentMessage?: (content: string, author: 'user' | 'izzy') => void
+    addRecentMessage?: (content: string, author: ExchangeSpeaker) => void
 
     /**
      * Message coordinator for multi-message handling with interruption support.

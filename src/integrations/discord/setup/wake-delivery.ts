@@ -1,7 +1,7 @@
 import type { Logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
 import type { DiscordCapability } from '../capability';
-import { ENVELOPE_KIND_TO_CHANNEL, type ResponseRouter } from '../channel-registry';
+import type { ResponseRouter } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '../response-sender';
 import type { Conductor, DeliverableEnvelope, TurnResult } from '@/agent';
@@ -111,13 +111,16 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
             return;
         }
         const text = result.response;
-        // Stryker disable next-line llm: Envelope.kind is a required EnvelopeKind literal, so its nullish fallback is unreachable for every constructed envelope.
-        const hasKnownTarget = envelope.channelId !== undefined || ENVELOPE_KIND_TO_CHANNEL[envelope.kind] !== undefined;
-
-        if(hasKnownTarget) {
-            await deliverToKnownTarget(envelope, text);
-            return;
+        const target = responseRouter.resolveDeliveryTarget(envelope);
+        switch(target.kind) {
+            case 'origin':
+            case 'well-known': {
+                await deliverToKnownTarget(envelope, text);
+                return;
+            }
+            case 'fallback': {
+                await deliverToFallback(envelope, text);
+            }
         }
-        await deliverToFallback(envelope, text);
     };
 }

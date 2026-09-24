@@ -12,6 +12,7 @@ import * as agentModule from '@/agent';
 import type { SendOutcome } from '@/agent';
 import { createChannelId } from '@/agent/types';
 import { InvariantViolationError } from '@/errors';
+import { ResponseRouter } from '@/integrations/discord/channel-registry';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import {
     setupInboxAndCatchUp,
@@ -88,7 +89,7 @@ function conductorParams(overrides: Partial<RunConductorInboxInitParams> = {}): 
         ingressGate:           makeFakeIngressGate() as unknown as RunConductorInboxInitParams['ingressGate'],
         conversationConductor: makeFakeConductor() as unknown as RunConductorInboxInitParams['conversationConductor'],
         journal:               makeFakeJournal(),
-        responseRouter:        {} as unknown as RunConductorInboxInitParams['responseRouter'],
+        responseRouter:        { resolveDeliveryTarget: ResponseRouter.prototype.resolveDeliveryTarget } as RunConductorInboxInitParams['responseRouter'],
         rateLimiter:           {} as unknown as RunConductorInboxInitParams['rateLimiter'],
         ...overrides,
     };
@@ -403,7 +404,7 @@ describe('runConductorInboxInit', () => {
         await runConductorInboxInit(conductorParams({
             conversationConductor: conductor as never,
             journal,
-            responseRouter:        { routeToFallback } as never,
+            responseRouter:        { routeToFallback, resolveDeliveryTarget: ResponseRouter.prototype.resolveDeliveryTarget } as never,
         }));
 
         expect(routeToFallback).toHaveBeenCalledWith('a stale reply');
@@ -424,7 +425,7 @@ describe('runConductorInboxInit', () => {
             ]),
         });
 
-        await runConductorInboxInit(conductorParams({ journal, responseRouter: { routeToFallback } as never }));
+        await runConductorInboxInit(conductorParams({ journal, responseRouter: { routeToFallback, resolveDeliveryTarget: ResponseRouter.prototype.resolveDeliveryTarget } as never }));
 
         expect(routeToFallback).not.toHaveBeenCalled();
         expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
@@ -442,11 +443,25 @@ describe('runConductorInboxInit', () => {
             ]),
         });
 
-        await runConductorInboxInit(conductorParams({ journal, responseRouter: { routeToFallback } as never }));
+        await runConductorInboxInit(conductorParams({ journal, responseRouter: { routeToFallback, resolveDeliveryTarget: ResponseRouter.prototype.resolveDeliveryTarget } as never }));
 
         expect(routeToFallback).not.toHaveBeenCalled();
         expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
             envelopeId: 'env-catchup', kind: 'catchup', channelId: undefined,
+        }));
+    });
+
+    test('a recovered mapped kind carrying a recorded origin sends to that origin', async () => {
+        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: createChannelId('chan-7'), messageIds: [] }));
+        const journal = makeFakeJournal({
+            readSince: mock(async () => [
+                { type: 'envelope_submitted', at: 0, envelopeId: 'env-catchup', kind: 'catchup', channelId: 'chan-7' },
+                { type: 'turn_completed', at: 1, envelopeId: 'env-catchup', responseText: 'a stale reply' },
+            ]),
+        });
+        await runConductorInboxInit(conductorParams({ journal }));
+        expect(responseSenderModule.sendEnvelopeResponse).toHaveBeenCalledWith(expect.objectContaining({
+            envelopeId: 'env-catchup', kind: 'catchup', channelId: createChannelId('chan-7'),
         }));
     });
 
@@ -466,15 +481,17 @@ describe('runConductorInboxInit', () => {
         expect(sendEnvelopeResponseSpy).not.toHaveBeenCalled();
     });
 
-    test('boot-time skipped redelivery is not summarized or warned', async () => {
-        spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'skipped', reason: 'missing well-known channel' }));
+    test('missing catch-up channel yields a skipped recovery delivery instead of throwing', async () => {
+        const registry = { getWellKnownChannel: mock(async () => null) };
+        const router = new ResponseRouter({ manager: registry as never });
         const warnSpy = spyOn(loggerModule.logger, 'warn');
         spies.push(warnSpy);
         warnSpy.mockClear();
+        let delivered: SendOutcome | undefined;
         const conductor = makeFakeConductor({
             deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
-                const outcome = await send();
-                return outcome.kind === 'skipped' ? { outcome: 'skipped' as const } : { outcome: 'committed' as const, disposition: outcome.disposition };
+                delivered = await send();
+                return delivered.kind === 'skipped' ? { outcome: 'skipped' as const } : { outcome: 'committed' as const, disposition: delivered.disposition };
             }),
         });
         const journal = makeFakeJournal({
@@ -484,9 +501,11 @@ describe('runConductorInboxInit', () => {
             ]),
         });
 
-        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal }));
+        await runConductorInboxInit(conductorParams({ conversationConductor: conductor as never, journal, responseRouter: router }));
 
         expect(conductor.deliver).toHaveBeenCalledWith('env-missing-channel', expect.any(Function));
+        expect(registry.getWellKnownChannel).toHaveBeenCalledWith('catch-up');
+        expect(delivered).toEqual({ kind: 'skipped', reason: 'Well-known channel #catch-up not configured' });
         expect(warnSpy).not.toHaveBeenCalled();
     });
 

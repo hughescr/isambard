@@ -2,7 +2,7 @@ import type { ChannelId } from '../types';
 import type { ChannelRegistryManager } from './manager';
 import { processResponse } from './sentinel';
 import type { WellKnownChannel } from './types';
-import type { EnvelopeKind } from '@/agent';
+import type { EnvelopeKind, Envelope } from '@/agent';
 import { InvariantViolationError, WellKnownChannelNotFoundError } from '@/errors';
 
 export interface RoutingResult {
@@ -22,15 +22,18 @@ interface ResponseRouterConfig {
     manager: ChannelRegistryManager
 }
 
-/**
- * Maps conductor-mode {@link EnvelopeKind}s to their well-known channel targets (P10). Only
- * `catchup`/`perch` route to a well-known channel; every other kind (`discord`, `notification`,
- * and any future kind) requires an explicit `originChannelId` — see {@link ResponseRouter.resolveEnvelopeTarget}.
- */
+/** Well-known targets for channel-less conductor envelopes; an explicit origin always wins. */
 export const ENVELOPE_KIND_TO_CHANNEL: Partial<Record<EnvelopeKind, WellKnownChannel>> = {
     catchup: 'catch-up',
     perch:   'perch-time',
+    wrapup:  'perch-time',
 };
+
+/** Classification only; the caller owns well-known lookup and fallback delivery. */
+export type EnvelopeDeliveryTarget
+    = | { kind: 'origin', channelId: ChannelId }
+      | { kind: 'well-known', channel: WellKnownChannel }
+      | { kind: 'fallback' };
 
 /** Result of {@link ResponseRouter.resolveEnvelopeTarget}. */
 export interface EnvelopeRoutingResult {
@@ -45,14 +48,18 @@ export interface EnvelopeRoutingResult {
 export class ResponseRouter {
     constructor(private readonly config: ResponseRouterConfig) {}
 
+    /** Classifies without I/O: start channel, then well-known kind, then caller-managed fallback. */
+    resolveDeliveryTarget(envelope: Pick<Envelope, 'kind' | 'channelId'>): EnvelopeDeliveryTarget {
+        if(envelope.channelId !== undefined) {
+            return { kind: 'origin', channelId: envelope.channelId };
+        }
+        const channel = ENVELOPE_KIND_TO_CHANNEL[envelope.kind];
+        return channel === undefined ? { kind: 'fallback' } : { kind: 'well-known', channel };
+    }
+
     /**
-     * Resolves the delivery target for a conductor-mode envelope's response (P10). `catchup`/
-     * `perch` kinds resolve via {@link ENVELOPE_KIND_TO_CHANNEL} against the channel registry's
-     * well-known channels, throwing {@link WellKnownChannelNotFoundError} when that channel isn't
-     * configured — there is no fallback-channel attempt here; the
-     * caller ({@link import('../response-sender').sendEnvelopeResponse}) decides what a missing
-     * well-known channel means. Every other kind (`discord`, `notification`, and any future kind)
-     * routes to `originChannelId`, which is required in that case.
+     * Resolves a conductor response with origin-first precedence. Missing mapped channels throw
+     * {@link WellKnownChannelNotFoundError}; caller-managed fallback is never implicit here.
      *
      * @param kind - The envelope kind that produced this response
      * @param response - The raw response text to process for the `@@NO_RESPONSE@@` sentinel
@@ -66,29 +73,22 @@ export class ResponseRouter {
     ): Promise<EnvelopeRoutingResult> {
         const { shouldSend, content } = processResponse(response);
 
-        // Stryker disable next-line llm: mapped values are non-empty strings or undefined, and the following truthiness branch makes the added fallback inert.
-        const wellKnownType = ENVELOPE_KIND_TO_CHANNEL[kind];
-        if(wellKnownType) {
-            const wellKnownChannel = await this.config.manager.getWellKnownChannel(wellKnownType);
-            if(!wellKnownChannel) {
-                throw new WellKnownChannelNotFoundError(wellKnownType);
+        const target = this.resolveDeliveryTarget({ kind, channelId: originChannelId });
+        switch(target.kind) {
+            case 'origin': {
+                return { targetChannelId: target.channelId, shouldSend, content };
             }
-            return {
-                targetChannelId: wellKnownChannel.channelId,
-                shouldSend,
-                content,
-            };
+            case 'well-known': {
+                const channel = await this.config.manager.getWellKnownChannel(target.channel);
+                if(!channel) {
+                    throw new WellKnownChannelNotFoundError(target.channel);
+                }
+                return { targetChannelId: channel.channelId, shouldSend, content };
+            }
+            case 'fallback': {
+                throw new InvariantViolationError('resolveEnvelopeTarget', `originChannelId is required for envelope kind: ${kind}`);
+            }
         }
-
-        if(!originChannelId) {
-            throw new InvariantViolationError('resolveEnvelopeTarget', `originChannelId is required for envelope kind: ${kind}`);
-        }
-
-        return {
-            targetChannelId: originChannelId,
-            shouldSend,
-            content,
-        };
     }
 
     /**

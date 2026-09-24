@@ -780,9 +780,9 @@ export interface PerchConductorResult {
      * `fn` receives always has `kind: 'perch'` (rewritten here from the conductor's own
      * synthesized `'task'` kind) so `ResponseRouter`'s existing well-known-channel mapping routes
      * it to `perch-time` — see this module's own Q12 perch-decision doc above for why perch has
-     * no origin channel of its own to fall back to instead. Hence a {@link DeliverableEnvelope}
-     * rather than an {@link Envelope}: a relabelled wake keeps its launch record's channel,
-     * which no `perch`-kind envelope contract carries.
+     * no origin channel of its own to fall back to instead. The delivery projection drops the
+     * launch record's channel while the original envelope and journal retain it for recovery;
+     * it is a {@link DeliverableEnvelope}, not a submitted {@link Envelope}.
      */
     setWakeTurnDelivery: (fn: (envelope: DeliverableEnvelope, result: TurnResult) => Promise<void>) => void
     /**
@@ -928,15 +928,16 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
     // R2: late-bound the same way as createConversationConductor's own onWakeTurnSettled, with
     // one difference (the Q12 perch decision, see PerchConductorResult.setWakeTurnDelivery's own
     // doc): the envelope handed to `fn` always has `kind` rewritten to `'perch'`, so it routes to
-    // the well-known perch-time channel via ResponseRouter's existing mapping regardless of
-    // whether the launch record carried a channelId (a perch envelope never has one).
+    // the well-known perch-time channel. Only the delivery projection drops the launch channel;
+    // the original envelope and persisted journal keep it for recovery.
     let wakeTurnDelivery: ((envelope: DeliverableEnvelope, result: TurnResult) => Promise<void>) | undefined;
     async function onWakeTurnSettled(envelope: TaskQueryEnvelope, result: TurnResult): Promise<void> {
         if(wakeTurnDelivery === undefined) {
             logger.warn({ envelopeId: envelope.id }, 'wake turn settled before delivery was attached');
             return;
         }
-        await wakeTurnDelivery({ ...envelope, kind: 'perch' }, result);
+        const { channelId: _launchChannel, ...deliveryEnvelope } = envelope;
+        await wakeTurnDelivery({ ...deliveryEnvelope, kind: 'perch' }, result);
     }
     function setWakeTurnDelivery(fn: (envelope: DeliverableEnvelope, result: TurnResult) => Promise<void>): void {
         wakeTurnDelivery = fn;

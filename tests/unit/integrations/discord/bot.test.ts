@@ -26,7 +26,7 @@ import * as perchSetupModule from '@/integrations/discord/setup/perch-setup';
 import * as presenceSetupModule from '@/integrations/discord/setup/presence-setup';
 import * as wakeDeliveryModule from '@/integrations/discord/setup/wake-delivery';
 import * as taskBoardSetupModule from '@/integrations/discord/task-board/setup';
-import { createChannelId, createGuildId, createUserId } from '@/integrations/discord/types';
+import { createChannelId, createGuildId, createUserId, type ExchangeSpeaker } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils';
 
 /** Flushes enough microtask ticks for a chained promise sequence to settle. */
@@ -2632,7 +2632,7 @@ describe('createDiscordBot', () => {
             describe('getRecentContext (relocated callback)', () => {
                 function captureRecentContext() {
                     let getRecentContext: (() => Promise<string | undefined>) | undefined;
-                    let addRecentMessage: ((content: string, author: 'user' | 'izzy') => void) | undefined;
+                    let addRecentMessage: ((content: string, author: ExchangeSpeaker) => void) | undefined;
                     let presenceParams: { getLastThinkingContent?: () => string | undefined, onThinkingContentUpdate?: (content: string) => void, getPreviousStatus?: () => string | undefined, setPreviousStatus?: (text: string) => void } | undefined;
 
                     spies.push(
@@ -2644,7 +2644,7 @@ describe('createDiscordBot', () => {
                                 unsubscribeLedgers: mock(() => undefined),
                             };
                         }),
-                        spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { addRecentMessage?: (content: string, author: 'user' | 'izzy') => void }) => {
+                        spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockImplementation((params: { addRecentMessage?: (content: string, author: ExchangeSpeaker) => void }) => {
                             addRecentMessage = params.addRecentMessage;
                             return { setProcessor: mock(() => undefined), stop: mock(() => undefined) } as unknown as MessageCoordinator;
                         })

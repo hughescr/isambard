@@ -11,6 +11,7 @@ import { mockLogger } from '../../../../setup';
 import * as agentModule from '@/agent';
 import { type SendOutcome, type PerchConfig, type TurnResult  } from '@/agent';
 import { createChannelId } from '@/agent/types';
+import { ResponseRouter } from '@/integrations/discord/channel-registry';
 import * as responseSenderModule from '@/integrations/discord/response-sender';
 import { setupPerchDriverAndScheduler } from '@/integrations/discord/setup/perch-setup';
 
@@ -41,24 +42,13 @@ function makeInterruptedTurnResult(envelopeId: string): TurnResult {
     };
 }
 
-function fakeChannelRegistry(perchTimeChannelId: string | null = 'perch-time-channel-id') {
+function deliveryDeps(overrides: Record<string, unknown> = {}): Pick<SetupParams, 'responseRouter' | 'client' | 'rateLimiter'> {
     return {
-        getWellKnownChannel: mock(async () => (perchTimeChannelId === null
-            ? null
-            : {
-                channelId: perchTimeChannelId, channelName: 'perch-time', guildId: 'guild-1', isMuted: false, isWellKnown: 'perch-time' as const, discoveredAt: '2025-01-01T00:00:00.000Z', lastSeenAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
-            })),
-    };
-}
-
-function deliveryDeps(overrides: Record<string, unknown> = {}): Pick<SetupParams, 'channelRegistry' | 'responseRouter' | 'client' | 'rateLimiter'> {
-    return {
-        channelRegistry: fakeChannelRegistry(),
-        responseRouter:  {},
-        client:          {},
-        rateLimiter:     {},
+        responseRouter: { resolveDeliveryTarget: ResponseRouter.prototype.resolveDeliveryTarget },
+        client:         {},
+        rateLimiter:    {},
         ...overrides,
-    } as unknown as Pick<SetupParams, 'channelRegistry' | 'responseRouter' | 'client' | 'rateLimiter'>;
+    } as unknown as Pick<SetupParams, 'responseRouter' | 'client' | 'rateLimiter'>;
 }
 
 describe('setupPerchDriverAndScheduler', () => {
@@ -246,27 +236,48 @@ describe('setupPerchDriverAndScheduler', () => {
                 deliveredTarget = await send();
                 return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
-            const channelRegistry = fakeChannelRegistry();
-
             setupPerchDriverAndScheduler({
                 conductor:   { submit: innerSubmit, interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
-                ...deliveryDeps({ channelRegistry }),
+                ...deliveryDeps(),
             });
 
             const wrapped = getConductor();
             await wrapped?.submit({ id: 'env-perch-1', kind: 'perch' }, { priority: 'normal' });
 
             expect(innerDeliver).toHaveBeenCalledTimes(1);
-            expect(channelRegistry.getWellKnownChannel).not.toHaveBeenCalled();
             expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] });
             expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
                 envelopeId: 'env-perch-1', kind: 'perch', text: 'Perch summary text',
             }));
         });
 
-        it('delivers a settled \'wrapup\'-kind turn\'s response, resolving the perch-time channel id explicitly', async () => {
+        it('forces a perch reply to perch-time even if its envelope carries an origin channel', async () => {
+            const { getConductor } = captureDriverConductor();
+            const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: createChannelId('perch-time'), messageIds: ['msg-1'] });
+            let deliveredTarget: SendOutcome | undefined;
+            const innerDeliver = mock(async (_id: string, send: () => Promise<SendOutcome>) => {
+                deliveredTarget = await send();
+                return { outcome: 'committed' as const, disposition: 'sent' as const };
+            });
+            setupPerchDriverAndScheduler({
+                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-perch-origin', response: 'Perch reply' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                perchConfig: PERCH_CONFIG,
+                clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
+                ...deliveryDeps(),
+            });
+
+            await getConductor()?.submit({ id: 'env-perch-origin', kind: 'perch', channelId: createChannelId('launch-channel') }, { priority: 'normal' });
+
+            expect(innerDeliver).toHaveBeenCalledTimes(1);
+            expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: createChannelId('perch-time'), messageIds: ['msg-1'] });
+            expect(sendEnvelopeResponseSpy).toHaveBeenCalledTimes(1);
+            expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({ envelopeId: 'env-perch-origin', kind: 'perch', channelId: undefined, text: 'Perch reply' }));
+            expect(mockLogger.error).not.toHaveBeenCalled();
+        });
+
+        it('delivers a settled wrapup via the router mapping without overriding its channel', async () => {
             const { getConductor } = captureDriverConductor();
             const sendEnvelopeResponseSpy = jest.spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] });
             const innerSubmit = mock(async () => makeTurnResult({ envelopeId: 'env-wrapup-1', response: 'Wrapping up soon' }));
@@ -275,23 +286,20 @@ describe('setupPerchDriverAndScheduler', () => {
                 deliveredTarget = await send();
                 return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
-            const channelRegistry = fakeChannelRegistry('perch-time-channel-id');
-
             setupPerchDriverAndScheduler({
                 conductor:   { submit: innerSubmit, interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
-                ...deliveryDeps({ channelRegistry }),
+                ...deliveryDeps(),
             });
 
             const wrapped = getConductor();
             await wrapped?.submit({ id: 'env-wrapup-1', kind: 'wrapup' }, { priority: 'normal' });
 
-            expect(channelRegistry.getWellKnownChannel).toHaveBeenCalledWith('perch-time');
             // `deliver` journals the target reported by the sender's tagged result.
             expect(deliveredTarget).toEqual({ kind: 'committed', disposition: 'sent', channelId: createChannelId('channel-1'), messageIds: [] });
             expect(sendEnvelopeResponseSpy).toHaveBeenCalledWith(expect.objectContaining({
-                envelopeId: 'env-wrapup-1', kind: 'wrapup', channelId: 'perch-time-channel-id', text: 'Wrapping up soon',
+                envelopeId: 'env-wrapup-1', kind: 'wrapup', channelId: undefined, text: 'Wrapping up soon',
             }));
         });
 

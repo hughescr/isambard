@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
 import type { Client, Message } from 'discord.js';
 import type { DiscordCapability } from '../capability';
-import { ENVELOPE_KIND_TO_CHANNEL, type ResponseRouter } from '../channel-registry';
+import type { ResponseRouter } from '../channel-registry';
 import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { DiscordRateLimiter } from '../rate-limiter';
@@ -290,40 +290,30 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
     // before), so this list means "redelivered", not merely "attempted".
     const redeliveredTexts: string[] = [];
 
-    /**
-     * Where a boot-time redelivery should be sent, by the same three-way rule the live wake-turn
-     * delivery path uses (`setup/wake-delivery.ts`'s module doc): the envelope's own channel wins;
-     * failing that, a kind that maps to a well-known channel (`catchup`, `perch`) is left for
-     * {@link sendEnvelopeResponse}'s own `ResponseRouter.resolveEnvelopeTarget` to resolve
-     * (returning `undefined` here); and only when neither applies — a `task` envelope for
-     * background work launched from the perch session, which has no channel at all — is the
-     * `fallback` well-known channel resolved, through the very same
-     * {@link import('../channel-registry').ResponseRouter.routeToFallback} the live path calls.
-     * Before this, that last case reached `resolveEnvelopeTarget` with no `originChannelId` and
-     * raised `InvariantViolationError` on every boot inside the recovery window.
-     *
-     * @param item - The undelivered envelope being redelivered
-     * @param text - The reply text, passed to `routeToFallback` so it sees what is being routed
-     * @returns The channel to send to, or `undefined` to let the well-known resolution run
-     */
-    async function resolveRedeliveryChannel(item: UndeliveredEnvelope, text: string): Promise<ChannelId | undefined> {
-        if(item.channelId) {
-            return createChannelId(item.channelId);
-        }
-        if(ENVELOPE_KIND_TO_CHANNEL[item.envelopeKind]) {
-            return undefined;
-        }
-        const routing = await responseRouter.routeToFallback(text);
-        return routing.targetChannelId;
-    }
-
     async function deliverUndelivered(item: UndeliveredEnvelope): Promise<void> {
         if(item.responseText === undefined) {
             return;
         }
         try {
             const deliverResult = await conversationConductor.deliver(item.envelopeId, async () => {
-                const channelId = await resolveRedeliveryChannel(item, item.responseText!);
+                const target = responseRouter.resolveDeliveryTarget({ kind: item.envelopeKind, channelId: item.channelId === undefined ? undefined : createChannelId(item.channelId) });
+                let channelId: ChannelId | undefined;
+                switch(target.kind) {
+                    case 'origin': {
+                        channelId = target.channelId;
+                        break;
+                    }
+                    case 'well-known': {
+                        // Sender resolves this mapping and converts a missing channel into skipped.
+                        channelId = undefined;
+                        break;
+                    }
+                    case 'fallback': {
+                        const fallback = await responseRouter.routeToFallback(item.responseText!);
+                        channelId = fallback.targetChannelId;
+                        break;
+                    }
+                }
                 const sendResult = await sendEnvelopeResponse({
                     envelopeId: item.envelopeId,
                     kind:       item.envelopeKind,

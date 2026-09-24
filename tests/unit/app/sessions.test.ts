@@ -2207,14 +2207,16 @@ describe('createPerchConductor', () => {
             h.instances[0].emit(frames.resultSuccess({ result: 'perch task done' }));
             await flush();
 
-            // channelId/authorId prove the boot-time seed (not merely adoptWakeTurn/kind-rewrite)
-            // actually populated the registry — an unseeded lookup would carry neither.
+            // The seeded author proves the lookup happened; only the delivery projection drops
+            // the seeded launch channel so an origin-first router still sends to perch-time.
             expect(delivery).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    kind: 'perch', text: 'perch task done', channelId: createChannelId('seeded-chan'), authorId: createUserId('seeded-user'),
+                    kind: 'perch', text: 'perch task done', authorId: createUserId('seeded-user'),
                 }),
                 expect.objectContaining({ response: 'perch task done' })
             );
+            const delivered = delivery.mock.calls as unknown as [Record<string, unknown>][];
+            expect(delivered[0]?.[0]).not.toHaveProperty('channelId');
         });
 
         it('warns and drops a settled wake turn before setWakeTurnDelivery is attached', async () => {

@@ -14,8 +14,9 @@
  * - terminal (`done`/`failed`) → one final edit that bypasses the throttle and cancels any pending
  *   timer. Once that edit lands the board is *finalised*: further terminal views are ignored, so a
  *   board whose finished tasks linger in the ledger is never re-edited. It is frozen, not closed —
- *   a later `running` view for the same key (a second sub-agent launched in the same turn) clears
- *   the flag and resumes ordinary throttled edits on the SAME message;
+ *   a later `running` view for the same key (a second sub-agent launched in the same turn) thaws
+ *   the phase and resumes ordinary throttled edits on the SAME message. A repeated old terminal
+ *   view after that launch cannot overwrite the newer running view;
  * - a final edit that fails → one retry an `editIntervalMs` later, rendering whatever the latest
  *   view is by then; a second failure warns and gives up, leaving the entry for the next view.
  *   The retry has to be the manager's own timer: the setup layer's refresh interval stops as soon
@@ -71,29 +72,29 @@ interface PostedBoard {
     readonly editedAt?: number
 }
 
+/** Transition table: sending → live/retry_pending → sending/abandoned; live ↔ edit_pending;
+ * live/edit_pending → finalizing → finalized/live or retry-wait → finalizing/live.
+ * finalized → live on new running work; abandoned remains abandoned until forgotten.
+ */
+type BoardPhase
+    = | { kind: 'sending', attempt: 1 | 2 }
+      | { kind: 'retry_pending', attempts: 1 }
+      | { kind: 'live', posted: PostedBoard }
+      | { kind: 'edit_pending', posted: PostedBoard, timer: ReturnType<typeof setTimeout> }
+      | { kind: 'finalizing', posted: PostedBoard, attempt: 1 | 2, status: 'in-flight' }
+      | { kind: 'finalizing', posted: PostedBoard, attempt: 1, status: 'retry-wait', timer: ReturnType<typeof setTimeout> }
+      | { kind: 'finalized', posted: PostedBoard }
+      | { kind: 'abandoned' };
+
 /** Everything the manager remembers about one board key. */
 interface BoardEntry {
-    readonly key:  string
+    readonly key:      string
     /** The most recent view seen for this board — what an owed edit will render. */
-    latest:        TaskBoardView
-    /** Set once the board's message exists. */
-    posted?:       PostedBoard
-    /** Armed while an edit is owed: a throttled trailing edit, or a failed final edit's one retry. */
-    timer?:        ReturnType<typeof setTimeout>
-    /** True while a send is in flight. */
-    sending:       boolean
-    /** True once one send attempt failed; the next attempt is the last. */
-    failedOnce:    boolean
-    /** True once two sends failed: the entry is kept so the board is never re-sent. */
-    abandoned:     boolean
-    /** True once a terminal view's edit landed; cleared when the same key runs again. */
-    finalized:     boolean
-    /** Edits attempted for the current terminal view; {@link FINAL_EDIT_ATTEMPTS} is the limit. */
-    finalAttempts: number
+    latest:            TaskBoardView
+    /** The prior terminal view, retained only to discard late repeats after running resumes. */
+    previousFinished?: TaskBoardView
+    phase:             BoardPhase
 }
-
-/** How many times one terminal view's edit is attempted before the board is left as it stands. */
-const FINAL_EDIT_ATTEMPTS = 2;
 
 /**
  * Two rendered embeds are the same iff they serialise identically. `renderTaskBoardEmbed` always
@@ -159,12 +160,13 @@ export class TaskBoardManager {
 
     /**
      * Drops one board and cancels its owed edit, without touching Discord.
-     * `clearTimeout(undefined)` is a no-op, so no armed-timer guard is needed.
      */
     private forget(key: string): void {
         const entry = this.boards.get(key);
         if(entry !== undefined) {
-            clearTimeout(entry.timer);
+            if(entry.phase.kind === 'edit_pending' || (entry.phase.kind === 'finalizing' && entry.phase.status === 'retry-wait')) {
+                clearTimeout(entry.phase.timer);
+            }
             this.boards.delete(key);
         }
     }
@@ -192,48 +194,50 @@ export class TaskBoardManager {
         // Stryker disable next-line llm: TaskBoardView.key is a required string, so the nullish fallback is unreachable.
         const entry = this.boards.get(view.key);
         if(entry === undefined) {
-            const created: BoardEntry = {
-                key:           view.key,
-                latest:        view,
-                sending:       true,
-                failedOnce:    false,
-                abandoned:     false,
-                finalized:     false,
-                // Stryker disable next-line NumberLiteralValue: every terminal edit resets finalAttempts to 0 in applyToPosted before incrementing it, so the initial value is never read.
-                finalAttempts: 0,
-            };
+            const created: BoardEntry = { key: view.key, latest: view, phase: { kind: 'sending', attempt: 1 } };
             this.boards.set(view.key, created);
             void this.send(created);
             return;
         }
 
-        if(entry.abandoned) {
-            return;
-        }
-
-        entry.latest = view;
-        if(entry.finalized) {
-            if(view.state !== 'running') {
-                // Settled, and its final state is already on screen: nothing left to say.
+        switch(entry.phase.kind) {
+            case 'abandoned': {
                 return;
             }
-            // A second launch under the same key — the board is live again, on the same message.
-            entry.finalized = false;
+            case 'sending': {
+                entry.latest = view;
+                return;
+            }
+            case 'retry_pending': {
+                entry.latest = view;
+                entry.phase = { kind: 'sending', attempt: 2 };
+                void this.send(entry);
+                return;
+            }
+            case 'finalized': {
+                if(view.state !== 'running') {
+                    return;
+                }
+                entry.previousFinished = entry.latest;
+                entry.phase = { kind: 'live', posted: entry.phase.posted };
+                break;
+            }
+            case 'live':
+            case 'edit_pending':
+            case 'finalizing': {
+                break;
+            }
+            default: {
+                const impossible: never = entry.phase;
+                return impossible;
+            }
         }
-
-        if(entry.sending) {
+        // A delayed repeat of the previous completion cannot overwrite newer running work.
+        if(view.state !== 'running' && JSON.stringify(view) === JSON.stringify(entry.previousFinished)) {
             return;
         }
-
-        const posted = entry.posted;
-        if(posted === undefined) {
-            // A previous send failed; this apply is its one retry.
-            entry.sending = true;
-            void this.send(entry);
-            return;
-        }
-
-        this.applyToPosted(entry, posted);
+        entry.latest = view;
+        this.applyToPosted(entry);
     }
 
     /** Posts `entry.latest` as a new message, or records the failure. */
@@ -262,13 +266,12 @@ export class TaskBoardManager {
 
     /** Records a successful post, and applies any view that arrived while it was in flight. */
     private onSent(entry: BoardEntry, view: TaskBoardView, message: Message, rendered: RenderedEmbed): void {
-        entry.sending = false;
         if(!this.isLive(entry)) {
             this.discardStale(entry, 'send');
             return;
         }
 
-        entry.posted = { message, rendered };
+        entry.phase = { kind: 'live', posted: { message, rendered } };
         this.deps.logger.debug({
             boardKey:  entry.key,
             channelId: view.channelId,
@@ -284,9 +287,9 @@ export class TaskBoardManager {
 
     /** Records a failed post: one retry is allowed, then the key is abandoned. */
     private onSendFailed(entry: BoardEntry, view: TaskBoardView, error: unknown): void {
-        entry.sending = false;
-        if(entry.failedOnce) {
-            entry.abandoned = true;
+        const attempt = entry.phase.kind === 'sending' ? entry.phase.attempt : 1;
+        if(attempt === 2) {
+            entry.phase = { kind: 'abandoned' };
             this.deps.logger.warn({
                 boardKey:  entry.key,
                 channelId: view.channelId,
@@ -296,7 +299,7 @@ export class TaskBoardManager {
             return;
         }
 
-        entry.failedOnce = true;
+        entry.phase = { kind: 'retry_pending', attempts: 1 };
         this.deps.logger.warn({
             boardKey:  entry.key,
             channelId: view.channelId,
@@ -305,72 +308,68 @@ export class TaskBoardManager {
         });
     }
 
-    /** Decides what an already-posted board does with `entry.latest`. */
-    private applyToPosted(entry: BoardEntry, posted: PostedBoard): void {
+    /** Decides what an already-posted board does with its latest view. */
+    private applyToPosted(entry: BoardEntry): void {
+        const phase = entry.phase;
+        if(phase.kind !== 'live' && phase.kind !== 'edit_pending' && phase.kind !== 'finalizing') {
+            return;
+        }
+        const posted = phase.posted;
         const at = this.deps.now();
         const view = entry.latest;
         const rendered = renderTaskBoardEmbed(view, at, { timeZone: this.deps.timeZone });
-
         if(sameEmbed(rendered, posted.rendered)) {
             return;
         }
-
         if(view.state !== 'running') {
-            // Terminal: one final edit, no throttle, cancelling whatever was owed. The entry and
-            // its message survive, so a second launch under this key resumes on the same board.
-            // Stryker disable next-line llm: clearTimeout and clearInterval cancel the same timer handle identically in Bun.
-            clearTimeout(entry.timer);
-            entry.timer = undefined;
-            entry.finalAttempts = 0;
+            if(phase.kind === 'edit_pending' || (phase.kind === 'finalizing' && phase.status === 'retry-wait')) {
+                clearTimeout(phase.timer);
+            }
             this.editNow(entry, posted.message, rendered, at);
             return;
         }
-
-        if(entry.timer !== undefined) {
-            // An edit is already owed and will render `entry.latest` when it fires.
+        if(phase.kind === 'edit_pending') {
             return;
         }
-
-        // Stryker disable next-line NumberLiteralValue: any non-positive fallback for a never-edited board takes the same immediate-edit branch.
+        if(phase.kind === 'finalizing' && phase.status === 'retry-wait') {
+            clearTimeout(phase.timer);
+        }
         const waitMs = posted.editedAt === undefined ? 0 : (posted.editedAt + this.deps.editIntervalMs) - at.getTime();
         if(waitMs <= 0) {
             this.editNow(entry, posted.message, rendered, at);
             return;
         }
-
-        const message = posted.message;
-        entry.timer = setTimeout(() => {
-            // Stryker disable next-line llm: posted is the readonly parameter, so posted.message is the same reference as the captured message.
-            this.onEditDue(entry, message);
+        const timer = setTimeout(() => {
+            this.onEditDue(entry);
         }, waitMs);
+        entry.phase = { kind: 'edit_pending', posted, timer };
     }
 
     /**
      * Records `rendered` as what is on screen and pushes it to Discord, down the final-edit path
      * when the view it renders has settled and the ordinary one while it is still running.
      */
-    private editNow(entry: BoardEntry, message: Message, rendered: RenderedEmbed, at: Date): void {
-        entry.posted = { message, rendered, editedAt: at.getTime() };
+    private editNow(entry: BoardEntry, message: Message, rendered: RenderedEmbed, at: Date, attempt: 1 | 2 = 1): void {
+        const posted = { message, rendered, editedAt: at.getTime() };
         if(entry.latest.state === 'running') {
-            // Stryker disable next-line llm: entry.posted was assigned `{ message, ... }` two lines above with no interleaving point, so entry.posted.message is the same reference as message.
+            entry.phase = { kind: 'live', posted };
             void this.edit(entry.key, message, rendered);
             return;
         }
-
-        entry.finalAttempts += 1;
-        // Stryker disable next-line llm: entry.posted was assigned `{ message, ... }` at the top of this synchronous body with no interleaving point, so entry.posted.message is the same reference as message.
-        void this.editFinal(entry, message, rendered);
+        entry.previousFinished = entry.latest;
+        entry.phase = { kind: 'finalizing', posted, attempt, status: 'in-flight' };
+        void this.editFinal(entry, message, rendered, entry.phase);
     }
 
-    /**
-     * Fires when an owed edit comes due — a throttled trailing edit, or a failed final edit's one
-     * retry. Either way it renders whatever the latest view is by now, which may well have gone
-     * back to running since the timer was armed.
-     */
-    private onEditDue(entry: BoardEntry, message: Message): void {
-        entry.timer = undefined;
+    /** Fires a trailing edit or final retry against the latest view. */
+    private onEditDue(entry: BoardEntry): void {
+        const phase = entry.phase;
+        if(phase.kind !== 'edit_pending' && !(phase.kind === 'finalizing' && phase.status === 'retry-wait')) {
+            return;
+        }
         const at = this.deps.now();
-        this.editNow(entry, message, renderTaskBoardEmbed(entry.latest, at, { timeZone: this.deps.timeZone }), at);
+        this.editNow(entry, phase.posted.message, renderTaskBoardEmbed(entry.latest, at, { timeZone: this.deps.timeZone }), at,
+            phase.kind === 'finalizing' ? 2 : 1);
     }
 
     /** Edits one board's message; a failure is logged and the key kept. */
@@ -391,28 +390,30 @@ export class TaskBoardManager {
      * Edits a board with its terminal view. Only a landed edit finalises the board — a failed one
      * would otherwise freeze a stale board forever — and a failure buys one retry.
      */
-    private async editFinal(entry: BoardEntry, message: Message, rendered: RenderedEmbed): Promise<void> {
+    private async editFinal(entry: BoardEntry, message: Message, rendered: RenderedEmbed, attempt: Extract<BoardPhase, { kind: 'finalizing', status: 'in-flight' }>): Promise<void> {
         try {
             await withDiscordRetry(() => this.deps.rateLimiter.editMessage(message, { embeds: [toEmbed(rendered)] }));
         } catch (error) {
-            this.onFinalEditFailed(entry, message, error);
+            this.onFinalEditFailed(entry, message, error, attempt);
             return;
         }
-
-        // No liveness guard needed: a board forgotten while this was in flight is no longer in
-        // `boards`, so the flag dies with the entry and nothing reads it again.
-        entry.finalized = true;
+        if(this.isLive(entry) && entry.phase === attempt) {
+            entry.previousFinished = entry.latest;
+            entry.phase = { kind: 'finalized', posted: attempt.posted };
+        }
     }
 
-    /** Arms the one retry of a failed final edit, or gives up with a warn after the second. */
-    private onFinalEditFailed(entry: BoardEntry, message: Message, error: unknown): void {
+    /** Arms the one retry of a failed final edit, or gives up after the second. */
+    private onFinalEditFailed(entry: BoardEntry, message: Message, error: unknown, attempt: Extract<BoardPhase, { kind: 'finalizing', status: 'in-flight' }>): void {
         if(!this.isLive(entry)) {
             this.discardStale(entry, 'final-edit');
             return;
         }
-
-        // Stryker disable next-line llm: finalAttempts is reset to 0 before each terminal edit and incremented at most twice before the retry stops, so it is never negative or above the limit.
-        if(entry.finalAttempts >= FINAL_EDIT_ATTEMPTS) {
+        if(entry.phase !== attempt) {
+            return;
+        }
+        if(attempt.attempt === 2) {
+            entry.phase = { kind: 'live', posted: attempt.posted };
             this.deps.logger.warn({
                 boardKey:  entry.key,
                 messageId: message.id,
@@ -421,15 +422,15 @@ export class TaskBoardManager {
             });
             return;
         }
-
         this.deps.logger.warn({
             boardKey:  entry.key,
             messageId: message.id,
             error,
             msg:       'Task board final edit failed; retrying once',
         });
-        entry.timer = setTimeout(() => {
-            this.onEditDue(entry, message);
+        const timer = setTimeout(() => {
+            this.onEditDue(entry);
         }, this.deps.editIntervalMs);
+        entry.phase = { kind: 'finalizing', posted: attempt.posted, attempt: 1, status: 'retry-wait', timer };
     }
 }
