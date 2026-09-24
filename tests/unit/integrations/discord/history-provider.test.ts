@@ -498,6 +498,20 @@ describe('DiscordHistoryProvider', () => {
             expect(result.coverage).toBe('complete');
         });
 
+        test('places DM results before guild results so first source order remains observable', async () => {
+            dmTracker.getOrCreateDMByUsername.mockResolvedValue(DM_CHANNEL_ID);
+            channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 1));
+            const dmMsg = makeMessage('dm-1', 'user-123', 'Alice', 'DM message', '2026-01-01T10:00:00.000Z');
+            const guildMsg = makeMessage('guild-1', 'user-123', 'Alice', 'guild message', '2026-01-01T09:00:00.000Z');
+            searchService.searchMessages
+                .mockResolvedValueOnce(page([dmMsg]))
+                .mockResolvedValueOnce(page([guildMsg]));
+
+            const { entries } = await provider.fetchHistory({ identifier: 'alice', scope: DISCORD_SCOPE });
+
+            expect(entries.map(entry => entry.summary)).toEqual(['Alice: DM message', 'Alice: guild message']);
+        });
+
         test('skips the DM lookup when no Discord scope is given even with a dmTracker', async () => {
             dmTracker.getOrCreateDMByUsername.mockResolvedValue(DM_CHANNEL_ID);
             channelRegistry.getUnmutedChannels.mockResolvedValue(UNMUTED_CHANNELS.slice(0, 1));

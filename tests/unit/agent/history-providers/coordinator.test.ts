@@ -799,6 +799,24 @@ describe.concurrent('PersonHistoryCoordinator', () => {
             expect(result.history).toBe(`${HEADER}\n${line(0)}\n${line(1)}\n${FOOTER}`);
             expect(result.coverage.truncated).toBe(true);
         });
+
+        test('keeps a line that exactly fills the omitted 12_000-character default budget', async () => {
+            const summary = 'x'.repeat(11_901);
+            const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', [makeEntry({ summary })])] }));
+            const result = observed(await coord.getPersonHistory('craig'));
+
+            expect(result.history).toBe(`${HEADER}\n[discord] [2025-01-01] ${summary}\n${FOOTER}`);
+            expect(result.coverage.truncated).toBe(false);
+        });
+
+        test('excludes a line one character beyond the omitted 12_000-character default budget', async () => {
+            const summary = 'x'.repeat(11_902);
+            const coord = new PersonHistoryCoordinator(makeOptions({ providers: [makeProvider('discord', [makeEntry({ summary })])] }));
+            const result = observed(await coord.getPersonHistory('craig'));
+
+            expect(result.history).toBe(`${HEADER}\n${FOOTER}`);
+            expect(result.coverage.truncated).toBe(true);
+        });
     });
 
     describe('getPersonHistory formatting regressions', () => {

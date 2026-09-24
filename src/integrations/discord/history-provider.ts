@@ -174,12 +174,10 @@ export class DiscordHistoryProvider implements PlatformHistoryProvider {
         const { identifier, maxMessages, startTime, endTime, scope } = params;
         const search: SearchOne = async (channelId, source) =>
             searchChannel(this.searchService, channelId, source, identifier, startTime, endTime, maxMessages);
-        const searches: ChannelSearch[] = [];
-
         // Step 1: search DM channel if dmTracker provided and the scope names a Discord user
-        if(this.dmTracker && scope?.platform === 'discord') {
-            searches.push(...await searchDM(this.dmTracker, identifier, search));
-        }
+        const searches: ChannelSearch[] = this.dmTracker && scope?.platform === 'discord'
+            ? await searchDM(this.dmTracker, identifier, search)
+            : [];
 
         // Step 2: search up to MAX_CHANNELS unmuted guild channels
         const guild = await this.searchGuildChannels(search);
