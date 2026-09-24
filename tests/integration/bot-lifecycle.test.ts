@@ -704,7 +704,7 @@ describe('Bot Lifecycle Integration', () => {
                     start:       mock(() => undefined),
                     stop:        mock(() => undefined),
                     wake:        mock(() => undefined),
-                    executeOnce: mock(async () => ({ executed: 0, failed: 0 })),
+                    executeOnce: mock(async () => ({ executed: 0, failed: 0, unverified: 0 })),
                 };
                 sagaOwners.push(owner);
                 return owner;

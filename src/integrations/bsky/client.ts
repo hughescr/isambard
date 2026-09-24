@@ -24,6 +24,46 @@ interface XRPCErrorLike {
     headers?: Record<string, string | string[] | undefined>
 }
 
+/** One message in a conversation's log, as a delivery check sees it. */
+export interface BskyMessageLogEntry {
+    id:        string
+    senderDid: string
+    sentAt:    string
+    /** Absent for a deleted message. */
+    text?:     string
+    deleted:   boolean
+}
+
+/** One of the account's own post records, as a delivery check sees it. */
+export interface BskyOwnPostRecord {
+    uri:             string
+    /** The record key: the last segment of `uri`. */
+    rkey:            string
+    text?:           string
+    createdAt?:      string
+    /** The AT-URI of the post this one replies to, when it is a reply. */
+    replyParentUri?: string
+}
+
+function fieldOf(value: unknown, key: string): unknown {
+    return typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+function stringOf(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined;
+}
+
+/** Pick the fields a delivery check compares out of a raw post record, dropping any that are not strings. */
+function toOwnPostRecord(uri: string, value: Record<string, unknown>): BskyOwnPostRecord {
+    return {
+        uri,
+        rkey:           uri.slice(uri.lastIndexOf('/') + 1),
+        text:           stringOf(value.text),
+        createdAt:      stringOf(value.createdAt),
+        replyParentUri: stringOf(fieldOf(fieldOf(value.reply, 'parent'), 'uri')),
+    };
+}
+
 const BSKY_READ_MAX_ATTEMPTS = 3;
 const BSKY_RETRY_BASE_DELAY_MS = 5000;
 // Stryker disable next-line NumberLiteralValue: with three attempts, retry delays only reach 10% above 10s, so the 60s cap cannot bind.
@@ -555,6 +595,63 @@ export class BlueskyClient {
                 throw this.mapError(err, 'Failed to get messages');
             }
         });
+    }
+
+    /**
+     * One page of a conversation's message log, newest first, as the bare facts a delivery check
+     * compares: unlike {@link getMessages}, deleted messages are kept (with `deleted: true` and
+     * no text), and no profile lookups are made. Any other kind of log entry is skipped.
+     */
+    async getMessageLog(
+        convoId: string,
+        options: { limit?: number, cursor?: string, signal?: AbortSignal } = {}
+    ): Promise<{ messages: BskyMessageLogEntry[], cursor?: string }> {
+        const { limit, cursor, signal } = options;
+        return this.withRateLimitRetry(async () => {
+            try {
+                const response = await this.requireChatAgent().chat.bsky.convo.getMessages({ convoId, limit, cursor }, { signal });
+                const messages: BskyMessageLogEntry[] = [];
+                for(const msg of response.data.messages) {
+                    if(this.api.ChatBskyConvoDefs.isMessageView(msg)) {
+                        messages.push({ id: msg.id, senderDid: msg.sender.did, sentAt: msg.sentAt, text: msg.text, deleted: false });
+                    } else if(this.api.ChatBskyConvoDefs.isDeletedMessageView(msg)) {
+                        messages.push({ id: msg.id, senderDid: msg.sender.did, sentAt: msg.sentAt, deleted: true });
+                    }
+                }
+                return { messages, cursor: response.data.cursor };
+            } catch (err: unknown) {
+                if(err instanceof BskyError) {
+                    throw err;
+                }
+                throw this.mapError(err, 'Failed to get message log');
+            }
+        });
+    }
+
+    /**
+     * One page of the account's own post records, read straight from its repository (its PDS,
+     * so with no indexing delay), in the repository's record-key order: newest key first.
+     */
+    async listOwnPostRecords(
+        options: { limit?: number, cursor?: string, signal?: AbortSignal } = {}
+    ): Promise<{ records: BskyOwnPostRecord[], cursor?: string }> {
+        const { limit, cursor, signal } = options;
+        return this.withRateLimitRetry(async () => {
+            try {
+                const response = await this.agent.com.atproto.repo.listRecords(
+                    { repo: this.agent.assertDid, collection: 'app.bsky.feed.post', limit, cursor },
+                    { signal }
+                );
+                return { records: response.data.records.map(record => toOwnPostRecord(record.uri, record.value)), cursor: response.data.cursor };
+            } catch (err: unknown) {
+                throw this.mapError(err, 'Failed to list own post records');
+            }
+        });
+    }
+
+    /** The logged-in account's DID. Throws before login. */
+    get ownDid(): string {
+        return this.agent.assertDid;
     }
 
     /**

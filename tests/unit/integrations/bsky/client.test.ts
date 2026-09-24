@@ -26,6 +26,7 @@ interface MockPostResponse { uri: string, cid: string }
 
 const mockAgentPost           = mock(async (): Promise<MockPostResponse> => ({ uri: 'at://new/post/uri', cid: 'new-post-cid' }));
 const mockCreateRecord        = mock(async (_params?: unknown, _options?: unknown): Promise<{ data: MockPostResponse }> => ({ data: { uri: 'at://new/post/uri', cid: 'new-post-cid' } }));
+const mockListRecords         = mock(async (_params?: unknown, _options?: unknown): Promise<{ data: { records: { uri: string, cid: string, value: Record<string, unknown> }[], cursor?: string } }> => ({ data: { records: [] } }));
 const mockLogin               = mock(async (): Promise<Record<string, unknown>> => ({}));
 const mockGetTimeline         = mock(async (): Promise<MockFeedResponse> => ({ data: { feed: [] } }));
 const mockGetFeed             = mock(async (): Promise<MockFeedResponse> => ({ data: { feed: [] } }));
@@ -99,6 +100,7 @@ const MOCK_API_DOUBLE = {
             atproto: {
                 repo: {
                     createRecord: mockCreateRecord,
+                    listRecords:  mockListRecords,
                 },
             },
         };
@@ -132,6 +134,7 @@ const MOCK_API_DOUBLE = {
             const record = v as Record<string, unknown>;
             return record.$type === 'chat.bsky.convo.defs#messageView' || (typeof record.text === 'string' && typeof record.sender === 'object' && record.sender !== null);
         },
+        isDeletedMessageView: (v: unknown) => hasLexiconType(v, 'chat.bsky.convo.defs#deletedMessageView'),
     },
     AppBskyEmbedRecord: {
         isView:       (v: unknown) => hasLexiconType(v, 'app.bsky.embed.record#view'),
@@ -292,6 +295,7 @@ describe.concurrent('BlueskyClient', () => {
     beforeEach(() => {
         mockAgentPost.mockReset();
         mockCreateRecord.mockReset();
+        mockListRecords.mockReset();
         mockLogin.mockReset();
         mockGetTimeline.mockReset();
         mockGetFeed.mockReset();
@@ -3481,6 +3485,176 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             expect(await capturedError(() => client.validatePostText('too long'))).toHaveProperty('message', 'Post exceeds 300 graphemes (301)');
             mockRichTextState.graphemeLength = 1001;
             expect(await capturedError(() => client.validateDMText('too long'))).toHaveProperty('message', 'DM exceeds 1000 graphemes (1001)');
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Delivery-check reads (#108), non-concurrent so each test owns the shared mocks
+// ---------------------------------------------------------------------------
+
+describe('BlueskyClient — delivery-check reads', () => {
+    const signal = new AbortController().signal;
+
+    beforeEach(() => {
+        mockListRecords.mockReset();
+        mockGetMessages.mockReset();
+        mockWithProxy.mockReset();
+        mockWithProxy.mockImplementation(() => ({
+            chat: {
+                bsky: {
+                    convo: {
+                        listConvos:         mockListConvos,
+                        getConvoForMembers: mockGetConvoForMembers,
+                        getMessages:        mockGetMessages,
+                        sendMessage:        mockSendMessage,
+                        updateRead:         mockUpdateRead,
+                    },
+                },
+            },
+        }));
+        mockLogin.mockResolvedValue({});
+        mockLogger.error.mockClear();
+    });
+
+    describe('ownDid', () => {
+        test('is the logged-in account\'s DID', () => {
+            expect(new BlueskyClient(CLIENT_OPTIONS).ownDid).toBe('did:plc:testaccount');
+        });
+    });
+
+    describe('listOwnPostRecords()', () => {
+        test('reads one page of the account\'s own post records from its repository, passing the signal', async () => {
+            mockListRecords.mockResolvedValueOnce({ data: { records: [], cursor: 'next-page' } });
+
+            const result = await new BlueskyClient(CLIENT_OPTIONS).listOwnPostRecords({ limit: 100, cursor: 'this-page', signal });
+
+            expect(mockListRecords.mock.calls).toEqual([[{ repo: 'did:plc:testaccount', collection: 'app.bsky.feed.post', limit: 100, cursor: 'this-page' }, { signal }]]);
+            expect(result).toEqual({ records: [], cursor: 'next-page' });
+        });
+
+        test('reads the first page with no options', async () => {
+            mockListRecords.mockResolvedValueOnce({ data: { records: [] } });
+
+            expect(await new BlueskyClient(CLIENT_OPTIONS).listOwnPostRecords()).toEqual({ records: [], cursor: undefined });
+            expect(mockListRecords.mock.calls).toEqual([[{ repo: 'did:plc:testaccount', collection: 'app.bsky.feed.post', limit: undefined, cursor: undefined }, { signal: undefined }]]);
+        });
+
+        test('maps a reply record to its uri, record key, text, createdAt and parent uri', async () => {
+            mockListRecords.mockResolvedValueOnce({ data: { records: [{
+                uri:   'at://did:plc:testaccount/app.bsky.feed.post/3lbcdefghijk2',
+                cid:   'cid-1',
+                value: { text: 'Thanks!', createdAt: '2026-09-24T10:00:00.000Z', reply: { root: { uri: 'at://root' }, parent: { uri: 'at://parent', cid: 'p' } } },
+            }] } });
+
+            const { records } = await new BlueskyClient(CLIENT_OPTIONS).listOwnPostRecords();
+
+            expect(records).toEqual([{
+                uri:            'at://did:plc:testaccount/app.bsky.feed.post/3lbcdefghijk2',
+                rkey:           '3lbcdefghijk2',
+                text:           'Thanks!',
+                createdAt:      '2026-09-24T10:00:00.000Z',
+                replyParentUri: 'at://parent',
+            }]);
+        });
+
+        test('leaves out fields that are missing or not strings, for a post that is not a reply', async () => {
+            mockListRecords.mockResolvedValueOnce({ data: { records: [
+                { uri: 'at://did/app.bsky.feed.post/a', cid: 'c', value: { text: 7, createdAt: null } },
+                { uri: 'at://did/app.bsky.feed.post/b', cid: 'c', value: { reply: null } },
+                { uri: 'at://did/app.bsky.feed.post/c', cid: 'c', value: { reply: 'odd' } },
+                { uri: 'at://did/app.bsky.feed.post/d', cid: 'c', value: { reply: { parent: null } } },
+                { uri: 'at://did/app.bsky.feed.post/e', cid: 'c', value: { reply: { parent: { uri: 5 } } } },
+            ] } });
+
+            const { records } = await new BlueskyClient(CLIENT_OPTIONS).listOwnPostRecords();
+
+            expect(records).toEqual(['a', 'b', 'c', 'd', 'e'].map(rkey => ({
+                uri:            `at://did/app.bsky.feed.post/${rkey}`,
+                rkey,
+                text:           undefined,
+                createdAt:      undefined,
+                replyParentUri: undefined,
+            })));
+        });
+
+        test('maps a failure through the client\'s error mapping', async () => {
+            mockListRecords.mockRejectedValueOnce(makeXRPCError(500, 'InternalServerError', 'boom'));
+
+            const error = await capturedError(async () => new BlueskyClient(CLIENT_OPTIONS).listOwnPostRecords());
+
+            expect(error).toBeInstanceOf(BskyError);
+            expect(error.message).toBe('Failed to list own post records');
+            expect((error as BskyError).context).toEqual({ originalMessage: 'boom', error: 'InternalServerError', status: 500 });
+        });
+
+        test('retries once on a rate limit and succeeds', async () => {
+            mockListRecords.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockListRecords.mockResolvedValueOnce({ data: { records: [] } });
+
+            expect(await new BlueskyClient(CLIENT_OPTIONS).listOwnPostRecords()).toEqual({ records: [], cursor: undefined });
+            expect(mockListRecords).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    describe('getMessageLog()', () => {
+        const MESSAGE = { $type: 'chat.bsky.convo.defs#messageView', id: 'm1', rev: 'r1', text: 'Thanks!', sender: { did: 'did:plc:testaccount' }, sentAt: '2026-09-24T10:00:00.000Z' };
+        const DELETED = { $type: 'chat.bsky.convo.defs#deletedMessageView', id: 'm0', rev: 'r0', sender: { did: 'did:plc:testaccount' }, sentAt: '2026-09-24T09:00:00.000Z' };
+        const SYSTEM = { $type: 'chat.bsky.convo.defs#systemMessageView', id: 's1', rev: 'rs', sentAt: '2026-09-24T08:00:00.000Z' };
+
+        test('reads one page of the conversation log, newest first, passing the signal', async () => {
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [MESSAGE, DELETED, SYSTEM], cursor: 'older' } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+
+            const result = await client.getMessageLog('convo-1', { limit: 100, cursor: 'newer', signal });
+
+            expect(mockGetMessages.mock.calls as unknown[][]).toEqual([[{ convoId: 'convo-1', limit: 100, cursor: 'newer' }, { signal }]]);
+            expect(result).toEqual({
+                messages: [
+                    { id: 'm1', senderDid: 'did:plc:testaccount', sentAt: '2026-09-24T10:00:00.000Z', text: 'Thanks!', deleted: false },
+                    { id: 'm0', senderDid: 'did:plc:testaccount', sentAt: '2026-09-24T09:00:00.000Z', deleted: true },
+                ],
+                cursor: 'older',
+            });
+        });
+
+        test('reads the first page with no options', async () => {
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+
+            expect(await client.getMessageLog('convo-1')).toEqual({ messages: [], cursor: undefined });
+            expect(mockGetMessages.mock.calls as unknown[][]).toEqual([[{ convoId: 'convo-1', limit: undefined, cursor: undefined }, { signal: undefined }]]);
+        });
+
+        test('retries once on a rate limit and succeeds', async () => {
+            mockGetMessages.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [MESSAGE] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+
+            const { messages } = await client.getMessageLog('convo-1');
+            expect(messages).toHaveLength(1);
+            expect(mockGetMessages).toHaveBeenCalledTimes(2);
+        });
+
+        test('rethrows the not-logged-in error unchanged', async () => {
+            const error = await capturedError(async () => new BlueskyClient(CLIENT_OPTIONS).getMessageLog('convo-1'));
+
+            expect(error.message).toBe('Chat not available — call login() first');
+        });
+
+        test('maps a failure through the client\'s error mapping', async () => {
+            mockGetMessages.mockRejectedValueOnce(makeXRPCError(502, 'UpstreamFailure', 'bad gateway'));
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+
+            const error = await capturedError(async () => client.getMessageLog('convo-1'));
+
+            expect(error).toBeInstanceOf(BskyError);
+            expect(error.message).toBe('Failed to get message log');
+            expect((error as BskyError).context).toEqual({ originalMessage: 'bad gateway', error: 'UpstreamFailure', status: 502 });
         });
     });
 });

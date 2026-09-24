@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import { z } from 'zod';
-import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckError } from '@/errors';
+import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckAuthError, WildDuckError } from '@/errors';
 import type { ClaimOutcome } from '@/services/approved-outbound-action/backend';
 import {
     DEFAULT_CLAIM_LEASE_MS,
@@ -13,11 +13,19 @@ import {
     type ApprovedOutboundActionExecutor,
     type ApprovedOutboundActionExecutorLogger
 } from '@/services/approved-outbound-action/executor';
-import type { ApprovedOutboundAction, ApprovedOutboundActionType, ClaimedApprovedOutboundAction } from '@/services/approved-outbound-action/types';
+import type {
+    ApprovedOutboundAction,
+    ApprovedOutboundActionType,
+    ClaimedApprovedOutboundAction,
+    DeliveryCheck,
+    DeliveryCheckInput,
+    UnverifiedApprovedOutboundAction
+} from '@/services/approved-outbound-action/types';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 
 type ExecutorDeps = Parameters<typeof createApprovedOutboundActionExecutor>[0];
 type ExecutorBackend = ExecutorDeps['backend'];
+type CheckMock = ReturnType<typeof mock<(input: DeliveryCheckInput) => Promise<DeliveryCheck>>>;
 
 const BSKY_ID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const BSKY_ID_2 = 'aaaaaaaa-1111-4222-8333-000000000002';
@@ -68,13 +76,22 @@ const STALE: ClaimedApprovedOutboundAction = {
     claimId:   OTHER_CLAIM_ID,
     updatedAt: STALE_CLAIMED_AT,
 };
-const STALE_OUTCOME: ClaimOutcome = { state: 'failed', lastError: STALE_CLAIM_ERROR, failureKind: 'permanent' };
+const STALE_OUTCOME: ClaimOutcome = { state: 'unverified', lastError: STALE_CLAIM_ERROR };
+/** The fake clock's time, 5 minutes after CLAIMED_AT: an unverified row settled at CLAIMED_AT is due for its first check. */
+const CHECK_DUE_AT = '2026-03-30T10:10:00.000Z';
+
+function unverifiedOf(action: ApprovedOutboundAction, overrides: Partial<ApprovedOutboundAction> = {}): UnverifiedApprovedOutboundAction {
+    return { ...action, lastError: 'fetch failed', ambiguousSends: 1, firstClaimedAt: CLAIMED_AT, updatedAt: CLAIMED_AT, ...overrides, state: 'unverified' };
+}
 
 describe('createApprovedOutboundActionExecutor', () => {
     let listed: ApprovedOutboundAction[];
     let listOpen: ReturnType<typeof mock<ExecutorBackend['listOpen']>>;
     let claim: ReturnType<typeof mock<ExecutorBackend['claim']>>;
     let settleClaim: ReturnType<typeof mock<ExecutorBackend['settleClaim']>>;
+    let resolveUnverified: ReturnType<typeof mock<ExecutorBackend['resolveUnverified']>>;
+    let listAll: ReturnType<typeof mock<ExecutorBackend['listAll']>>;
+    let checks: Record<ApprovedOutboundActionType, CheckMock>;
     let backend: ExecutorBackend;
     let registry: ServiceHealthRegistry;
     let executors: Record<ApprovedOutboundActionType, ReturnType<typeof mock<(params: Record<string, unknown>, signal: AbortSignal) => Promise<void>>>>;
@@ -83,7 +100,12 @@ describe('createApprovedOutboundActionExecutor', () => {
     let onOutcomeRecorded: ReturnType<typeof mock<() => void>>;
 
     function build(extra: Partial<ExecutorDeps> = {}): ApprovedOutboundActionExecutor {
-        return createApprovedOutboundActionExecutor({ backend, registry, executors, logger, activityLogger: { log: activityLog }, onOutcomeRecorded, ...extra });
+        const verifiers = {
+            bsky_reply: { check: checks.bsky_reply, contentKey: () => undefined },
+            bsky_dm:    { check: checks.bsky_dm, contentKey: () => undefined },
+            email_send: { check: checks.email_send, contentKey: () => undefined },
+        };
+        return createApprovedOutboundActionExecutor({ backend, registry, executors, verifiers, logger, activityLogger: { log: activityLog }, onOutcomeRecorded, ...extra });
     }
 
     beforeEach(() => {
@@ -103,7 +125,19 @@ describe('createApprovedOutboundActionExecutor', () => {
             listed = listed.filter(row => row.id !== claimed.id);
             return true;
         });
-        backend = { listOpen, claim, settleClaim };
+        // A resolution rewrites the unverified row in the listing: `executed` leaves it, `approved` requeues it.
+        resolveUnverified = mock(async (action: UnverifiedApprovedOutboundAction, to: 'executed' | 'approved'): Promise<ApprovedOutboundAction | undefined> => {
+            const resolved: ApprovedOutboundAction = { ...action, state: to, updatedAt: new Date().toISOString() };
+            listed = listed.filter(row => row.id !== action.id);
+            return resolved;
+        });
+        listAll = mock(async (): Promise<ApprovedOutboundAction[]> => listed);
+        backend = { listOpen, claim, settleClaim, resolveUnverified, listAll };
+        checks = {
+            bsky_reply: mock(async (_input: DeliveryCheckInput): Promise<DeliveryCheck> => ({ verdict: 'delivered' })),
+            bsky_dm:    mock(async (_input: DeliveryCheckInput): Promise<DeliveryCheck> => ({ verdict: 'delivered' })),
+            email_send: mock(async (_input: DeliveryCheckInput): Promise<DeliveryCheck> => ({ verdict: 'delivered' })),
+        };
 
         registry = {
             isAvailable: mock((_service: string): boolean => true),
@@ -131,14 +165,14 @@ describe('createApprovedOutboundActionExecutor', () => {
 
     describe('executeOnce', () => {
         test('returns zero counts when nothing is open, after listing once per service lane', async () => {
-            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
             expect(listOpen).toHaveBeenCalledTimes(2);
         });
 
         test('claims, sends and settles an approved row as executed, in that order', async () => {
             listed = [BSKY];
 
-            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
 
             expect(claim.mock.calls).toEqual([[BSKY]]);
             expect(executors.bsky_reply.mock.calls[0]?.[0]).toEqual(BSKY.params);
@@ -156,7 +190,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         ] as const)('logs %s as sent only after its executed settle succeeds', async (action, expectedEntry) => {
             listed = [action];
 
-            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
 
             expect(activityLog.mock.calls).toEqual([[expectedEntry]]);
             expect(settleClaim.mock.invocationCallOrder[0]).toBeLessThan(activityLog.mock.invocationCallOrder[0]);
@@ -165,7 +199,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         test('settles a successful send without an activity logger', async () => {
             listed = [BSKY];
 
-            expect(await build({ activityLogger: undefined }).executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(await build({ activityLogger: undefined }).executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
             expect(settleClaim).toHaveBeenCalledWith(claimedOf(BSKY), { state: 'executed' });
             expect(activityLog).not.toHaveBeenCalled();
         });
@@ -174,7 +208,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             listed = [BSKY];
             (registry.isAvailable as ReturnType<typeof mock>).mockImplementation((): boolean => false);
 
-            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
 
             expect(claim).not.toHaveBeenCalled();
             expect(executors.bsky_reply).not.toHaveBeenCalled();
@@ -189,7 +223,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             listed = [BSKY];
             claim.mockImplementation(async () => undefined);
 
-            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
 
             expect(executors.bsky_reply).not.toHaveBeenCalled();
             expect(settleClaim).not.toHaveBeenCalled();
@@ -209,20 +243,40 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(settleClaim).not.toHaveBeenCalled();
         });
 
-        test('records a transient failure when the send rejects', async () => {
+        test('records a transient failure when the send is refused', async () => {
             listed = [BSKY];
             executors.bsky_reply.mockImplementation(async (): Promise<void> => {
-                throw new Error('network failure');
+                throw new BskyAuthError('session expired');
             });
 
-            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 1 });
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 1, unverified: 0 });
 
-            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'network failure', failureKind: 'transient' }]]);
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'session expired', failureKind: 'transient' }]]);
             expect(activityLog).not.toHaveBeenCalled();
             expect(logger.error).toHaveBeenCalledWith(
-                { actionId: BSKY_ID, type: 'bsky_reply', error: 'network failure', failureKind: 'transient' },
+                { actionId: BSKY_ID, type: 'bsky_reply', error: 'session expired', failureKind: 'transient' },
                 'Approved outbound action execution failed'
             );
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+        });
+
+        test('records an ambiguous send failure as unverified, to check before any resend', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(async (): Promise<void> => {
+                throw new TypeError('fetch failed');
+            });
+
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 1 });
+
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'unverified', lastError: 'fetch failed' }]]);
+            expect(activityLog).not.toHaveBeenCalled();
+            expect(logger.error).not.toHaveBeenCalled();
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, type: 'bsky_reply', error: 'fetch failed' },
+                'Approved outbound action send outcome unknown; will check its destination before any resend'
+            );
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+            expect(onOutcomeRecorded.mock.invocationCallOrder[0]).toBeGreaterThan(settleClaim.mock.invocationCallOrder[0]);
         });
 
         test('records a permanent failure when the send throws a validation error', async () => {
@@ -244,27 +298,33 @@ describe('createApprovedOutboundActionExecutor', () => {
 
             await build().executeOnce();
 
-            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'string error', failureKind: 'transient' }]]);
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'unverified', lastError: 'string error' }]]);
         });
 
-        test('records an executor that throws synchronously as a failure', async () => {
+        test('records an executor that throws synchronously as a settled outcome', async () => {
             listed = [BSKY];
             executors.bsky_reply.mockImplementation((): Promise<void> => {
                 throw new Error('sync boom');
             });
 
-            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 1 });
-            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'sync boom', failureKind: 'transient' }]]);
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 1 });
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'unverified', lastError: 'sync boom' }]]);
         });
 
         test('sums outcomes across both service lanes', async () => {
             const dm = makeAction({ id: BSKY_ID_2, type: 'bsky_dm' });
-            listed = [BSKY, dm, EMAIL];
-            executors.bsky_dm.mockImplementation(async (): Promise<void> => {
-                throw new Error('DM failed');
+            const dm2 = makeAction({ id: STALE_ID_2, type: 'bsky_dm' });
+            listed = [BSKY, dm, dm2, EMAIL];
+            executors.bsky_dm.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('DM outcome unknown');
+            }).mockImplementationOnce(async (): Promise<void> => {
+                throw new BskyValidationError('DM too long');
+            });
+            executors.email_send.mockImplementation(async (): Promise<void> => {
+                throw new Error('email outcome unknown');
             });
 
-            expect(await build().executeOnce()).toEqual({ executed: 2, failed: 1 });
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 1, unverified: 2 });
         });
 
         test('persists each outcome before starting the next send in the same service', async () => {
@@ -278,7 +338,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 return true;
             });
 
-            expect(await build().executeOnce()).toEqual({ executed: 2, failed: 0 });
+            expect(await build().executeOnce()).toEqual({ executed: 2, failed: 0, unverified: 0 });
             expect(events).toEqual(['send:hello', `settle:${BSKY_ID}`, 'send:second', `settle:${BSKY_ID_2}`]);
         });
 
@@ -329,7 +389,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             listed = [BSKY];
             settleClaim.mockImplementation(async () => false);
 
-            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
 
             expect(onOutcomeRecorded).not.toHaveBeenCalled();
             expect(activityLog).not.toHaveBeenCalled();
@@ -354,7 +414,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 throw failure;
             });
 
-            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
             await Promise.resolve();
 
             expect(logger.warn).toHaveBeenCalledWith(
@@ -405,7 +465,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             await expect(executor.executeOnce()).rejects.toThrow('state write failed');
             expect(activityLog).not.toHaveBeenCalled();
 
-            expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
             expect(activityLog.mock.calls).toEqual([[{ type: 'bsky-post-sent', summary: 'Bluesky reply posted' }]]);
 
             expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
@@ -431,7 +491,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             await expect(executor.executeOnce()).rejects.toThrow('second write failed');
             expect(listOpen).toHaveBeenCalledTimes(3);
 
-            expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
             expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
         });
 
@@ -443,7 +503,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             const executor = build();
             await expect(executor.executeOnce()).rejects.toThrow('state write failed');
 
-            expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
             expect(logger.warn).toHaveBeenCalledWith(
                 { actionId: BSKY_ID, outcome: { state: 'executed' } },
                 'Approved outbound action outcome not recorded: its claim was already resolved elsewhere'
@@ -456,7 +516,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         test('a retried failure outcome is counted as failed', async () => {
             listed = [BSKY];
             executors.bsky_reply.mockImplementation(async (): Promise<void> => {
-                throw new Error('network failure');
+                throw new BskyRateLimitError('slow down');
             });
             settleClaim.mockImplementationOnce(async () => {
                 throw new Error('state write failed');
@@ -464,33 +524,49 @@ describe('createApprovedOutboundActionExecutor', () => {
             const executor = build();
             await expect(executor.executeOnce()).rejects.toThrow('state write failed');
 
-            expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 1 });
+            expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 1, unverified: 0 });
             expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+        });
+
+        test('a retried unverified outcome is counted as unverified', async () => {
+            listed = [BSKY];
+            executors.bsky_reply.mockImplementation(async (): Promise<void> => {
+                throw new Error('socket hang up');
+            });
+            settleClaim.mockImplementationOnce(async () => {
+                throw new Error('state write failed');
+            });
+            const executor = build();
+            await expect(executor.executeOnce()).rejects.toThrow('state write failed');
+
+            expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 1 });
+            expect(settleClaim.mock.calls[1]).toEqual([claimedOf(BSKY), { state: 'unverified', lastError: 'socket hang up' }]);
         });
     });
 
     describe('abandoned claims', () => {
         const staleAge = (ms: number): (() => number) => () => Date.parse(STALE_CLAIMED_AT) + ms;
 
-        test('settles a sending row whose claim is exactly the lease old as failed with its outcome unknown', async () => {
+        test('settles a sending row whose claim is exactly the lease old as unverified, outcome unknown', async () => {
             listed = [STALE];
 
-            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce()).toEqual({ executed: 0, failed: 1 });
+            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 1 });
 
             expect(settleClaim.mock.calls).toEqual([[STALE, STALE_OUTCOME]]);
             expect(claim).not.toHaveBeenCalled();
             expect(executors.bsky_dm).not.toHaveBeenCalled();
+            expect(checks.bsky_dm).not.toHaveBeenCalled();
             expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
-            expect(logger.error).toHaveBeenCalledWith(
-                { actionId: STALE_ID, type: 'bsky_dm', error: STALE_CLAIM_ERROR, failureKind: 'permanent' },
-                'Approved outbound action execution failed'
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: STALE_ID, type: 'bsky_dm', error: STALE_CLAIM_ERROR },
+                'Approved outbound action send outcome unknown; will check its destination before any resend'
             );
         });
 
         test('leaves a sending row one millisecond short of the lease alone', async () => {
             listed = [STALE];
 
-            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS - 1) }).executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS - 1) }).executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
             expect(settleClaim).not.toHaveBeenCalled();
         });
 
@@ -557,7 +633,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             listed = [STALE];
             settleClaim.mockImplementation(async () => false);
 
-            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce()).toEqual({ executed: 0, failed: 0 });
+            expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
             expect(logger.warn).toHaveBeenCalledWith(
                 { actionId: STALE_ID, outcome: STALE_OUTCOME },
                 'Approved outbound action outcome not recorded: its claim was already resolved elsewhere'
@@ -567,11 +643,11 @@ describe('createApprovedOutboundActionExecutor', () => {
 
     describe('send timeout', () => {
         test('the outcome-unknown messages are exact', () => {
-            expect(sendTimedOutError(120_000)).toBe('No response within 120s, so it may or may not have been delivered. Not retried automatically, to avoid sending it twice; check before resending.');
-            expect(STALE_CLAIM_ERROR).toBe('The send was interrupted before its outcome was recorded, so it may or may not have been delivered. Not retried automatically, to avoid sending it twice; check before resending.');
+            expect(sendTimedOutError(120_000)).toBe('No response within 120s, so it may or may not have been delivered.');
+            expect(STALE_CLAIM_ERROR).toBe('The send was interrupted before its outcome was recorded, so it may or may not have been delivered.');
         });
 
-        test('a send still pending at the default 120000 ms timeout is settled failed, outcome unknown, never before', async () => {
+        test('a send still pending at the default 120000 ms timeout is settled unverified, never before', async () => {
             listed = [BSKY];
             executors.bsky_reply.mockImplementation(hang);
             const pass = build().executeOnce();
@@ -583,8 +659,8 @@ describe('createApprovedOutboundActionExecutor', () => {
 
             jest.advanceTimersByTime(1);
             await flush();
-            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: sendTimedOutError(120_000), failureKind: 'permanent' }]]);
-            expect(await pass).toEqual({ executed: 0, failed: 1 });
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'unverified', lastError: sendTimedOutError(120_000) }]]);
+            expect(await pass).toEqual({ executed: 0, failed: 0, unverified: 1 });
             expect(DEFAULT_SEND_TIMEOUT_MS).toBe(120_000);
         });
 
@@ -596,11 +672,11 @@ describe('createApprovedOutboundActionExecutor', () => {
 
             jest.advanceTimersByTime(5000);
             await flush();
-            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: sendTimedOutError(5000), failureKind: 'permanent' }]]);
-            expect(await pass).toEqual({ executed: 0, failed: 1 });
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'unverified', lastError: sendTimedOutError(5000) }]]);
+            expect(await pass).toEqual({ executed: 0, failed: 0, unverified: 1 });
         });
 
-        test('aborts a hung send at its deadline while settling its outcome as permanently unknown', async () => {
+        test('aborts a hung send at its deadline while settling its outcome as unknown', async () => {
             listed = [BSKY];
             const capturedSignal = Promise.withResolvers<AbortSignal>();
             executors.bsky_reply.mockImplementation(async (_params, signal) => {
@@ -616,8 +692,8 @@ describe('createApprovedOutboundActionExecutor', () => {
             await flush();
 
             expect(signal.aborted).toBe(true);
-            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: sendTimedOutError(1000), failureKind: 'permanent' }]]);
-            expect(await pass).toEqual({ executed: 0, failed: 1 });
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'unverified', lastError: sendTimedOutError(1000) }]]);
+            expect(await pass).toEqual({ executed: 0, failed: 0, unverified: 1 });
         });
 
         test('a send that succeeds after its timeout is only logged', async () => {
@@ -671,7 +747,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(claim.mock.calls).toEqual([[BSKY], [BSKY_2]]);
             expect(executors.bsky_reply.mock.calls.at(-1)?.[0]).toEqual({ text: 'second' });
             expect(executors.bsky_reply.mock.calls.at(-1)?.[1]).toBeInstanceOf(AbortSignal);
-            expect(await pass).toEqual({ executed: 1, failed: 1 });
+            expect(await pass).toEqual({ executed: 1, failed: 0, unverified: 1 });
         });
 
         test('rejects a claim lease equal to the send timeout', () => {
@@ -694,6 +770,130 @@ describe('createApprovedOutboundActionExecutor', () => {
 
         test('rejects a send timeout at the default lease', () => {
             expect(() => build({ sendTimeoutMs: 900_000 })).toThrow(InvariantViolationError);
+        });
+    });
+
+    describe('destination checks', () => {
+        const UNVERIFIED_BSKY = unverifiedOf(BSKY);
+        const UNVERIFIED_EMAIL = unverifiedOf(EMAIL);
+
+        test('records a due unverified row found at its destination as sent, like a send', async () => {
+            listed = [UNVERIFIED_BSKY];
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
+
+            expect(checks.bsky_reply.mock.calls[0]?.[0].params).toEqual(BSKY.params);
+            expect(checks.bsky_reply.mock.calls[0]?.[0].since).toEqual(new Date(CLAIMED_AT));
+            expect(checks.bsky_reply.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal);
+            expect(resolveUnverified.mock.calls).toEqual([[UNVERIFIED_BSKY, 'executed']]);
+            expect(activityLog.mock.calls).toEqual([[{ type: 'bsky-post-sent', summary: 'Bluesky reply posted' }]]);
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+            expect(logger.info).toHaveBeenCalledWith({ actionId: BSKY_ID, type: 'bsky_reply' }, 'Approved outbound action executed successfully');
+            expect(claim).not.toHaveBeenCalled();
+            expect(executors.bsky_reply).not.toHaveBeenCalled();
+        });
+
+        test('resends a row found definitely absent in the same pass', async () => {
+            listed = [UNVERIFIED_BSKY];
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+            checks.bsky_reply.mockImplementation(async () => ({ verdict: 'not-delivered' }));
+
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
+
+            expect(resolveUnverified.mock.calls).toEqual([[UNVERIFIED_BSKY, 'approved']]);
+            expect(claim.mock.calls).toEqual([[{ ...UNVERIFIED_BSKY, state: 'approved', updatedAt: CHECK_DUE_AT }]]);
+            expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+            expect(resolveUnverified.mock.invocationCallOrder[0]).toBeLessThan(claim.mock.invocationCallOrder[0]);
+        });
+
+        test('leaves an undecided row unverified and sends nothing', async () => {
+            listed = [UNVERIFIED_BSKY];
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+            checks.bsky_reply.mockImplementation(async () => ({ verdict: 'undetermined', reason: 'lookup failed' }));
+
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
+
+            expect(resolveUnverified).not.toHaveBeenCalled();
+            expect(claim).not.toHaveBeenCalled();
+            expect(onOutcomeRecorded).not.toHaveBeenCalled();
+        });
+
+        test('checks nothing while the service is unavailable', async () => {
+            listed = [UNVERIFIED_BSKY];
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+            (registry.isAvailable as ReturnType<typeof mock>).mockImplementation((): boolean => false);
+
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
+            expect(checks.bsky_reply).not.toHaveBeenCalled();
+            expect(resolveUnverified).not.toHaveBeenCalled();
+        });
+
+        test('asks whether the service is available once for its unverified rows', async () => {
+            listed = [unverifiedOf(makeAction({ type: 'bsky_dm', params: { convoId: 'c1', text: 'hi' } }))];
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+
+            await build().executeOnce();
+
+            expect((registry.isAvailable as ReturnType<typeof mock>).mock.calls).toEqual([['bsky']]);
+            expect(checks.bsky_dm).toHaveBeenCalledTimes(1);
+        });
+
+        test('each lane checks only its own service\'s unverified rows', async () => {
+            listed = [UNVERIFIED_BSKY, UNVERIFIED_EMAIL];
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+
+            expect(await build().executeOnce()).toEqual({ executed: 2, failed: 0, unverified: 0 });
+            expect(checks.bsky_reply).toHaveBeenCalledTimes(1);
+            expect(checks.email_send).toHaveBeenCalledTimes(1);
+            expect(checks.email_send.mock.calls[0]?.[0].params).toEqual({ uid: 42 });
+        });
+
+        test('checks unverified rows before sending approved ones', async () => {
+            listed = [BSKY_2, UNVERIFIED_BSKY];
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+
+            await build().executeOnce();
+
+            expect(checks.bsky_reply.mock.invocationCallOrder[0]).toBeLessThan(claim.mock.invocationCallOrder[0]);
+        });
+
+        test('waits the default 5-minute delay before a first check', async () => {
+            listed = [UNVERIFIED_BSKY];
+            jest.setSystemTime(new Date(Date.parse(CHECK_DUE_AT) - 1));
+
+            await build().executeOnce();
+            expect(checks.bsky_reply).not.toHaveBeenCalled();
+        });
+
+        test('honours a custom first-check delay', async () => {
+            listed = [UNVERIFIED_BSKY];
+            jest.setSystemTime(new Date(Date.parse(CLAIMED_AT) + 1000));
+
+            await build({ verifyDelayMs: 1000 }).executeOnce();
+            expect(checks.bsky_reply).toHaveBeenCalledTimes(1);
+        });
+
+        test('schedules checks on the injected clock', async () => {
+            listed = [UNVERIFIED_BSKY];
+
+            await build({ now: () => Date.parse(CHECK_DUE_AT) }).executeOnce();
+            expect(checks.bsky_reply).toHaveBeenCalledTimes(1);
+        });
+
+        test('bounds each check by the send timeout', async () => {
+            listed = [UNVERIFIED_BSKY];
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+            checks.bsky_reply.mockImplementation(async () => Promise.withResolvers<DeliveryCheck>().promise);
+            const pass = build({ sendTimeoutMs: 1000 }).executeOnce();
+            await flush();
+
+            jest.advanceTimersByTime(1000);
+            expect(await pass).toEqual({ executed: 0, failed: 0, unverified: 0 });
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, type: 'bsky_reply', reason: 'no answer from the destination within 1s', undecidedChecks: 1 },
+                'Approved outbound action delivery still unknown; will check its destination again'
+            );
         });
     });
 
@@ -731,7 +931,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(settleClaim.mock.calls).toEqual([[claimedOf(EMAIL), { state: 'executed' }]]);
             jest.advanceTimersByTime(DEFAULT_SEND_TIMEOUT_MS);
             await flush();
-            expect(settleClaim).toHaveBeenLastCalledWith(claimedOf(BSKY), { state: 'failed', lastError: sendTimedOutError(DEFAULT_SEND_TIMEOUT_MS), failureKind: 'permanent' });
+            expect(settleClaim).toHaveBeenLastCalledWith(claimedOf(BSKY), { state: 'unverified', lastError: sendTimedOutError(DEFAULT_SEND_TIMEOUT_MS) });
             executor.stop();
         });
     });
@@ -1175,10 +1375,13 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(listOpen).toHaveBeenCalledTimes(2);
         });
 
-        test('a pass that recorded only failures also resets to base', async () => {
+        test.each([
+            ['failures', new InvariantViolationError('executor', 'client not available')],
+            ['unknown outcomes', new Error('socket hang up')],
+        ])('a pass that recorded only %s also resets to base', async (_label, error) => {
             for(const type of ['bsky_reply', 'email_send'] as const) {
                 executors[type].mockImplementation(async (): Promise<void> => {
-                    throw new Error('oops');
+                    throw error;
                 });
             }
             const executor = build({ pollIntervalMs: 1000 });
@@ -1236,20 +1439,36 @@ describe('createApprovedOutboundActionExecutor', () => {
 describe('classifyFailure', () => {
     const zodError = z.object({ uid: z.number() }).safeParse({ uid: 'x' }).error;
 
-    const cases: [string, unknown, 'transient' | 'permanent'][] = [
+    const cases: [string, unknown, 'transient' | 'permanent' | 'ambiguous'][] = [
         ['a ZodError (unreadable params)', zodError, 'permanent'],
         ['a BskyValidationError', new BskyValidationError('too long'), 'permanent'],
         ['a BskyError with status 400', new BskyError('bad', undefined, { status: 400 }), 'permanent'],
         ['a BskyError with status 499', new BskyError('bad', undefined, { status: 499 }), 'permanent'],
-        ['a BskyError with status 399', new BskyError('odd', undefined, { status: 399 }), 'transient'],
-        ['a BskyError with status 500', new BskyError('down', undefined, { status: 500 }), 'transient'],
-        ['a BskyError with a non-numeric status', new BskyError('odd', undefined, { status: '404' }), 'transient'],
-        ['a BskyError with no context', new BskyError('no context'), 'transient'],
+        ['a BskyError with status 399', new BskyError('odd', undefined, { status: 399 }), 'ambiguous'],
+        ['a BskyError with status 500', new BskyError('down', undefined, { status: 500 }), 'ambiguous'],
+        ['a BskyError with status 599', new BskyError('down', undefined, { status: 599 }), 'ambiguous'],
+        ['a BskyError with status 1 (network failure or abort, no response)', new BskyError('network', undefined, { status: 1 }), 'ambiguous'],
+        ['a BskyError with status 2 (a response that failed validation)', new BskyError('invalid', undefined, { status: 2 }), 'ambiguous'],
+        ['a BskyError with a non-numeric status', new BskyError('odd', undefined, { status: '404' }), 'ambiguous'],
+        ['a status-less BskyError (a network error the client wrapped)', new BskyError('Failed to reply to post', undefined, { originalMessage: 'socket hang up' }), 'ambiguous'],
+        ['a BskyError with no context', new BskyError('no context'), 'ambiguous'],
         ['a BskyAuthError even if it carries status 401', new BskyAuthError('auth', { status: 401 }), 'transient'],
         ['a BskyRateLimitError even if it carries status 429', new BskyRateLimitError('slow down', { status: 429 }), 'transient'],
-        ['a WildDuckError', new WildDuckError('smtp down'), 'transient'],
-        ['a plain Error', new Error('network failure'), 'transient'],
-        ['a thrown string', 'string error', 'transient'],
+        ['an InvariantViolationError (a missing client, before any request)', new InvariantViolationError('executor', 'client not available'), 'transient'],
+        ['a WildDuckAuthError', new WildDuckAuthError('WildDuck authentication failed (401)'), 'transient'],
+        ['a status-less WildDuckError (raised before any request)', new WildDuckError('WildDuck: unknown mailbox path: Drafts'), 'transient'],
+        ['a WildDuckError with status 400', new WildDuckError('bad', undefined, { status: 400 }), 'transient'],
+        ['a WildDuckError with status 403', new WildDuckError('forbidden', undefined, { status: 403 }), 'transient'],
+        ['a WildDuckError with status 499', new WildDuckError('odd', undefined, { status: 499 }), 'transient'],
+        ['a WildDuckError with status 404 (the draft may already be in Sent Mail)', new WildDuckError('gone', undefined, { status: 404 }), 'ambiguous'],
+        ['a WildDuckError with status 500', new WildDuckError('down', undefined, { status: 500 }), 'ambiguous'],
+        ['a WildDuckError with status 503', new WildDuckError('down', undefined, { status: 503 }), 'ambiguous'],
+        ['a WildDuckError with a non-numeric status', new WildDuckError('odd', undefined, { status: '500' }), 'transient'],
+        ['a WildDuck request timeout', new DOMException('The operation timed out.', 'TimeoutError'), 'ambiguous'],
+        ['an aborted request', new DOMException('The operation was aborted.', 'AbortError'), 'ambiguous'],
+        ['a fetch TypeError', new TypeError('fetch failed'), 'ambiguous'],
+        ['a plain Error', new Error('network failure'), 'ambiguous'],
+        ['a thrown string', 'string error', 'ambiguous'],
     ];
     for(const [name, err, expected] of cases) {
         test(`classifies ${name} as ${expected}`, () => {

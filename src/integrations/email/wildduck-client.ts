@@ -21,6 +21,12 @@ const SPECIAL_USE_FLAGS: Record<string, string> = {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/** Messages per page when looking a message up by Message-ID. */
+const FIND_BY_MESSAGE_ID_PAGE_SIZE = 250;
+
+/** How many pages, newest first, a Message-ID lookup reads before giving up. */
+export const FIND_BY_MESSAGE_ID_MAX_PAGES = 4;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -146,17 +152,23 @@ interface WildDuckUploadPayload {
 }
 
 interface WildDuckMessage {
-    id:        number
-    subject?:  string
-    from?:     { address: string, name?: string }
-    to?:       { address: string, name?: string }[]
-    cc?:       { address: string, name?: string }[]
+    id:         number
+    subject?:   string
+    from?:      { address: string, name?: string }
+    to?:        { address: string, name?: string }[]
+    cc?:        { address: string, name?: string }[]
     /** Pre-parsed Reply-To address from WildDuck API */
-    replyTo?:  { address: string, name?: string }
-    text?:     string
-    html?:     string
-    metaData?: Record<string, unknown>
-    flags?:    string[]
+    replyTo?:   { address: string, name?: string }
+    text?:      string
+    html?:      string
+    metaData?:  Record<string, unknown>
+    flags?:     string[]
+    /** The Message-ID header, angle brackets included. */
+    messageId?: string
+    /** The Date header, as an ISO timestamp. WildDuck rewrites a draft's Date when it is submitted. */
+    date?:      string | null
+    /** Whether the message is still a draft. */
+    draft?:     boolean
 }
 
 export interface WildDuckMessageSummary {
@@ -223,6 +235,13 @@ interface MailboxInfoResponse {
 interface MessageListResponse {
     success: boolean
     results: WildDuckMessageSummary[]
+}
+
+/** One page of a mailbox listing, read only for its Message-IDs and its next-page cursor. */
+interface MessageIdPageResponse {
+    results:     { messageId?: string }[]
+    /** The next page's cursor, or false on the last page. */
+    nextCursor?: string | false
 }
 
 interface FullMessageResponse {
@@ -479,10 +498,20 @@ export class WildDuckClient {
 
     /**
      * Retrieve a message by UID.
-     * Returns null if the message is not found (404).
+     * Returns null if the message is not found (404). `signal` cancels the request.
      */
-    async getMessage(mailboxPath: string, uid: number): Promise<WildDuckMessage | null> {
-        return this.withAuthRetry(() => this.doGetMessage(mailboxPath, uid));
+    async getMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<WildDuckMessage | null> {
+        return this.withAuthRetry(() => this.doGetMessage(mailboxPath, uid, signal));
+    }
+
+    /**
+     * Whether a message whose Message-ID header is exactly `messageId` is among the newest
+     * {@link FIND_BY_MESSAGE_ID_MAX_PAGES} pages of `mailboxPath` (read and unread alike).
+     * False means not found there, not necessarily absent from an older page. `signal` cancels
+     * the request in flight.
+     */
+    async findMessageByMessageId(mailboxPath: string, messageId: string, signal?: AbortSignal): Promise<boolean> {
+        return this.withAuthRetry(() => this.doFindMessageByMessageId(mailboxPath, messageId, signal));
     }
 
     // ---------------------------------------------------------------------------
@@ -724,12 +753,36 @@ export class WildDuckClient {
         );
     }
 
-    private async doGetMessage(mailboxPath: string, uid: number): Promise<WildDuckMessage | null> {
+    private async doGetMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<WildDuckMessage | null> {
         const mailboxId = this.resolveMailboxId(mailboxPath);
         return this.makeRequestNullable<WildDuckMessage>(
             `/users/me/mailboxes/${mailboxId}/messages/${uid}`,
-            { method: 'GET' }
+            { method: 'GET', signal }
         );
+    }
+
+    private async doFindMessageByMessageId(mailboxPath: string, messageId: string, signal?: AbortSignal): Promise<boolean> {
+        const mailboxId = this.resolveMailboxId(mailboxPath);
+        let cursor: string | undefined;
+        for(let page = 0; page < FIND_BY_MESSAGE_ID_MAX_PAGES; page++) {
+            const searchParams = new URLSearchParams({ order: 'desc', limit: String(FIND_BY_MESSAGE_ID_PAGE_SIZE) });
+            if(cursor !== undefined) {
+                searchParams.set('next', cursor);
+            }
+            // eslint-disable-next-line no-await-in-loop -- each page's cursor comes from the one before.
+            const response = await this.makeRequest<MessageIdPageResponse>(
+                `/users/me/mailboxes/${mailboxId}/messages?${searchParams.toString()}`,
+                { method: 'GET', signal }
+            );
+            if(response.results.some(result => result.messageId === messageId)) {
+                return true;
+            }
+            if(typeof response.nextCursor !== 'string') {
+                return false;
+            }
+            cursor = response.nextCursor;
+        }
+        return false;
     }
 
     private async doMoveMessage(sourceMailbox: string, uid: number, destMailbox: string): Promise<void> {
@@ -934,7 +987,7 @@ export class WildDuckClient {
             const body = await response.text();
             // Stryker disable next-line llm: response.text returns a string whose only falsy value is the same empty string.
             const bodySuffix = body ? `: ${body}` : '';
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`, undefined, { status: response.status });
         }
 
         return response.json() as Promise<T>;

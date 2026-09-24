@@ -36,6 +36,8 @@ interface TypeCopy {
     past:            string
     /** Service name in "when … reconnects". */
     service:         string
+    /** Where a send whose outcome is unknown is looked for, in "checking … before any resend". */
+    destination:     string
     sentTitle:       string
     failTitlePrefix: string
     /** Only email approvals wake Izzy on success, matching the pre-existing per-platform budget. */
@@ -49,6 +51,7 @@ const COPY: Record<ApprovedOutboundActionType, TypeCopy> = {
         verb:            'send',
         past:            'sent',
         service:         'email',
+        destination:     'Sent Mail',
         sentTitle:       'Sent ✓',
         failTitlePrefix: 'Send failed',
         wakeOnSuccess:   true,
@@ -59,6 +62,7 @@ const COPY: Record<ApprovedOutboundActionType, TypeCopy> = {
         verb:            'post',
         past:            'posted',
         service:         'Bluesky',
+        destination:     'the account’s Bluesky posts',
         sentTitle:       'Posted ✓',
         failTitlePrefix: 'Post failed',
         wakeOnSuccess:   false,
@@ -69,6 +73,7 @@ const COPY: Record<ApprovedOutboundActionType, TypeCopy> = {
         verb:            'send',
         past:            'sent',
         service:         'Bluesky',
+        destination:     'the DM conversation',
         sentTitle:       'DM sent ✓',
         failTitlePrefix: 'DM failed',
         wakeOnSuccess:   false,
@@ -86,9 +91,11 @@ function label(action: ApprovedOutboundAction, copy: TypeCopy): string {
 }
 
 /**
- * Describe the outcome of an executed or failed approved action, for the approval card and for
- * Izzy. A failure with no `failureKind` (written before #40) is never retried, so it reads as
- * permanent. Throws for an `approved` or `sending` row, which has no outcome yet.
+ * Describe the outcome of an executed, failed or unverified approved action, for the approval
+ * card and for Izzy. A failure with no `failureKind` (written before #40) is never retried, so it
+ * reads as permanent. An `unverified` row is an interim report (amber, not waking Izzy): the
+ * send's outcome is unknown and its destination is being checked, and the check's result is
+ * reported in turn. Throws for an `approved` or `sending` row, which has no outcome yet.
  */
 export function describeApprovedActionOutcome(action: ApprovedOutboundAction): ApprovedActionOutcomeReport {
     if(action.state === 'approved' || action.state === 'sending') {
@@ -109,6 +116,15 @@ export function describeApprovedActionOutcome(action: ApprovedOutboundAction): A
     }
 
     const error = truncate(action.lastError ?? 'unknown error', { length: MAX_ERROR_LENGTH });
+    if(action.state === 'unverified') {
+        return {
+            source: copy.source,
+            key,
+            wake:   false,
+            text:   `${subject}: no clear answer from ${copy.service} (${error}), so it may or may not have been ${copy.past}. Checking ${copy.destination} before deciding whether to resend; you will be told the result.`,
+            card:   { tone: 'retrying', title: `Outcome unknown — checking ${copy.destination} before any resend`, detail: error },
+        };
+    }
     if(action.failureKind === 'transient') {
         return {
             source: copy.source,

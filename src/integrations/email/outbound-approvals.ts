@@ -1,13 +1,28 @@
 import { logger } from '@hughescr/logger';
 import { chain } from 'lodash-es';
+import { z } from 'zod';
 import { markDraftReviewState } from './draft-review-state';
 import type { WildDuckClient } from './wildduck-client';
 import type { ActivityLogger, NotifyFn } from '@/agent';
 import { EmailFolder } from '@/config';
-import type { ApprovalCardRef, ApprovedOutboundActionWriter } from '@/services';
+import { raceDeadline, type ApprovalCardRef, type ApprovedOutboundActionWriter } from '@/services';
 
 /** Which admin control approved the send; only the activity-log failure text differs. */
 export type EmailApprovalRoute = 'direct' | 'allowlist';
+
+/**
+ * The stored params of an approved `email_send` action: the draft's uid, and — when they could
+ * be read at approval — its Message-ID and Date header then, the fingerprint a delivery check
+ * looks for once the draft has left Drafts (#108). Rows approved before #108 carry the uid only.
+ */
+export const emailSendParamsSchema = z.object({
+    uid:       z.number().int(),
+    messageId: z.string().optional(),
+    draftDate: z.string().optional(),
+});
+
+/** How long an approval waits to read the draft's fingerprint before recording the action without it (10 seconds). */
+export const FINGERPRINT_READ_TIMEOUT_MS = 10_000;
 
 export interface EmailOutboundApprovalsDeps {
     wildDuckClient:  Pick<WildDuckClient, 'getMessage' | 'updateMessageMetadata' | 'updateMessageFlags'>
@@ -30,14 +45,21 @@ export class EmailOutboundApprovals {
      * the approval card so the real outcome can be shown on it, then log the approval activity
      * (fire-and-forget). The rate limiter is intentionally not charged here: the admin's manual
      * approval is itself the rate control for non-allowlisted sends.
+     *
+     * First, the draft's Message-ID and Date are read (at most {@link FINGERPRINT_READ_TIMEOUT_MS},
+     * then cancelled) and stored in the params, so a send whose outcome turns out unknown can be
+     * looked for in Sent Mail. The read is best-effort: when it fails, times out or lacks either
+     * field, the action is recorded without them, and a later unknown outcome stays undecided
+     * rather than resent.
      */
     async approveSend(uid: number, via: EmailApprovalRoute, card: ApprovalCardRef): Promise<void> {
+        const fingerprint = await this.readFingerprint(uid);
         const now = new Date().toISOString();
         await this.deps.actionWriter.create({
             id:           crypto.randomUUID(),
             state:        'approved',
             type:         'email_send',
-            params:       { uid },
+            params:       { uid, ...fingerprint },
             approvalCard: card,
             createdAt:    now,
             updatedAt:    now,
@@ -46,6 +68,28 @@ export class EmailOutboundApprovals {
         void this.deps.activityLogger?.log({ type: 'email-send-approved', summary: 'Email approved for sending' }).catch((err: unknown) => {
             logger.warn({ err, msg: `Activity log failed for email send (${via} path)` });
         });
+    }
+
+    /** The draft's Message-ID and Date, or undefined (and a warning) when they cannot be read in time. */
+    private async readFingerprint(uid: number): Promise<{ messageId: string, draftDate: string } | undefined> {
+        const controller = new AbortController();
+        let problem: string;
+        try {
+            const read = await raceDeadline(
+                this.deps.wildDuckClient.getMessage(EmailFolder.Drafts, uid, controller.signal),
+                FINGERPRINT_READ_TIMEOUT_MS,
+                () => controller.abort()
+            );
+            const draft = read?.value;
+            if(typeof draft?.messageId === 'string' && typeof draft.date === 'string') {
+                return { messageId: draft.messageId, draftDate: draft.date };
+            }
+            problem = read === undefined ? `no answer within ${FINGERPRINT_READ_TIMEOUT_MS / 1000}s` : 'the draft was not found, or has no Message-ID or Date';
+        } catch (err: unknown) {
+            problem = err instanceof Error ? err.message : String(err);
+        }
+        logger.warn({ uid, problem, msg: 'Could not read the draft’s Message-ID and Date at approval; recording the send without them' });
+        return undefined;
     }
 
     /**

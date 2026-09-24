@@ -13,9 +13,15 @@ const SERVICES_WITH_ACTIONS: ReadonlySet<ServiceName> = new Set(approvedOutbound
 
 /**
  * Reset `service`'s transiently failed actions to `approved` so the executor retries them.
- * Permanent failures, and unclassified ones written before #40, stay failed. Resets are
- * written one at a time in the backend's listed order; the first write failure stops the
- * pass (later actions stay failed for the next reconnect) and is logged once.
+ * Permanent failures, and unclassified ones written before #40, stay failed.
+ *
+ * A transient failure with no `firstClaimedAt` was recorded by a build that labelled errors
+ * which do not prove the message was refused (a network failure, a timeout, a 5xx) transient
+ * too, so it may have been delivered. It is moved to `unverified` instead, and the executor
+ * checks its destination before any resend (#108).
+ *
+ * Moves are written one at a time in the backend's listed order; the first write failure stops
+ * the pass (later actions stay failed for the next reconnect) and is logged once.
  */
 export async function retryTransientFailures(deps: RetryDeps, service: ServiceName): Promise<void> {
     const { backend, logger } = deps;
@@ -23,8 +29,15 @@ export async function retryTransientFailures(deps: RetryDeps, service: ServiceNa
         const failed = await backend.listByState('failed');
         const forService = failed.filter(action => requiredServiceFor(action.type) === service);
         let reset = 0;
+        let verifying = 0;
         for(const action of forService) {
             if(action.failureKind !== 'transient') {
+                continue;
+            }
+            if(action.firstClaimedAt === undefined) {
+                // eslint-disable-next-line no-await-in-loop -- ordered durable state transitions; a failed write stops the pass.
+                await backend.updateState(action.id, 'unverified');
+                verifying++;
                 continue;
             }
             // eslint-disable-next-line no-await-in-loop -- ordered durable state transitions; a failed write stops the pass.
@@ -32,7 +45,10 @@ export async function retryTransientFailures(deps: RetryDeps, service: ServiceNa
             reset++;
         }
         if(forService.length > 0) {
-            logger.info({ service, reset, skipped: forService.length - reset }, 'Reset transient approved outbound action failures on reconnect');
+            logger.info(
+                { service, reset, verifying, skipped: forService.length - reset - verifying },
+                'Reset transient approved outbound action failures on reconnect'
+            );
         }
     } catch (err: unknown) {
         logger.warn({ service, error: err instanceof Error ? err.message : String(err) }, 'Failed to reset approved outbound actions on reconnect');

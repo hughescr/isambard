@@ -1,11 +1,35 @@
 import { logger } from '@hughescr/logger';
+import { z } from 'zod';
 import type { BskyRejectionBackend, BskyRejectionItem } from './rejection-backend';
+import { atUriSchema, cidSchema } from './types';
 import type { ActivityLogger, NotifyFn } from '@/agent';
 import type { ApprovalCardRef, ApprovedOutboundActionWriter } from '@/services';
 
 /**
- * An approved Bluesky reply, in the flat wire shape the executor's params schema parses
- * (src/index.ts). Kept flat so rows already persisted stay executable.
+ * The stored params of an approved `bsky_reply` action, as the executor and its delivery check
+ * read them.
+ *
+ * The wire shape stays flat (parentUri/parentCid/rootUri?/rootCid?) — the same shape the
+ * approval flow has always written, and rows persist for up to 30 days. Reshaping it to the
+ * nested `{ reply: BskyReplyInput }` domain shape would silently orphan any action already
+ * `approved` at deploy time: the executor would throw on parse, the ZodError would mark it
+ * failed(permanent), and it would never post. Instead, AT-URI/CID branding happens only here, at
+ * the read boundary.
+ */
+export const bskyReplyParamsSchema = z.object({
+    text:      z.string(),
+    parentUri: atUriSchema,
+    parentCid: cidSchema,
+    rootUri:   atUriSchema.optional(),
+    rootCid:   cidSchema.optional(),
+});
+
+/** The stored params of an approved `bsky_dm` action. */
+export const bskyDmParamsSchema = z.object({ text: z.string(), convoId: z.string() });
+
+/**
+ * An approved Bluesky reply, in the flat wire shape {@link bskyReplyParamsSchema} parses.
+ * Kept flat so rows already persisted stay executable.
  */
 export interface BskyApprovedReply {
     text:      string

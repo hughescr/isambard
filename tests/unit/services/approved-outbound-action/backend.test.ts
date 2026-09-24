@@ -10,7 +10,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../setup';
 import { InvariantViolationError } from '@/errors';
 import { ApprovedOutboundActionBackend, assertTransition } from '@/services/approved-outbound-action/backend';
-import type { ApprovedOutboundAction, ApprovedOutboundActionState, ClaimedApprovedOutboundAction } from '@/services/approved-outbound-action/types';
+import type { ApprovedOutboundAction, ApprovedOutboundActionState, ClaimedApprovedOutboundAction, UnverifiedApprovedOutboundAction } from '@/services/approved-outbound-action/types';
 
 const ACTION_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const KEY = { PK: 'APPROVAL#SAGA', SK: `SAGA#${ACTION_UUID}` };
@@ -41,6 +41,17 @@ const SENDING: ClaimedApprovedOutboundAction = {
     updatedAt: '2026-03-30T11:45:00.000Z',
 };
 
+const UNVERIFIED: UnverifiedApprovedOutboundAction = {
+    ...BASE_ACTION,
+    state:                'unverified',
+    lastError:            'fetch failed',
+    ambiguousSends:       1,
+    firstClaimedAt:       '2026-03-30T11:45:00.000Z',
+    outcomeReportPending: true,
+    outcomeNotified:      true,
+    updatedAt:            '2026-03-30T11:46:00.000Z',
+};
+
 const CONDITIONAL_CHECK_FAILED = Object.assign(new Error('The conditional request failed'), { name: 'ConditionalCheckFailedException' });
 
 /** TTL recomputed from BASE_ACTION.createdAt + 30 days, in epoch seconds. */
@@ -51,7 +62,11 @@ describe('assertTransition', () => {
         ['approved -> sending', BASE_ACTION, 'sending'],
         ['sending -> executed', SENDING, 'executed'],
         ['sending -> failed', SENDING, 'failed'],
+        ['sending -> unverified', SENDING, 'unverified'],
+        ['unverified -> executed', UNVERIFIED, 'executed'],
+        ['unverified -> approved', UNVERIFIED, 'approved'],
         ['failed(transient) -> approved', FAILED_TRANSIENT, 'approved'],
+        ['failed(transient) -> unverified', FAILED_TRANSIENT, 'unverified'],
     ];
     for(const [name, prior, to] of legal) {
         test(`allows ${name}`, () => {
@@ -74,6 +89,13 @@ describe('assertTransition', () => {
         ['failed(transient) -> executed', FAILED_TRANSIENT, 'executed', 'illegal transition failed(transient) -> executed'],
         ['failed(transient) -> failed', FAILED_TRANSIENT, 'failed', 'illegal transition failed(transient) -> failed'],
         ['failed(transient) -> sending', FAILED_TRANSIENT, 'sending', 'illegal transition failed(transient) -> sending'],
+        ['failed(permanent) -> unverified', { ...FAILED_TRANSIENT, failureKind: 'permanent' }, 'unverified', 'illegal transition failed(permanent) -> unverified'],
+        ['failed(no failureKind) -> unverified', { ...BASE_ACTION, state: 'failed', lastError: 'old' }, 'unverified', 'illegal transition failed(unclassified) -> unverified'],
+        ['approved -> unverified (an unknown outcome without a claim)', BASE_ACTION, 'unverified', 'illegal transition approved -> unverified'],
+        ['executed -> unverified', { ...BASE_ACTION, state: 'executed' }, 'unverified', 'illegal transition executed -> unverified'],
+        ['unverified -> sending (a resend without a check)', UNVERIFIED, 'sending', 'illegal transition unverified -> sending'],
+        ['unverified -> failed', UNVERIFIED, 'failed', 'illegal transition unverified -> failed'],
+        ['unverified -> unverified', UNVERIFIED, 'unverified', 'illegal transition unverified -> unverified'],
     ];
     for(const [name, prior, to, invariant] of illegal) {
         test(`rejects ${name} with an InvariantViolationError`, () => {
@@ -271,6 +293,37 @@ describe('ApprovedOutboundActionBackend', () => {
             expect('outcomeReportPending' in item).toBe(false);
             expect('outcomeNotified' in item).toBe(false);
         });
+
+        test('failed(transient) -> unverified keeps lastError, drops failureKind, and marks the interim outcome for reporting', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...FAILED_TRANSIENT, outcomeNotified: true } });
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.updateState(ACTION_UUID, 'unverified');
+
+            const input = ddbMock.commandCalls(PutCommand)[0].args[0].input;
+            expect(input).toEqual({
+                TableName: 'TestTable',
+                Item:      {
+                    ...KEY,
+                    ...BASE_ACTION,
+                    state:                'unverified',
+                    lastError:            'socket hang up',
+                    outcomeReportPending: true,
+                    updatedAt:            '2026-03-30T12:00:00.000Z',
+                    TTL:                  EXPECTED_TTL,
+                },
+                ConditionExpression:       '#state = :from AND #updatedAt = :revision AND #failureKind = :transient',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#failureKind': 'failureKind' },
+                ExpressionAttributeValues: { ':from': 'failed', ':revision': '2026-03-30T11:00:00.000Z', ':transient': 'transient' },
+            });
+        });
+
+        test('failed(permanent) -> unverified throws and sends no put', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: { ...KEY, ...FAILED_TRANSIENT, failureKind: 'permanent' } });
+
+            await expect(backend.updateState(ACTION_UUID, 'unverified')).rejects.toThrow('illegal transition failed(permanent) -> unverified');
+            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+        });
     });
 
     describe('claim', () => {
@@ -289,7 +342,7 @@ describe('ApprovedOutboundActionBackend', () => {
 
             const claimed = await backend.claim(BASE_ACTION);
 
-            expect(claimed).toEqual({ ...BASE_ACTION, state: 'sending', claimId: CLAIM_ID, updatedAt: '2026-03-30T12:00:00.000Z' });
+            expect(claimed).toEqual({ ...BASE_ACTION, state: 'sending', claimId: CLAIM_ID, firstClaimedAt: '2026-03-30T12:00:00.000Z', updatedAt: '2026-03-30T12:00:00.000Z' });
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
             const puts = ddbMock.commandCalls(PutCommand);
             expect(puts).toHaveLength(1);
@@ -298,10 +351,11 @@ describe('ApprovedOutboundActionBackend', () => {
                 Item:      {
                     ...KEY,
                     ...BASE_ACTION,
-                    state:     'sending',
-                    claimId:   CLAIM_ID,
-                    updatedAt: '2026-03-30T12:00:00.000Z',
-                    TTL:       EXPECTED_TTL,
+                    state:          'sending',
+                    claimId:        CLAIM_ID,
+                    firstClaimedAt: '2026-03-30T12:00:00.000Z',
+                    updatedAt:      '2026-03-30T12:00:00.000Z',
+                    TTL:            EXPECTED_TTL,
                 },
                 ConditionExpression:       '#state = :from AND #updatedAt = :revision',
                 ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt' },
@@ -335,13 +389,24 @@ describe('ApprovedOutboundActionBackend', () => {
             expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toEqual({
                 ...KEY,
                 ...BASE_ACTION,
-                lastError:    'socket hang up',
-                approvalCard: card,
-                state:        'sending',
-                claimId:      CLAIM_ID,
-                updatedAt:    '2026-03-30T12:00:00.000Z',
-                TTL:          EXPECTED_TTL,
+                lastError:      'socket hang up',
+                approvalCard:   card,
+                state:          'sending',
+                claimId:        CLAIM_ID,
+                firstClaimedAt: '2026-03-30T12:00:00.000Z',
+                updatedAt:      '2026-03-30T12:00:00.000Z',
+                TTL:            EXPECTED_TTL,
             });
+        });
+
+        test('a later claim keeps the first claim time and the count of unknown outcomes', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const prior: ApprovedOutboundAction = { ...BASE_ACTION, firstClaimedAt: '2026-03-30T11:00:00.000Z', ambiguousSends: 2 };
+
+            const claimed = await backend.claim(prior);
+
+            expect(claimed).toEqual({ ...prior, state: 'sending', claimId: CLAIM_ID, updatedAt: '2026-03-30T12:00:00.000Z' });
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toMatchObject({ firstClaimedAt: '2026-03-30T11:00:00.000Z', ambiguousSends: 2 });
         });
 
         test('returns undefined when another writer claimed or moved the row first', async () => {
@@ -420,6 +485,51 @@ describe('ApprovedOutboundActionBackend', () => {
             });
         });
 
+        test('settles a claim as unverified with its lastError, counting its first unknown outcome, under the claimId condition', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            expect(await backend.settleClaim(SENDING, { state: 'unverified', lastError: 'fetch failed' })).toBe(true);
+
+            const input = ddbMock.commandCalls(PutCommand)[0].args[0].input;
+            expect(input).toEqual({
+                TableName: 'TestTable',
+                Item:      {
+                    ...KEY,
+                    ...BASE_ACTION,
+                    state:                'unverified',
+                    lastError:            'fetch failed',
+                    ambiguousSends:       1,
+                    outcomeReportPending: true,
+                    updatedAt:            '2026-03-30T12:00:00.000Z',
+                    TTL:                  EXPECTED_TTL,
+                },
+                ConditionExpression:       '#state = :from AND #claimId = :claimId',
+                ExpressionAttributeNames:  { '#state': 'state', '#claimId': 'claimId' },
+                ExpressionAttributeValues: { ':from': 'sending', ':claimId': CLAIM_ID },
+            });
+        });
+
+        test('an unverified settle adds one to the unknown outcomes already counted, and drops failureKind', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.settleClaim({ ...SENDING, ambiguousSends: 2, failureKind: 'transient' }, { state: 'unverified', lastError: 'timeout' });
+
+            const item = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as Record<string, unknown>;
+            expect(item).toMatchObject({ state: 'unverified', ambiguousSends: 3 });
+            expect('failureKind' in item).toBe(false);
+            expect('claimId' in item).toBe(false);
+        });
+
+        test('an executed or failed settle keeps the count of unknown outcomes unchanged', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.settleClaim({ ...SENDING, ambiguousSends: 2 }, { state: 'executed' });
+            await backend.settleClaim({ ...SENDING, ambiguousSends: 2 }, { state: 'failed', lastError: 'bad', failureKind: 'permanent' });
+
+            const items = ddbMock.commandCalls(PutCommand).map(call => call.args[0].input.Item);
+            expect(items.map(item => item?.ambiguousSends)).toEqual([2, 2]);
+        });
+
         test('a settle drops an earlier notification marker so the new outcome revision notifies Izzy afresh', async () => {
             ddbMock.on(PutCommand).resolves({});
 
@@ -473,8 +583,101 @@ describe('ApprovedOutboundActionBackend', () => {
         });
     });
 
+    describe('resolveUnverified', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2026-03-30T12:00:00.000Z'));
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('resolves an unverified row found at its destination as executed, marked for reporting, conditioned on its listed revision', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const resolved = await backend.resolveUnverified(UNVERIFIED, 'executed');
+
+            const expected: ApprovedOutboundAction = {
+                ...BASE_ACTION,
+                state:                'executed',
+                lastError:            'fetch failed',
+                ambiguousSends:       1,
+                firstClaimedAt:       '2026-03-30T11:45:00.000Z',
+                outcomeReportPending: true,
+                updatedAt:            '2026-03-30T12:00:00.000Z',
+            };
+            expect(resolved).toEqual(expected);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input).toEqual({
+                TableName:                 'TestTable',
+                Item:                      { ...KEY, ...expected, TTL: EXPECTED_TTL },
+                ConditionExpression:       '#state = :from AND #updatedAt = :revision',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt' },
+                ExpressionAttributeValues: { ':from': 'unverified', ':revision': '2026-03-30T11:46:00.000Z' },
+            });
+        });
+
+        test('resolves an unverified row definitely absent to approved, dropping its unreported interim report', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const resolved = await backend.resolveUnverified(UNVERIFIED, 'approved');
+
+            expect(resolved).toEqual({
+                ...BASE_ACTION,
+                lastError:      'fetch failed',
+                ambiguousSends: 1,
+                firstClaimedAt: '2026-03-30T11:45:00.000Z',
+                updatedAt:      '2026-03-30T12:00:00.000Z',
+            });
+            const item = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as Record<string, unknown>;
+            expect(item.state).toBe('approved');
+            expect('outcomeReportPending' in item).toBe(false);
+            expect('outcomeNotified' in item).toBe(false);
+        });
+
+        test('returns undefined when another process resolved the row first', async () => {
+            ddbMock.on(PutCommand).rejects(CONDITIONAL_CHECK_FAILED);
+
+            expect(await backend.resolveUnverified(UNVERIFIED, 'approved')).toBeUndefined();
+        });
+
+        test('propagates any other resolve write failure', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('throughput exceeded'));
+
+            await expect(backend.resolveUnverified(UNVERIFIED, 'executed')).rejects.toThrow('throughput exceeded');
+        });
+
+        test('refuses to resolve a row that is not unverified, and writes nothing', async () => {
+            const notUnverified = { ...SENDING } as unknown as UnverifiedApprovedOutboundAction;
+
+            await expect(backend.resolveUnverified(notUnverified, 'approved')).rejects.toThrow('illegal transition sending -> approved');
+            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+        });
+    });
+
+    describe('listAll', () => {
+        test('queries the whole partition, unfiltered, with a strongly consistent read', async () => {
+            ddbMock.on(QueryCommand).resolves({ Items: [{ ...KEY, ...UNVERIFIED }, { PK: 'APPROVAL#SAGA', SK: 'SAGA#bad-item', id: 'not-a-uuid' }] });
+
+            expect(await backend.listAll()).toEqual([UNVERIFIED]);
+
+            expect(ddbMock.commandCalls(QueryCommand)[0].args[0].input).toEqual({
+                TableName:                 'TestTable',
+                KeyConditionExpression:    '#pk = :pk',
+                ExpressionAttributeNames:  { '#pk': 'PK' },
+                ExpressionAttributeValues: { ':pk': 'APPROVAL#SAGA' },
+                ConsistentRead:            true,
+            });
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                expect.objectContaining({ item: expect.objectContaining({ SK: 'SAGA#bad-item' }) }),
+                'ApprovedOutboundActionBackend.listAll: failed to parse action'
+            );
+        });
+    });
+
     describe('listOpen', () => {
-        test('queries the partition for approved and sending rows with a strongly consistent read', async () => {
+        test('queries the partition for approved, sending and unverified rows with a strongly consistent read', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
             await backend.listOpen();
@@ -484,9 +687,9 @@ describe('ApprovedOutboundActionBackend', () => {
             expect(calls[0].args[0].input).toEqual({
                 TableName:                 'TestTable',
                 KeyConditionExpression:    '#pk = :pk',
-                FilterExpression:          '#state IN (:approved, :sending)',
+                FilterExpression:          '#state IN (:approved, :sending, :unverified)',
                 ExpressionAttributeNames:  { '#pk': 'PK', '#state': 'state' },
-                ExpressionAttributeValues: { ':pk': 'APPROVAL#SAGA', ':approved': 'approved', ':sending': 'sending' },
+                ExpressionAttributeValues: { ':pk': 'APPROVAL#SAGA', ':approved': 'approved', ':sending': 'sending', ':unverified': 'unverified' },
                 ConsistentRead:            true,
             });
         });

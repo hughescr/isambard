@@ -2,16 +2,20 @@ import { ZodError } from 'zod';
 import type { ServiceHealthRegistry } from '../health-registry';
 import type { ServiceLogger, ServiceName } from '../types';
 import type { ApprovedOutboundActionBackend, ClaimOutcome } from './backend';
+import { DEFAULT_VERIFY_DELAY_MS, createDeliveryVerification } from './delivery-verification';
 import { raceSendTimeout } from './send-timeout';
 import { DEFAULT_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS, createSingleFlightLoop, type SingleFlightLoop } from './single-flight-loop';
 import {
     approvedOutboundActionTypeSchema,
     isClaimed,
+    isUnverified,
+    type ApprovedOutboundAction,
     type ApprovedOutboundActionType,
     type ClaimedApprovedOutboundAction,
+    type DeliveryVerifier,
     type FailureKind
 } from './types';
-import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError } from '@/errors';
+import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckError } from '@/errors';
 import type { ActivityLogEntry, ActivityLogger } from '@/storage';
 
 /** Logger interface for the approved-outbound-action executor. Alias for {@link ServiceLogger}. */
@@ -49,37 +53,43 @@ export const DEFAULT_CLAIM_LEASE_MS = 15 * 60_000;
 
 /** The lastError recorded for a send that timed out: it may or may not have been delivered. */
 export function sendTimedOutError(timeoutMs: number): string {
-    return `No response within ${timeoutMs / 1000}s, so it may or may not have been delivered. Not retried automatically, to avoid sending it twice; check before resending.`;
+    return `No response within ${timeoutMs / 1000}s, so it may or may not have been delivered.`;
 }
 
 /** The lastError recorded for a claim abandoned between claim and settle. */
-export const STALE_CLAIM_ERROR = 'The send was interrupted before its outcome was recorded, so it may or may not have been delivered. Not retried automatically, to avoid sending it twice; check before resending.';
+export const STALE_CLAIM_ERROR = 'The send was interrupted before its outcome was recorded, so it may or may not have been delivered.';
 
 interface ApprovedOutboundActionExecutorDeps {
-    backend:           Pick<ApprovedOutboundActionBackend, 'listOpen' | 'claim' | 'settleClaim'>
+    backend:           Pick<ApprovedOutboundActionBackend, 'listOpen' | 'claim' | 'settleClaim' | 'resolveUnverified' | 'listAll'>
     registry:          ServiceHealthRegistry
     executors:         Record<ApprovedOutboundActionType, (params: Record<string, unknown>, signal: AbortSignal) => Promise<void>>
+    /** How each action type's destination is checked when a send's outcome is unknown (#108). */
+    verifiers:         Record<ApprovedOutboundActionType, DeliveryVerifier>
     logger:            ServiceLogger
     /** Best-effort event sink for sends that have already settled durably as executed. */
     activityLogger?:   ActivityLogger<SentActivityType>
     /**
-     * Called after each durable terminal write (`executed` or `failed`), so the outcome
-     * reporter can report it straight away. The write itself carries the report's outbox marker
-     * (`outcomeReportPending`), so a lost signal only delays the report until its next poll.
+     * Called after each durable outcome write (`executed`, `failed` or `unverified`), so the
+     * outcome reporter can report it straight away. The write itself carries the report's outbox
+     * marker (`outcomeReportPending`), so a lost signal only delays the report until its next poll.
      */
     onOutcomeRecorded: () => void
     pollIntervalMs?:   number
-    /** Per-send timeout; defaults to {@link DEFAULT_SEND_TIMEOUT_MS}. */
+    /** Per-send timeout, which also bounds each destination check; defaults to {@link DEFAULT_SEND_TIMEOUT_MS}. */
     sendTimeoutMs?:    number
     /** Claim lease; defaults to {@link DEFAULT_CLAIM_LEASE_MS}. Must exceed the send timeout. */
     claimLeaseMs?:     number
-    /** Clock for the claim lease, in epoch milliseconds; defaults to `Date.now`. */
+    /** First destination-check delay; defaults to {@link DEFAULT_VERIFY_DELAY_MS}. */
+    verifyDelayMs?:    number
+    /** Clock for the claim lease and the check schedule, in epoch milliseconds; defaults to `Date.now`. */
     now?:              () => number
 }
 
 interface ExecuteOnceResult {
-    executed: number
-    failed:   number
+    executed:   number
+    failed:     number
+    /** Sends whose outcome is unknown, now waiting for a destination check. */
+    unverified: number
 }
 
 export interface ApprovedOutboundActionExecutor {
@@ -112,27 +122,51 @@ export function requiredServiceFor(type: ApprovedOutboundActionType): ServiceNam
 const LANE_SERVICES: readonly ServiceName[] = [...new Set(approvedOutboundActionTypeSchema.options.map(type => requiredServiceFor(type)))];
 
 /**
- * Label an execution failure. `permanent` means retrying the same stored action cannot
- * succeed: its params do not parse (ZodError), Bluesky rejected the content
- * (BskyValidationError), or Bluesky answered with a 4xx status other than auth (401) or rate
- * limit (429). Everything else — network errors, Bluesky 5xx, auth and rate-limit errors, and
- * every WildDuck error (which carries no status to inspect) — is `transient` and retried on
- * reconnect.
+ * How a send failed: `permanent` or `transient` (see {@link FailureKind}) when the error proves
+ * the message was not delivered, or `ambiguous` when it may have been.
  */
-export function classifyFailure(err: unknown): FailureKind {
+export type SendFailureClass = FailureKind | 'ambiguous';
+
+function numericStatus(err: BskyError | WildDuckError): number | undefined {
+    const status = err.context?.status;
+    return typeof status === 'number' ? status : undefined;
+}
+
+/**
+ * Label a send failure (#108).
+ *
+ * `permanent` — retrying the same stored action cannot succeed: its params do not parse
+ * (ZodError), Bluesky rejected the content (BskyValidationError), or Bluesky answered with any
+ * other 4xx status.
+ *
+ * `transient` — the request was refused or never made, so it is retried when the service
+ * reconnects: a missing client (InvariantViolationError), a Bluesky auth or rate-limit refusal,
+ * a WildDuck 401, a WildDuck error with no HTTP status (raised before any request), or a WildDuck
+ * 4xx other than 404.
+ *
+ * `ambiguous` — everything else, since it does not prove the message was not delivered: a
+ * network failure, abort or unreadable response (Bluesky status 1 or 2, a status-less
+ * BskyError, a fetch TypeError, a TimeoutError), any 5xx, a WildDuck 404 (the draft may already
+ * have moved to Sent Mail), and anything unrecognised. The executor checks the destination
+ * before deciding whether to resend.
+ */
+export function classifyFailure(err: unknown): SendFailureClass {
     if(err instanceof ZodError || err instanceof BskyValidationError) {
         return 'permanent';
     }
-    if(err instanceof BskyAuthError || err instanceof BskyRateLimitError) {
+    if(err instanceof InvariantViolationError || err instanceof BskyAuthError || err instanceof BskyRateLimitError) {
         return 'transient';
     }
     if(err instanceof BskyError) {
-        const status = err.context?.status;
-        if(typeof status === 'number' && status >= 400 && status <= 499) {
-            return 'permanent';
-        }
+        const status = numericStatus(err);
+        return status !== undefined && status >= 400 && status <= 499 ? 'permanent' : 'ambiguous';
     }
-    return 'transient';
+    if(err instanceof WildDuckError) {
+        // A WildDuckAuthError (a 401) carries no status either, so it is transient here.
+        const status = numericStatus(err);
+        return status === undefined || (status < 500 && status !== 404) ? 'transient' : 'ambiguous';
+    }
+    return 'ambiguous';
 }
 
 function errorMessage(err: unknown): string {
@@ -153,25 +187,31 @@ interface PendingSettle {
  * Each lane pass:
  * 1. retries any outcome write that failed on an earlier pass — the write, never the send;
  * 2. lists the open rows (one strongly consistent query) and settles its service's `sending`
- *    rows whose claim is older than the lease as `failed(permanent)`, outcome unknown;
- * 3. for each of its service's `approved` rows: claims it (`approved → sending`, conditional
+ *    rows whose claim is older than the lease as `unverified`, outcome unknown;
+ * 3. while the service is available, checks its due `unverified` rows at their destination
+ *    (see {@link createDeliveryVerification}): found is recorded as sent, definitely absent is
+ *    reset to `approved` and sent again in this same pass, undecided waits for a later pass;
+ * 4. for each of its service's `approved` rows: claims it (`approved → sending`, conditional
  *    put with a fresh `claimId`), sends it with a per-send timeout, and settles the claim.
  *
  * The claim is the cross-process guard: of two processes that list the same row, only the one
  * whose claim lands sends it. Single-flight lanes are defence in depth within a process.
- * A send that times out is settled `failed(permanent)` with its outcome unknown, and its late
- * result is only logged.
+ * A send that times out, or fails in a way that does not prove it was refused (see
+ * {@link classifyFailure}), is settled `unverified` and checked before any resend (#108); a
+ * timed-out send's late result is only logged.
  */
 export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActionExecutorDeps): ApprovedOutboundActionExecutor {
     const {
         backend,
         registry,
         executors,
+        verifiers,
         logger,
         activityLogger,
         onOutcomeRecorded,
         sendTimeoutMs = DEFAULT_SEND_TIMEOUT_MS,
         claimLeaseMs = DEFAULT_CLAIM_LEASE_MS,
+        verifyDelayMs = DEFAULT_VERIFY_DELAY_MS,
         now = Date.now,
     } = deps;
 
@@ -204,15 +244,29 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
                 return { state: 'executed' };
             }
         } catch (err: unknown) {
-            return { state: 'failed', lastError: errorMessage(err), failureKind: classifyFailure(err) };
+            const failureClass = classifyFailure(err);
+            return failureClass === 'ambiguous'
+                ? { state: 'unverified', lastError: errorMessage(err) }
+                : { state: 'failed', lastError: errorMessage(err), failureKind: failureClass };
         }
         void logLateOutcome(claimed, sending);
-        return { state: 'failed', lastError: sendTimedOutError(sendTimeoutMs), failureKind: 'permanent' };
+        return { state: 'unverified', lastError: sendTimedOutError(sendTimeoutMs) };
+    }
+
+    /** Count, log and report an action now durably recorded as sent. */
+    function recordedSent(action: ApprovedOutboundAction, result: ExecuteOnceResult): void {
+        result.executed++;
+        logger.info({ actionId: action.id, type: action.type }, 'Approved outbound action executed successfully');
+        void activityLogger?.log(sentActivityFor(action.type)).catch((err: unknown) => {
+            logger.warn({ actionId: action.id, type: action.type, error: errorMessage(err) }, 'Approved outbound action sent activity log failed');
+        });
+        onOutcomeRecorded();
     }
 
     function createLaneRun(service: ServiceName): () => Promise<ExecuteOnceResult> {
         /** Outcomes whose write failed, keyed by action id, to retry before this lane's next pass. */
         const unsettled = new Map<string, PendingSettle>();
+        const verification = createDeliveryVerification({ backend, verifiers, logger, timeoutMs: sendTimeoutMs, delayMs: verifyDelayMs, now });
 
         async function record(claimed: ClaimedApprovedOutboundAction, outcome: ClaimOutcome, result: ExecuteOnceResult): Promise<void> {
             let recorded: boolean;
@@ -232,11 +286,15 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
                 return;
             }
             if(outcome.state === 'executed') {
-                result.executed++;
-                logger.info({ actionId: claimed.id, type: claimed.type }, 'Approved outbound action executed successfully');
-                void activityLogger?.log(sentActivityFor(claimed.type)).catch((err: unknown) => {
-                    logger.warn({ actionId: claimed.id, type: claimed.type, error: errorMessage(err) }, 'Approved outbound action sent activity log failed');
-                });
+                recordedSent(claimed, result);
+                return;
+            }
+            if(outcome.state === 'unverified') {
+                result.unverified++;
+                logger.warn(
+                    { actionId: claimed.id, type: claimed.type, error: outcome.lastError },
+                    'Approved outbound action send outcome unknown; will check its destination before any resend'
+                );
             } else {
                 result.failed++;
                 logger.error(
@@ -248,7 +306,7 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
         }
 
         return async () => {
-            const result: ExecuteOnceResult = { executed: 0, failed: 0 };
+            const result: ExecuteOnceResult = { executed: 0, failed: 0, unverified: 0 };
 
             // A failed retry propagates and stops this pass before anything new is claimed.
             for(const { claimed, outcome } of unsettled.values()) {
@@ -262,11 +320,19 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
             for(const action of open) {
                 if(isClaimed(action) && now() - Date.parse(action.updatedAt) >= claimLeaseMs) {
                     // eslint-disable-next-line no-await-in-loop -- abandoned claims are settled one at a time; a failure stops the pass.
-                    await record(action, { state: 'failed', lastError: STALE_CLAIM_ERROR, failureKind: 'permanent' }, result);
+                    await record(action, { state: 'unverified', lastError: STALE_CLAIM_ERROR }, result);
                 }
             }
 
-            for(const action of open) {
+            // Checks read the destination, so they wait for the service like sends do. A row
+            // swept above is checked on a later pass, once its revision's delay has passed.
+            const unverified = open.filter(isUnverified);
+            const checked = await verification.verify(unverified.length > 0 && registry.isAvailable(service) ? unverified : []);
+            for(const action of checked.delivered) {
+                recordedSent(action, result);
+            }
+
+            for(const action of [...open, ...checked.requeued]) {
                 if(action.state !== 'approved') {
                     continue;
                 }
@@ -291,7 +357,7 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
 
     const lanes: SingleFlightLoop<ExecuteOnceResult>[] = LANE_SERVICES.map(service => createSingleFlightLoop({
         run:            createLaneRun(service),
-        madeProgress:   result => result.executed > 0 || result.failed > 0,
+        madeProgress:   result => result.executed > 0 || result.failed > 0 || result.unverified > 0,
         baseIntervalMs: deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
         maxIntervalMs:  MAX_POLL_INTERVAL_MS,
         logger,
@@ -316,13 +382,14 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
         },
         executeOnce: async () => {
             const passes = await Promise.allSettled(lanes.map(async lane => lane.runOnce()));
-            const total: ExecuteOnceResult = { executed: 0, failed: 0 };
+            const total: ExecuteOnceResult = { executed: 0, failed: 0, unverified: 0 };
             for(const pass of passes) {
                 if(pass.status === 'rejected') {
                     throw pass.reason;
                 }
                 total.executed += pass.value.executed;
                 total.failed += pass.value.failed;
+                total.unverified += pass.value.unverified;
             }
             return total;
         },

@@ -30,6 +30,9 @@ export type {
     ApprovedOutboundActionType,
     ApprovedOutboundActionWriter,
     ApprovedOutboundActionExecutor,
+    DeliveryCheck,
+    DeliveryCheckInput,
+    DeliveryVerifier,
     FailureKind
 } from './approved-outbound-action';
 export {
@@ -38,7 +41,8 @@ export {
     createApprovedOutboundActionExecutor,
     createApprovedActionRetryListener,
     createWakingActionWriter,
-    describeApprovedActionOutcome
+    describeApprovedActionOutcome,
+    raceDeadline
 } from './approved-outbound-action';
 
 // Allowlist saga

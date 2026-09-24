@@ -6,7 +6,8 @@ import type { ServiceHealthChange, ServiceLogger, ServiceName } from '@/services
 
 const TIMESTAMP = '2026-09-12T00:00:00.000Z';
 
-function failedAction(id: string, type: ApprovedOutboundActionType, failureKind?: FailureKind): ApprovedOutboundAction {
+/** A failed row; `firstClaimedAt` null means a failure recorded before #108 classified ambiguous errors. */
+function failedAction(id: string, type: ApprovedOutboundActionType, failureKind?: FailureKind, firstClaimedAt: string | null = TIMESTAMP): ApprovedOutboundAction {
     return {
         id,
         type,
@@ -14,6 +15,7 @@ function failedAction(id: string, type: ApprovedOutboundActionType, failureKind?
         params:    {},
         lastError: 'boom',
         ...(failureKind === undefined ? {} : { failureKind }),
+        ...(firstClaimedAt === null ? {} : { firstClaimedAt }),
         createdAt: TIMESTAMP,
         updatedAt: TIMESTAMP,
     };
@@ -61,10 +63,29 @@ describe('retryTransientFailures', () => {
         ]);
         expect(logger.info).toHaveBeenCalledTimes(1);
         expect(logger.info).toHaveBeenCalledWith(
-            { service: 'email', reset: 2, skipped: 2 },
+            { service: 'email', reset: 2, verifying: 0, skipped: 2 },
             'Reset transient approved outbound action failures on reconnect'
         );
         expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    test('sends a transient failure recorded before #108 to be checked at its destination, never straight back to approved', async () => {
+        listByState.mockImplementation(async () => [
+            failedAction('00000000-0000-4000-8000-000000000001', 'email_send', 'transient', null),
+            failedAction('00000000-0000-4000-8000-000000000002', 'email_send', 'transient'),
+            failedAction('00000000-0000-4000-8000-000000000003', 'email_send', 'permanent', null),
+        ]);
+
+        await retryTransientFailures({ backend, logger }, 'email');
+
+        expect(updateState.mock.calls).toEqual([
+            ['00000000-0000-4000-8000-000000000001', 'unverified'],
+            ['00000000-0000-4000-8000-000000000002', 'approved'],
+        ]);
+        expect(logger.info).toHaveBeenCalledWith(
+            { service: 'email', reset: 1, verifying: 1, skipped: 1 },
+            'Reset transient approved outbound action failures on reconnect'
+        );
     });
 
     test('never resets a permanent failure on reconnect', async () => {
@@ -74,7 +95,7 @@ describe('retryTransientFailures', () => {
 
         expect(updateState).not.toHaveBeenCalled();
         expect(logger.info).toHaveBeenCalledWith(
-            { service: 'bsky', reset: 0, skipped: 1 },
+            { service: 'bsky', reset: 0, verifying: 0, skipped: 1 },
             'Reset transient approved outbound action failures on reconnect'
         );
     });

@@ -5,7 +5,8 @@ import {
     type ApprovedOutboundAction,
     type ApprovedOutboundActionState,
     type ClaimedApprovedOutboundAction,
-    type FailureKind
+    type FailureKind,
+    type UnverifiedApprovedOutboundAction
 } from './types';
 import { InvariantViolationError } from '@/errors';
 import { DynamoTableAccess, createPrefixedKey } from '@/storage';
@@ -27,8 +28,15 @@ export interface ActionFailure {
     failureKind: FailureKind
 }
 
-/** What the holder of a claim records once its send's outcome is known. */
-export type ClaimOutcome = { state: 'executed' } | ({ state: 'failed' } & ActionFailure);
+/**
+ * What the holder of a claim records once its send has ended: `executed`, `failed` with its
+ * failure, or `unverified` when the send's outcome is unknown and must be checked at the
+ * destination (#108).
+ */
+export type ClaimOutcome = { state: 'executed' } | ({ state: 'failed' } & ActionFailure) | { state: 'unverified', lastError: string };
+
+/** What a destination check resolves an `unverified` row to: found, or definitely absent and so to be sent again. */
+export type DeliveryResolution = 'executed' | 'approved';
 
 interface WriteCondition {
     ConditionExpression:       string
@@ -46,10 +54,13 @@ function isLegalTransition(prior: ApprovedOutboundAction, to: ApprovedOutboundAc
             return to === 'sending';
         }
         case 'sending': {
-            return to === 'executed' || to === 'failed';
+            return to === 'executed' || to === 'failed' || to === 'unverified';
+        }
+        case 'unverified': {
+            return to === 'executed' || to === 'approved';
         }
         case 'failed': {
-            return to === 'approved' && prior.failureKind === 'transient';
+            return (to === 'approved' || to === 'unverified') && prior.failureKind === 'transient';
         }
         case 'executed': {
             return false;
@@ -75,10 +86,12 @@ function carriedFields(prior: ApprovedOutboundAction): Omit<ApprovedOutboundActi
 
 /**
  * Enforce the ApprovedOutboundAction lifecycle: `approved → sending` (the executor's claim),
- * `sending → executed` and `sending → failed` (settling that claim), and
- * `failed(transient) → approved` (retry on reconnect). Anything else — including sending
- * without a claim, `executed → approved` and resetting a permanent or unclassified failure —
- * throws.
+ * `sending → executed`, `sending → failed` and `sending → unverified` (settling that claim),
+ * `unverified → executed` and `unverified → approved` (a destination check found it, or found it
+ * definitely absent), and `failed(transient) → approved` or `failed(transient) → unverified`
+ * (on reconnect: a retry, or a check first for a failure an older build may have mislabelled).
+ * Anything else — including sending without a claim, resending an unverified row without a
+ * check, `executed → approved` and resetting a permanent or unclassified failure — throws.
  */
 export function assertTransition(prior: ApprovedOutboundAction, to: ApprovedOutboundActionState): void {
     if(!isLegalTransition(prior, to)) {
@@ -123,14 +136,16 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     }
 
     /**
-     * Reset a transiently failed action to `approved` so the executor retries it — the one
-     * transition that is not the executor's claim or settle. The prior row is read consistently,
+     * Move a transiently failed action on when its service reconnects: to `approved` so the
+     * executor retries it, or to `unverified` so the executor checks the destination first (for a
+     * failure an older build may have mislabelled transient). The prior row is read consistently,
      * the move is checked by {@link assertTransition}, and the whole row is rewritten with a put
      * conditioned on the state and `updatedAt` revision that was read and on the stored failure
      * still being transient, so a reset that raced another writer fails instead of overwriting
-     * it. If the action is not found, logs a warning and returns.
+     * it. A move to `unverified` carries the outcome-report marker, so the approval card shows the
+     * check. If the action is not found, logs a warning and returns.
      */
-    async updateState(id: string, to: 'approved'): Promise<void> {
+    async updateState(id: string, to: 'approved' | 'unverified'): Promise<void> {
         const prior = await this.get(id);
         if(prior === undefined) {
             logger.warn({ id, to }, 'ApprovedOutboundActionBackend.updateState: action not found');
@@ -139,7 +154,8 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
 
         assertTransition(prior, to);
 
-        await this.putTransition(prior, { ...carriedFields(prior), state: to, updatedAt: new Date().toISOString() }, {
+        const marker = to === 'unverified' ? { outcomeReportPending: true } : {};
+        await this.putTransition(prior, { ...carriedFields(prior), ...marker, state: to, updatedAt: new Date().toISOString() }, {
             ConditionExpression:       '#state = :from AND #updatedAt = :revision AND #failureKind = :transient',
             ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#failureKind': 'failureKind' },
             ExpressionAttributeValues: { ':from': prior.state, ':revision': prior.updatedAt, ':transient': 'transient' },
@@ -152,15 +168,19 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
      * that was listed. No read — the listing was strongly consistent, and the condition catches
      * anything newer. Returns the claimed row, or undefined (writing nothing) when the condition
      * fails because another process claimed the row first or it moved on. Any other failure
-     * propagates, and the caller must then not send.
+     * propagates, and the caller must then not send. The first claim of a row also records
+     * `firstClaimedAt`, which later claims keep: the start of the window a destination check
+     * searches.
      */
     async claim(action: ApprovedOutboundAction): Promise<ClaimedApprovedOutboundAction | undefined> {
         assertTransition(action, 'sending');
+        const now = new Date().toISOString();
         const claimed: ClaimedApprovedOutboundAction = {
             ...carriedFields(action),
-            state:     'sending',
-            claimId:   crypto.randomUUID(),
-            updatedAt: new Date().toISOString(),
+            state:          'sending',
+            claimId:        crypto.randomUUID(),
+            firstClaimedAt: action.firstClaimedAt ?? now,
+            updatedAt:      now,
         };
         try {
             await this.putTransition(action, claimed, {
@@ -178,10 +198,11 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     }
 
     /**
-     * Record the outcome of a claimed send: `sending → executed`, or `sending → failed` with its
-     * failure, in the same put as the outcome-report marker (`outcomeReportPending`). The put is
-     * conditioned on the row still holding this claim's `claimId` — a random id, never a
-     * wall-clock revision two claims could share — so a late settle can never overwrite a later
+     * Record the outcome of a claimed send: `sending → executed`, `sending → failed` with its
+     * failure, or `sending → unverified` (outcome unknown, which also counts one more
+     * `ambiguousSends`), in the same put as the outcome-report marker (`outcomeReportPending`).
+     * The put is conditioned on the row still holding this claim's `claimId` — a random id, never
+     * a wall-clock revision two claims could share — so a late settle can never overwrite a later
      * claim of the same row. No read. Returns false (writing nothing) when the claim was already
      * resolved: by an earlier attempt of this settle that landed though its response was lost,
      * or by another process's stale-claim sweep. Any other failure propagates.
@@ -189,10 +210,12 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     async settleClaim(claimed: ClaimedApprovedOutboundAction, outcome: ClaimOutcome): Promise<boolean> {
         const { state, ...failure } = outcome;
         assertTransition(claimed, state);
+        const ambiguous = state === 'unverified' ? { ambiguousSends: (claimed.ambiguousSends ?? 0) + 1 } : {};
         try {
             await this.putTransition(claimed, {
                 ...carriedFields(claimed),
                 ...failure,
+                ...ambiguous,
                 outcomeReportPending: true,
                 state,
                 updatedAt:            new Date().toISOString(),
@@ -211,26 +234,63 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     }
 
     /**
+     * Resolve a listed `unverified` row once a destination check has decided: `executed` (found
+     * there, with the outcome-report marker so the card and Izzy hear it was sent) or `approved`
+     * (definitely absent, so the executor sends it again; like a retry reset, this drops any
+     * unreported interim report). A whole-row put conditioned on the state and `updatedAt`
+     * revision that was listed, so of two processes that checked the same row only one resolves
+     * it. No read. Returns the written row, or undefined (writing nothing) when the row moved on.
+     * Any other failure propagates.
+     */
+    async resolveUnverified(action: UnverifiedApprovedOutboundAction, to: DeliveryResolution): Promise<ApprovedOutboundAction | undefined> {
+        assertTransition(action, to);
+        const marker = to === 'executed' ? { outcomeReportPending: true } : {};
+        const next: ApprovedOutboundAction = { ...carriedFields(action), ...marker, state: to, updatedAt: new Date().toISOString() };
+        try {
+            await this.putTransition(action, next, {
+                ConditionExpression:       '#state = :from AND #updatedAt = :revision',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt' },
+                ExpressionAttributeValues: { ':from': 'unverified', ':revision': action.updatedAt },
+            });
+        } catch (err: unknown) {
+            if(isConditionalCheckFailure(err)) {
+                return undefined;
+            }
+            throw err;
+        }
+        return next;
+    }
+
+    /**
+     * List every action, in any state, with a strongly consistent query: what a destination check
+     * compares an unverified row against, to tell whether another action could look the same there.
+     */
+    async listAll(): Promise<ApprovedOutboundAction[]> {
+        return this.listWhere('listAll');
+    }
+
+    /**
      * List all actions that are in the given state, with a strongly consistent query.
      */
     async listByState(state: ApprovedOutboundActionState): Promise<ApprovedOutboundAction[]> {
         return this.listWhere('listByState', {
             FilterExpression:          '#state = :state',
-            ExpressionAttributeNames:  { '#pk': 'PK', '#state': 'state' },
-            ExpressionAttributeValues: { ':pk': ACTION_PK, ':state': state },
+            ExpressionAttributeNames:  { '#state': 'state' },
+            ExpressionAttributeValues: { ':state': state },
         });
     }
 
     /**
-     * List the executor's open work — `approved` rows to claim and `sending` rows whose claim may
-     * have been abandoned — with one strongly consistent query, so a pass never sees a row as
-     * `approved` after its claim succeeded, and a wake right after a create sees the new row.
+     * List the executor's open work — `approved` rows to claim, `sending` rows whose claim may
+     * have been abandoned, and `unverified` rows to check at their destination — with one
+     * strongly consistent query, so a pass never sees a row as `approved` after its claim
+     * succeeded, and a wake right after a create sees the new row.
      */
     async listOpen(): Promise<ApprovedOutboundAction[]> {
         return this.listWhere('listOpen', {
-            FilterExpression:          '#state IN (:approved, :sending)',
-            ExpressionAttributeNames:  { '#pk': 'PK', '#state': 'state' },
-            ExpressionAttributeValues: { ':pk': ACTION_PK, ':approved': 'approved', ':sending': 'sending' },
+            FilterExpression:          '#state IN (:approved, :sending, :unverified)',
+            ExpressionAttributeNames:  { '#state': 'state' },
+            ExpressionAttributeValues: { ':approved': 'approved', ':sending': 'sending', ':unverified': 'unverified' },
         });
     }
 
@@ -242,8 +302,8 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     async listPendingOutcomeReports(): Promise<ApprovedOutboundAction[]> {
         return this.listWhere('listPendingOutcomeReports', {
             FilterExpression:          '#pending = :pending',
-            ExpressionAttributeNames:  { '#pk': 'PK', '#pending': 'outcomeReportPending' },
-            ExpressionAttributeValues: { ':pk': ACTION_PK, ':pending': true },
+            ExpressionAttributeNames:  { '#pending': 'outcomeReportPending' },
+            ExpressionAttributeValues: { ':pending': true },
         });
     }
 
@@ -314,15 +374,18 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
         }));
     }
 
-    private async listWhere(operation: string, filter: {
+    /** Query the actions partition, optionally filtered, and parse each row (skipping unparseable ones). */
+    private async listWhere(operation: string, filter?: {
         FilterExpression:          string
         ExpressionAttributeNames:  Record<string, string>
         ExpressionAttributeValues: Record<string, unknown>
     }): Promise<ApprovedOutboundAction[]> {
         const items = await this.query({
-            KeyConditionExpression: '#pk = :pk',
+            KeyConditionExpression:    '#pk = :pk',
             ...filter,
-            ConsistentRead:         true,
+            ExpressionAttributeNames:  { '#pk': 'PK', ...filter?.ExpressionAttributeNames },
+            ExpressionAttributeValues: { ':pk': ACTION_PK, ...filter?.ExpressionAttributeValues },
+            ConsistentRead:            true,
         });
 
         const results: ApprovedOutboundAction[] = [];

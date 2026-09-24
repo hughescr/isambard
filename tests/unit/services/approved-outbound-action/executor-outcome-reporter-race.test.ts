@@ -228,6 +228,11 @@ describe('approved outbound action executor and outcome reporter, driven against
             backend,
             registry,
             executors,
+            verifiers: {
+                bsky_reply: { check: async () => ({ verdict: 'delivered' }), contentKey: () => undefined },
+                bsky_dm:    { check: async () => ({ verdict: 'delivered' }), contentKey: () => undefined },
+                email_send: { check: async () => ({ verdict: 'delivered' }), contentKey: () => undefined },
+            },
             activityLogger,
             onOutcomeRecorded,
             logger: makeLogger(),
@@ -265,7 +270,7 @@ describe('approved outbound action executor and outcome reporter, driven against
         // Step 3: the executor retries the lost settle. The retry's guard (`state = sending AND
         // claimId = <the resolved claim>`) no longer matches the now-`executed` row, so it is a
         // no-op: no double result count, no second activity event, no clobbered marker.
-        expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0 });
+        expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
 
         const afterRetry = await backend.get(ACTION_ID);
         expect(afterRetry).toEqual(afterNotified);

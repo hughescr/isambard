@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
+import { BskyAuthError } from '@/errors';
 import type { ClaimOutcome } from '@/services/approved-outbound-action/backend';
 import {
     DEFAULT_CLAIM_LEASE_MS,
@@ -7,7 +8,14 @@ import {
     type ApprovedOutboundActionExecutor,
     type ApprovedOutboundActionExecutorLogger
 } from '@/services/approved-outbound-action/executor';
-import type { ApprovedOutboundAction, ApprovedOutboundActionType, ClaimedApprovedOutboundAction } from '@/services/approved-outbound-action/types';
+import type {
+    ApprovedOutboundAction,
+    ApprovedOutboundActionType,
+    ClaimedApprovedOutboundAction,
+    DeliveryCheck,
+    DeliveryVerifier,
+    UnverifiedApprovedOutboundAction
+} from '@/services/approved-outbound-action/types';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 
 /**
@@ -60,9 +68,19 @@ function createFakeStore(initial: ApprovedOutboundAction) {
 
     const backend: ExecutorDeps['backend'] = {
         listOpen: mock(async () => {
-            const snapshot = [...rows.values()].filter(row => row.state === 'approved' || row.state === 'sending');
+            const snapshot = [...rows.values()].filter(row => row.state === 'approved' || row.state === 'sending' || row.state === 'unverified');
             await listingGate;
             return snapshot;
+        }),
+        listAll:           mock(async () => [...rows.values()]),
+        resolveUnverified: mock(async (action: UnverifiedApprovedOutboundAction, to: 'executed' | 'approved') => {
+            const row = rows.get(action.id);
+            if(row?.state !== 'unverified' || row.updatedAt !== action.updatedAt) {
+                return undefined;
+            }
+            const resolved: ApprovedOutboundAction = { ...row, state: to, updatedAt: FROZEN_AT };
+            rows.set(action.id, resolved);
+            return resolved;
         }),
         claim: mock(async (action: ApprovedOutboundAction) => {
             const row = rows.get(action.id);
@@ -126,11 +144,17 @@ describe('approved outbound action executor across processes', () => {
         };
     }
 
+    function makeVerifiers(verdict?: DeliveryCheck): Record<ApprovedOutboundActionType, DeliveryVerifier> {
+        const verifier: DeliveryVerifier = { check: async () => verdict ?? { verdict: 'delivered' }, contentKey: () => undefined };
+        return { bsky_reply: verifier, bsky_dm: verifier, email_send: verifier };
+    }
+
     function botProcess(store: ReturnType<typeof createFakeStore>, extra: Partial<ExecutorDeps> = {}): ApprovedOutboundActionExecutor {
         return createApprovedOutboundActionExecutor({
             backend:           store.backend,
             registry,
             executors:         makeExecutors(),
+            verifiers:         makeVerifiers(),
             logger:            makeLogger(),
             onOutcomeRecorded: mock((): void => undefined),
             now:               () => Date.parse(FROZEN_AT),
@@ -180,13 +204,13 @@ describe('approved outbound action executor across processes', () => {
         await expect(executor.executeOnce()).rejects.toThrow('throughput exceeded');
         expect(store.current().state).toBe('sending');
 
-        expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0 });
+        expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0, unverified: 0 });
         expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
         expect(store.current().state).toBe('executed');
         expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
     });
 
-    test('after a restart, a row whose outcome write failed is not re-sent, and is reported unknown once its lease expires', async () => {
+    test('after a restart, a row whose outcome write failed is not re-sent, and is marked unverified once its lease expires', async () => {
         const store = createFakeStore(ROW);
         store.failNextSettle({ error: new Error('throughput exceeded'), applied: false });
         const executors = makeExecutors();
@@ -194,13 +218,37 @@ describe('approved outbound action executor across processes', () => {
 
         let now = Date.parse(FROZEN_AT);
         const restarted = botProcess(store, { executors, now: () => now });
-        expect(await restarted.executeOnce()).toEqual({ executed: 0, failed: 0 });
+        expect(await restarted.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
         expect(store.current().state).toBe('sending');
 
         now += DEFAULT_CLAIM_LEASE_MS;
-        expect(await restarted.executeOnce()).toEqual({ executed: 0, failed: 1 });
+        expect(await restarted.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 1 });
         expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
-        expect(store.current()).toMatchObject({ state: 'failed', lastError: STALE_CLAIM_ERROR, failureKind: 'permanent', outcomeReportPending: true });
+        expect(store.current()).toMatchObject({ state: 'unverified', lastError: STALE_CLAIM_ERROR, outcomeReportPending: true });
+    });
+
+    test('two processes that both check the same unverified row as absent send it again exactly once', async () => {
+        const store = createFakeStore({ ...ROW, state: 'unverified', ambiguousSends: 1, updatedAt: '2026-03-30T09:55:00.000Z' });
+        const gate = Promise.withResolvers<undefined>();
+        store.gateListings(gate.promise);
+        const executors = makeExecutors();
+        const loggers = [makeLogger(), makeLogger()];
+        const [first, second] = loggers.map(logger => botProcess(store, { executors, logger, verifiers: makeVerifiers({ verdict: 'not-delivered' }) }));
+
+        const passes = Promise.all([first.executeOnce(), second.executeOnce()]);
+        await flush();
+        gate.resolve(undefined);
+        const results = await passes;
+
+        expect(store.backend.resolveUnverified).toHaveBeenCalledTimes(2);
+        expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+        expect(store.current().state).toBe('executed');
+        expect(results.map(result => result.executed).toSorted((a, b) => a - b)).toEqual([0, 1]);
+        const loser = loggers[results.findIndex(result => result.executed === 0)];
+        expect(loser.warn).toHaveBeenCalledWith(
+            { actionId: ACTION_ID, verdict: 'not-delivered' },
+            'Approved outbound action delivery check not recorded: the row was resolved elsewhere'
+        );
     });
 
     test('an outcome write that landed though its response was lost is not counted twice or re-sent', async () => {
@@ -212,7 +260,7 @@ describe('approved outbound action executor across processes', () => {
         await expect(executor.executeOnce()).rejects.toThrow('socket hang up');
         expect(store.current().state).toBe('executed');
 
-        expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0 });
+        expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
         expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
     });
 
@@ -221,7 +269,7 @@ describe('approved outbound action executor across processes', () => {
         // Process A's send fails transiently; its settle lands but A never hears back.
         const executorsA = makeExecutors();
         executorsA.bsky_reply.mockImplementation(async (): Promise<void> => {
-            throw new Error('socket hang up');
+            throw new BskyAuthError('session expired');
         });
         const loggerA = makeLogger();
         const processA = botProcess(store, { executors: executorsA, logger: loggerA });
@@ -240,15 +288,15 @@ describe('approved outbound action executor across processes', () => {
         expect(claimB).toMatchObject({ state: 'sending', updatedAt: FROZEN_AT });
 
         // A retries its old settle while B's send is in flight: it must not touch B's claim.
-        expect(await processA.executeOnce()).toEqual({ executed: 0, failed: 0 });
+        expect(await processA.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
         expect(store.current()).toEqual(claimB);
         expect(loggerA.warn).toHaveBeenCalledWith(
-            { actionId: ACTION_ID, outcome: { state: 'failed', lastError: 'socket hang up', failureKind: 'transient' } },
+            { actionId: ACTION_ID, outcome: { state: 'failed', lastError: 'session expired', failureKind: 'transient' } },
             'Approved outbound action outcome not recorded: its claim was already resolved elsewhere'
         );
 
         sendB.resolve(undefined);
-        expect(await passB).toEqual({ executed: 1, failed: 0 });
+        expect(await passB).toEqual({ executed: 1, failed: 0, unverified: 0 });
         expect(store.current().state).toBe('executed');
         expect(executorsA.bsky_reply).toHaveBeenCalledTimes(1);
         expect(executorsB.bsky_reply).toHaveBeenCalledTimes(1);

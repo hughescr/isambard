@@ -43,6 +43,41 @@ describe('describeApprovedActionOutcome', () => {
         });
     });
 
+    test('email_send unverified is an interim amber report that does not wake Izzy', () => {
+        expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'unverified', lastError: 'fetch failed' }))).toEqual({
+            source: 'email-approval',
+            key:    `${ID}:unverified:${REVISION}`,
+            wake:   false,
+            text:   'Outbound email (uid 42): no clear answer from email (fetch failed), so it may or may not have been sent. Checking Sent Mail before deciding whether to resend; you will be told the result.',
+            card:   { tone: 'retrying', title: 'Outcome unknown — checking Sent Mail before any resend', detail: 'fetch failed' },
+        });
+    });
+
+    test('bsky_reply unverified names the account’s posts as where it is checked', () => {
+        expect(describeApprovedActionOutcome(row({ ...REPLY, state: 'unverified', lastError: 'No response within 120s, so it may or may not have been delivered.' }))).toEqual({
+            source: 'bsky-approval',
+            key:    `${ID}:unverified:${REVISION}`,
+            wake:   false,
+            text:   'Bluesky reply "Thanks for the link!": no clear answer from Bluesky (No response within 120s, so it may or may not have been delivered.), so it may or may not have been posted. Checking the account’s Bluesky posts before deciding whether to resend; you will be told the result.',
+            card:   { tone: 'retrying', title: 'Outcome unknown — checking the account’s Bluesky posts before any resend', detail: 'No response within 120s, so it may or may not have been delivered.' },
+        });
+    });
+
+    test('bsky_dm unverified names the DM conversation as where it is checked', () => {
+        expect(describeApprovedActionOutcome(row({ ...DM, state: 'unverified', lastError: 'socket hang up' }))).toEqual({
+            source: 'bsky-approval',
+            key:    `${ID}:unverified:${REVISION}`,
+            wake:   false,
+            text:   'Bluesky DM "See you Tuesday": no clear answer from Bluesky (socket hang up), so it may or may not have been sent. Checking the DM conversation before deciding whether to resend; you will be told the result.',
+            card:   { tone: 'retrying', title: 'Outcome unknown — checking the DM conversation before any resend', detail: 'socket hang up' },
+        });
+    });
+
+    test('an unverified row with no lastError reports an unknown error, truncated like any other', () => {
+        expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'unverified' })).card.detail).toBe('unknown error');
+        expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'unverified', lastError: 'x'.repeat(600) })).card.detail).toHaveLength(500);
+    });
+
     test('email_send failed permanently', () => {
         expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'failed', lastError: 'uid not found', failureKind: 'permanent' }))).toEqual({
             source: 'email-approval',

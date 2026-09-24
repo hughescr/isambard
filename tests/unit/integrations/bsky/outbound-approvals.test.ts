@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import type { NotifyParams } from '@/agent';
-import { BskyOutboundApprovals, type BskyOutboundApprovalsDeps } from '@/integrations/bsky/outbound-approvals';
+import { BskyOutboundApprovals, bskyDmParamsSchema, bskyReplyParamsSchema, type BskyOutboundApprovalsDeps } from '@/integrations/bsky/outbound-approvals';
 import type { BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
 import { createAtUri, createCid } from '@/integrations/bsky/types';
 import type { ApprovedOutboundAction } from '@/services';
@@ -229,5 +229,44 @@ describe('BskyOutboundApprovals', () => {
 
             expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, type: 'dm', msg: 'Activity log failed for Bluesky rejection' });
         });
+    });
+});
+
+describe('bskyReplyParamsSchema', () => {
+    const FLAT = { text: 'Hi', parentUri: 'at://did:plc:x/app.bsky.feed.post/p', parentCid: 'bafyp' };
+
+    test('parses the flat stored shape, with root optional', () => {
+        expect<unknown>(bskyReplyParamsSchema.parse(FLAT)).toEqual(FLAT);
+        const withRoot = { ...FLAT, rootUri: 'at://did:plc:x/app.bsky.feed.post/r', rootCid: 'bafyr' };
+        expect<unknown>(bskyReplyParamsSchema.parse(withRoot)).toEqual(withRoot);
+    });
+
+    test('rejects a parent that is not an AT-URI', () => {
+        expect(bskyReplyParamsSchema.safeParse({ ...FLAT, parentUri: 'https://bsky.app/x' }).success).toBe(false);
+    });
+
+    test('rejects a missing or empty parent CID', () => {
+        expect(bskyReplyParamsSchema.safeParse({ text: 'Hi', parentUri: FLAT.parentUri }).success).toBe(false);
+        expect(bskyReplyParamsSchema.safeParse({ ...FLAT, parentCid: '' }).success).toBe(false);
+    });
+
+    test('rejects a root that is not an AT-URI or an empty root CID', () => {
+        expect(bskyReplyParamsSchema.safeParse({ ...FLAT, rootUri: 'root' }).success).toBe(false);
+        expect(bskyReplyParamsSchema.safeParse({ ...FLAT, rootCid: '' }).success).toBe(false);
+    });
+
+    test('rejects a missing text', () => {
+        expect(bskyReplyParamsSchema.safeParse({ parentUri: FLAT.parentUri, parentCid: 'bafyp' }).success).toBe(false);
+    });
+});
+
+describe('bskyDmParamsSchema', () => {
+    test('parses text and convoId', () => {
+        expect(bskyDmParamsSchema.parse({ text: 'Hi', convoId: 'c1' })).toEqual({ text: 'Hi', convoId: 'c1' });
+    });
+
+    test('rejects a missing convoId or text', () => {
+        expect(bskyDmParamsSchema.safeParse({ text: 'Hi' }).success).toBe(false);
+        expect(bskyDmParamsSchema.safeParse({ convoId: 'c1' }).success).toBe(false);
     });
 });

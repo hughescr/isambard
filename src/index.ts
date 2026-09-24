@@ -5,15 +5,24 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { logger, setTimezone } from '@hughescr/logger';
 import env from 'env-var';
 import { Resource } from 'sst';
-import { z } from 'zod';
 import { loadPlugins, QuestionRegistry, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
 import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, createSessionSupervisor, startSessions, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, createStartupChain, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { InvariantViolationError } from '@/errors';
-import { BlueskyClient, BskyHistoryProvider, atUriSchema, cidSchema, type BskyReplyInput } from '@/integrations/bsky';
+import {
+    BlueskyClient,
+    BskyHistoryProvider,
+    bskyDmContentKey,
+    bskyDmParamsSchema,
+    bskyReplyContentKey,
+    bskyReplyParamsSchema,
+    checkBskyDmDelivery,
+    checkBskyReplyDelivery,
+    type BskyReplyInput
+} from '@/integrations/bsky';
 import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createApprovedActionOutcomeDelivery, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
-import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
+import { EmailHistoryProvider, EmailFolder, WildDuckClient, checkEmailSendDelivery, emailSendParamsSchema } from '@/integrations/email';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, createOutboxDrainListener, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type ContactChangeRequest, type EmbedderLike } from '@/storage';
 import { resolveTimezone } from '@/utils';
@@ -673,26 +682,6 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     });
     registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });
 
-    // Zod schemas for approved-outbound-action executor param validation.
-    //
-    // The wire shape stays flat (parentUri/parentCid/rootUri?/rootCid?) — the same shape the
-    // Bluesky approval flow has always written to ApprovedOutboundActionBackend, which
-    // persists rows for up to 30 days. Reshaping this schema to the nested
-    // `{ reply: BskyReplyInput }` domain shape would silently orphan any action already
-    // 'approved' (durable, awaiting execution) at deploy time: the executor would throw on
-    // parse, the ZodError would mark it failed(permanent), and it would never post. Instead,
-    // AT-URI/CID branding happens only here, at the read boundary, via atUriSchema/cidSchema;
-    // the domain BskyReplyInput is built from the parsed flat fields just below.
-    const bskyReplyParamsSchema = z.object({
-        text:      z.string(),
-        parentUri: atUriSchema,
-        parentCid: cidSchema,
-        rootUri:   atUriSchema.optional(),
-        rootCid:   cidSchema.optional(),
-    });
-
-    const bskyDMParamsSchema = z.object({ text: z.string(), convoId: z.string() });
-
     // Approved-action outcome reporter — tells the admin (on the approval card) and Izzy what
     // really happened to each executed or failed action, from the row's durable outbox marker,
     // so a restart or an unavailable Discord/conductor retries the report, never the send.
@@ -723,6 +712,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 if(!bskyClient) {
                     throw new InvariantViolationError('approvedActionExecutor.bsky_reply', 'Bluesky client not available');
                 }
+                // The flat stored shape is parsed (and AT-URI/CID branded) here; the domain
+                // BskyReplyInput is built from its fields.
                 const parsed = bskyReplyParamsSchema.parse(params);
                 const reply: BskyReplyInput = {
                     parent: { uri: parsed.parentUri, cid: parsed.parentCid },
@@ -734,15 +725,45 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 if(!bskyClient) {
                     throw new InvariantViolationError('approvedActionExecutor.bsky_dm', 'Bluesky client not available');
                 }
-                const parsed = bskyDMParamsSchema.parse(params);
+                const parsed = bskyDmParamsSchema.parse(params);
                 await bskyClient.sendDirectMessage(parsed.convoId, parsed.text, signal);
             },
             email_send: async (params, signal) => {
                 if(!emailSetup) {
                     throw new InvariantViolationError('approvedActionExecutor.email_send', 'Email not available');
                 }
-                const uid = z.object({ uid: z.number().int() }).parse(params).uid;
+                const uid = emailSendParamsSchema.parse(params).uid;
                 await emailSetup.wildDuckClient.submitMessage(EmailFolder.Drafts, uid, signal);
+            },
+        },
+        // #108: when a send's outcome is unknown, look for it at its destination before any resend.
+        verifiers: {
+            bsky_reply: {
+                contentKey: bskyReplyContentKey,
+                check:      async (input) => {
+                    if(!bskyClient) {
+                        throw new InvariantViolationError('approvedActionExecutor.verifiers.bsky_reply', 'Bluesky client not available');
+                    }
+                    return checkBskyReplyDelivery(bskyClient, input);
+                },
+            },
+            bsky_dm: {
+                contentKey: bskyDmContentKey,
+                check:      async (input) => {
+                    if(!bskyClient) {
+                        throw new InvariantViolationError('approvedActionExecutor.verifiers.bsky_dm', 'Bluesky client not available');
+                    }
+                    return checkBskyDmDelivery(bskyClient, input);
+                },
+            },
+            email_send: {
+                contentKey: () => undefined,
+                check:      async (input) => {
+                    if(!emailSetup) {
+                        throw new InvariantViolationError('approvedActionExecutor.verifiers.email_send', 'Email not available');
+                    }
+                    return checkEmailSendDelivery(emailSetup.wildDuckClient, input);
+                },
             },
         },
         logger,

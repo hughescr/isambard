@@ -23,8 +23,10 @@ export type {
     BskyFacet
 } from './embeds';
 export { BlueskyClient } from './client';
+export type { BskyMessageLogEntry, BskyOwnPostRecord } from './client';
 export * from './checkpoint';
-export { BskyOutboundApprovals } from './outbound-approvals';
+export { BskyOutboundApprovals, bskyDmParamsSchema, bskyReplyParamsSchema } from './outbound-approvals';
+export { bskyDmContentKey, bskyReplyContentKey, checkBskyDmDelivery, checkBskyReplyDelivery } from './delivery-check';
 export type { BskyApprovedReply, BskyApprovedDm, BskyOutboundApprovalsDeps } from './outbound-approvals';
 export { BskyRejectionBackend } from './rejection-backend';
 export type { BskyRejectionItem } from './rejection-backend';

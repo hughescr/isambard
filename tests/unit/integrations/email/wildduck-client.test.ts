@@ -1,6 +1,6 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
-import { WildDuckClient, WildDuckError, WildDuckAuthError } from '@/integrations/email/wildduck-client';
+import { FIND_BY_MESSAGE_ID_MAX_PAGES, WildDuckClient, WildDuckError, WildDuckAuthError } from '@/integrations/email/wildduck-client';
 
 // ---------------------------------------------------------------------------
 // Mock global fetch
@@ -1341,6 +1341,129 @@ describe('WildDuckClient', () => {
     // -----------------------------------------------------------------------
     // getMessage()
     // -----------------------------------------------------------------------
+    describe('HTTP status on API errors (#108)', () => {
+        test.each([404, 500])('a submit answered %i throws a WildDuckError carrying the status, message unchanged', async (status) => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('nope', status));
+
+            let thrown: unknown;
+            try {
+                await client.submitMessage('Drafts', 99);
+            } catch (err) {
+                thrown = err;
+            }
+
+            expect(thrown).toBeInstanceOf(WildDuckError);
+            expect((thrown as WildDuckError).message).toBe(`WildDuck API error: ${status} Error: nope`);
+            expect((thrown as WildDuckError).context).toEqual({ status });
+        });
+    });
+
+    describe('getMessage() cancellation', () => {
+        test('passes the caller\'s signal to fetch', async () => {
+            const client = await makeInitializedClient();
+            const controller = new AbortController();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ id: 42 }));
+
+            await client.getMessage('Drafts', 42, controller.signal);
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(options.signal).toBe(controller.signal);
+        });
+
+        test('returns the Message-ID, Date and draft flag the API reports', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ id: 42, messageId: '<a@b>', date: '2026-09-24T10:00:00.000Z', draft: true }));
+
+            expect(await client.getMessage('Drafts', 42)).toEqual({ id: 42, messageId: '<a@b>', date: '2026-09-24T10:00:00.000Z', draft: true });
+        });
+    });
+
+    describe('findMessageByMessageId()', () => {
+        const LIST_URL = 'https://wildduck-api.example.com/users/me/mailboxes/mbx-sent/messages?order=desc&limit=250';
+
+        test('reads the newest page of the mailbox, read and unread alike, and finds an exact Message-ID', async () => {
+            const client = await makeInitializedClient();
+            const controller = new AbortController();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ messageId: '<other@b>' }, { messageId: '<a@b>' }], nextCursor: false }));
+
+            expect(await client.findMessageByMessageId('Sent Mail', '<a@b>', controller.signal)).toBe(true);
+
+            const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(url).toBe(LIST_URL);
+            expect(options.method).toBe('GET');
+            expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('test-auth-token');
+            expect(options.signal?.aborted).toBe(false);
+            controller.abort();
+            expect(options.signal?.aborted).toBe(true);
+        });
+
+        test('follows the next-page cursor and finds a match on page 2', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ messageId: '<other@b>' }], nextCursor: 'cursor 2' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ messageId: '<a@b>' }], nextCursor: 'cursor 3' }));
+
+            expect(await client.findMessageByMessageId('Sent Mail', '<a@b>')).toBe(true);
+
+            expect(mockFetch.mock.calls.map(call => call[0])).toEqual([LIST_URL, `${LIST_URL}&next=cursor+2`]);
+        });
+
+        test('is false once the last page has no match', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ messageId: '<A@B>' }, {}], nextCursor: 'c2' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [], nextCursor: false }));
+
+            expect(await client.findMessageByMessageId('Sent Mail', '<a@b>')).toBe(false);
+            expect(mockFetch).toHaveBeenCalledTimes(2);
+        });
+
+        test('is false when the listing has no cursor at all', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [] }));
+
+            expect(await client.findMessageByMessageId('Sent Mail', '<a@b>')).toBe(false);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+        });
+
+        test('reads at most 4 pages', async () => {
+            const client = await makeInitializedClient();
+            // A fifth request would hit the unmocked fetch and reject.
+            for(let page = 0; page < 4; page++) {
+                mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ messageId: '<x@b>' }], nextCursor: `c${page + 2}` }));
+            }
+
+            expect(await client.findMessageByMessageId('Sent Mail', '<a@b>')).toBe(false);
+            expect(mockFetch).toHaveBeenCalledTimes(4);
+            expect(FIND_BY_MESSAGE_ID_MAX_PAGES).toBe(4);
+        });
+
+        test('finds a match on the fourth page', async () => {
+            const client = await makeInitializedClient();
+            for(let page = 0; page < 4; page++) {
+                mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ messageId: page === 3 ? '<a@b>' : '<x@b>' }], nextCursor: `c${page + 2}` }));
+            }
+
+            expect(await client.findMessageByMessageId('Sent Mail', '<a@b>')).toBe(true);
+        });
+
+        test('re-authenticates once on a 401 and retries', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ messageId: '<a@b>' }], nextCursor: false }));
+
+            expect(await client.findMessageByMessageId('Sent Mail', '<a@b>')).toBe(true);
+            expect(mockFetch).toHaveBeenCalledTimes(3);
+        });
+
+        test('throws WildDuckError for an unknown mailbox, before any request', async () => {
+            const client = await makeInitializedClient();
+
+            await expect(client.findMessageByMessageId('NoSuchFolder', '<a@b>')).rejects.toThrow(WildDuckError);
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+    });
+
     describe('getMessage()', () => {
         const MESSAGE_RESPONSE = {
             success:  true,

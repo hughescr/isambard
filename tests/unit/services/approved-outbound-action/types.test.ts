@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { type ApprovedOutboundActionState, type ApprovedOutboundActionWriter } from '@/services';
-import { approvalCardRefSchema, approvedOutboundActionSchema, isClaimed, type ApprovedOutboundAction } from '@/services/approved-outbound-action/types';
+import {
+    approvalCardRefSchema,
+    approvedOutboundActionSchema,
+    deliveryWindowStart,
+    isClaimed,
+    isUnverified,
+    type ApprovedOutboundAction
+} from '@/services/approved-outbound-action/types';
 
 const CARD_CHANNEL_ID = '1283746501928374650';
 const CARD_MESSAGE_ID = '1419283746501928374';
@@ -38,10 +45,27 @@ describe('ApprovedOutboundActionWriter', () => {
 });
 
 describe('approvedOutboundActionSchema', () => {
-    test('accepts each of the four lifecycle states', () => {
-        for(const state of ['approved', 'sending', 'executed', 'failed'] as const) {
+    test('accepts each of the five lifecycle states', () => {
+        for(const state of ['approved', 'sending', 'executed', 'failed', 'unverified'] as const) {
             expect(approvedOutboundActionSchema.parse({ ...ROW, state }).state).toBe(state);
         }
+    });
+
+    test('accepts and keeps firstClaimedAt and ambiguousSends', () => {
+        const row = { ...ROW, state: 'unverified' as const, firstClaimedAt: '2026-09-23T00:01:00.000Z', ambiguousSends: 0 };
+        expect(approvedOutboundActionSchema.parse(row)).toEqual(row);
+    });
+
+    test('rejects a firstClaimedAt that is not an ISO datetime', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, firstClaimedAt: 'yesterday' }).success).toBe(false);
+    });
+
+    test('rejects a negative ambiguousSends', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, ambiguousSends: -1 }).success).toBe(false);
+    });
+
+    test('rejects a fractional ambiguousSends', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, ambiguousSends: 1.5 }).success).toBe(false);
     });
 
     test('rejects the retired pending_approval state', () => {
@@ -161,5 +185,23 @@ describe('isClaimed', () => {
 
     test('is false for an approved row even if it carries a claimId', () => {
         expect(isClaimed({ ...ROW, state: 'approved', claimId: CLAIM_ID })).toBe(false);
+    });
+});
+
+describe('isUnverified', () => {
+    test('is true only for an unverified row', () => {
+        expect(isUnverified({ ...ROW, state: 'unverified' })).toBe(true);
+        expect(isUnverified({ ...ROW, state: 'sending' })).toBe(false);
+        expect(isUnverified(ROW)).toBe(false);
+    });
+});
+
+describe('deliveryWindowStart', () => {
+    test('is the first claim when one was recorded', () => {
+        expect(deliveryWindowStart({ ...ROW, firstClaimedAt: '2026-09-23T00:05:00.000Z' })).toEqual(new Date('2026-09-23T00:05:00.000Z'));
+    });
+
+    test('is the approval when no first claim was recorded', () => {
+        expect(deliveryWindowStart({ ...ROW, createdAt: '2026-09-22T23:00:00.000Z' })).toEqual(new Date('2026-09-22T23:00:00.000Z'));
     });
 });

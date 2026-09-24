@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import type { NotifyParams } from '@/agent';
-import { EmailOutboundApprovals, type EmailOutboundApprovalsDeps } from '@/integrations/email/outbound-approvals';
+import { EmailOutboundApprovals, FINGERPRINT_READ_TIMEOUT_MS, emailSendParamsSchema, type EmailOutboundApprovalsDeps } from '@/integrations/email/outbound-approvals';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
 import type { ApprovedOutboundAction } from '@/services';
 
@@ -12,7 +12,7 @@ const CARD = { channelId: 'admin-ch', messageId: 'card-msg' };
 interface Harness {
     ops:            EmailOutboundApprovals
     create:         ReturnType<typeof mock<(action: ApprovedOutboundAction) => Promise<void>>>
-    getMessage:     ReturnType<typeof mock<(folder: string, uid: number) => Promise<unknown>>>
+    getMessage:     ReturnType<typeof mock<(folder: string, uid: number, signal?: AbortSignal) => Promise<unknown>>>
     updateMetadata: ReturnType<typeof mock<(folder: string, uid: number, metadata: Record<string, unknown>) => Promise<void>>>
     updateFlags:    ReturnType<typeof mock<(folder: string, uid: number, options: { addFlags?: string[] }) => Promise<void>>>
     activityLog:    ReturnType<typeof mock<(entry: { type: string, summary: string }) => Promise<void>>>
@@ -25,7 +25,7 @@ function makeHarness(overrides: Partial<EmailOutboundApprovalsDeps> = {}): Harne
     const create = mock(async (_action: ApprovedOutboundAction): Promise<void> => {
         events.push('create');
     });
-    const getMessage = mock(async (_folder: string, _uid: number): Promise<unknown> => ({
+    const getMessage = mock(async (_folder: string, _uid: number, _signal?: AbortSignal): Promise<unknown> => ({
         to: [{ address: 'a@example.com' }, { address: '' }],
         cc: [{ address: 'b@example.com' }, { address: 'a@example.com' }],
     }));
@@ -83,6 +83,93 @@ describe('EmailOutboundApprovals', () => {
                 updatedAt:    NOW,
             });
             expect(action.id).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/);
+        });
+
+        test('first reads the draft from Drafts, cancellably, and stores its Message-ID and Date as the send\'s fingerprint', async () => {
+            const h = makeHarness();
+            h.getMessage.mockImplementation(async () => ({ id: UID, messageId: '<draft@example.com>', date: '2026-09-23T11:59:00.000Z', draft: true }));
+
+            await h.ops.approveSend(UID, 'direct', CARD);
+
+            expect(h.getMessage).toHaveBeenCalledTimes(1);
+            expect(h.getMessage.mock.calls[0]?.slice(0, 2)).toEqual(['Drafts', UID]);
+            expect(h.getMessage.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal);
+            expect(h.create.mock.calls[0]?.[0].params).toEqual({ uid: UID, messageId: '<draft@example.com>', draftDate: '2026-09-23T11:59:00.000Z' });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+            expect(h.getMessage.mock.invocationCallOrder[0]).toBeLessThan(h.create.mock.invocationCallOrder[0]);
+        });
+
+        test.each([
+            ['the draft is not found', null],
+            ['the draft has no Message-ID', { id: UID, date: '2026-09-23T11:59:00.000Z' }],
+            ['the draft has no Date', { id: UID, messageId: '<draft@example.com>', date: null }],
+        ])('records the uid alone, with a warning, when %s', async (_label, draft) => {
+            const h = makeHarness();
+            h.getMessage.mockImplementation(async () => draft);
+
+            await h.ops.approveSend(UID, 'direct', CARD);
+
+            expect(h.create.mock.calls[0]?.[0].params).toEqual({ uid: UID });
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                uid:     UID,
+                problem: 'the draft was not found, or has no Message-ID or Date',
+                msg:     'Could not read the draft’s Message-ID and Date at approval; recording the send without them',
+            });
+        });
+
+        test('records the uid alone, with the error, when the draft read fails', async () => {
+            const h = makeHarness();
+            h.getMessage.mockImplementation(async () => {
+                throw new Error('WildDuck API error: 503');
+            });
+
+            await h.ops.approveSend(UID, 'direct', CARD);
+
+            expect(h.create.mock.calls[0]?.[0].params).toEqual({ uid: UID });
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                uid:     UID,
+                problem: 'WildDuck API error: 503',
+                msg:     'Could not read the draft’s Message-ID and Date at approval; recording the send without them',
+            });
+        });
+
+        test('records the uid alone when the draft read rejects with a non-Error', async () => {
+            const h = makeHarness();
+            h.getMessage.mockImplementation(async () => {
+                throw 'offline';
+            });
+
+            await h.ops.approveSend(UID, 'direct', CARD);
+
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ problem: 'offline' }));
+        });
+
+        test('a draft read with no answer is cancelled after 10s and the action is still created', async () => {
+            const h = makeHarness();
+            let signal: AbortSignal | undefined;
+            h.getMessage.mockImplementation(async (_folder: string, _uid: number, readSignal?: AbortSignal) => {
+                signal = readSignal;
+                return Promise.withResolvers<unknown>().promise;
+            });
+
+            const approving = h.ops.approveSend(UID, 'direct', CARD);
+            await Promise.resolve();
+            jest.advanceTimersByTime(FINGERPRINT_READ_TIMEOUT_MS - 1);
+            await Promise.resolve();
+            expect(h.create).not.toHaveBeenCalled();
+            expect(signal?.aborted).toBe(false);
+
+            jest.advanceTimersByTime(1);
+            await approving;
+
+            expect(signal?.aborted).toBe(true);
+            expect(h.create.mock.calls[0]?.[0].params).toEqual({ uid: UID });
+            expect(mockLogger.warn).toHaveBeenCalledWith({
+                uid:     UID,
+                problem: 'no answer within 10s',
+                msg:     'Could not read the draft’s Message-ID and Date at approval; recording the send without them',
+            });
+            expect(FINGERPRINT_READ_TIMEOUT_MS).toBe(10_000);
         });
 
         test.each(['direct', 'allowlist'] as const)('logs one email-send-approved activity after the %s write and never email-sent', async (via) => {
@@ -266,5 +353,23 @@ describe('EmailOutboundApprovals', () => {
             expect(() => h.ops.announceRejected(UID, 'nope')).not.toThrow();
             expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, uid: UID, msg: 'Notify failed for email rejection' });
         });
+    });
+});
+
+describe('emailSendParamsSchema', () => {
+    test('parses a uid alone (rows approved before #108) and a uid with its fingerprint', () => {
+        expect(emailSendParamsSchema.parse({ uid: 7 })).toEqual({ uid: 7 });
+        const withFingerprint = { uid: 7, messageId: '<a@b>', draftDate: '2026-09-23T11:59:00.000Z' };
+        expect(emailSendParamsSchema.parse(withFingerprint)).toEqual(withFingerprint);
+    });
+
+    test('rejects a missing or fractional uid', () => {
+        expect(emailSendParamsSchema.safeParse({ messageId: '<a@b>' }).success).toBe(false);
+        expect(emailSendParamsSchema.safeParse({ uid: 7.5 }).success).toBe(false);
+    });
+
+    test('rejects a non-string fingerprint field', () => {
+        expect(emailSendParamsSchema.safeParse({ uid: 7, messageId: 1 }).success).toBe(false);
+        expect(emailSendParamsSchema.safeParse({ uid: 7, draftDate: 1 }).success).toBe(false);
     });
 });
