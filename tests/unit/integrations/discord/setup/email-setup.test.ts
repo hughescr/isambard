@@ -18,7 +18,7 @@ import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { setupEmail, buildEmailProcessorCallbacks, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
 import { type EmailMetadata, type ClassifierVerdict, WildDuckClient, ClassifierVerdictType, buildReviewEmbed, buildUnsafeAlert, EmailFolder  } from '@/integrations/email';
-import type { ApprovalSagaBackend } from '@/services';
+import type { ApprovedOutboundActionBackend } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 
 /** Minimal valid NotifyFn mock — always reports delivery succeeded. */
@@ -121,8 +121,8 @@ describe('setupEmail — isSendableChannel type guard', () => {
                 updateMessageFlags: mock(async () => undefined),
                 getMessage:         mock(async () => null),
             } as unknown as WildDuckClient,
-            approvalSagaBackend: {} as unknown as ApprovalSagaBackend,
-            personAllowlist:     {
+            approvedActions: {} as unknown as ApprovedOutboundActionBackend,
+            personAllowlist: {
                 isAllowed:       mock((_platform: string, _value: string) => false),
                 isPersonAllowed: mock(() => false),
                 addPerson:       mock(async () => {}),
@@ -379,8 +379,8 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
                 updateMessageFlags: mock(async () => undefined),
                 getMessage:         mock(async () => null),
             } as unknown as WildDuckClient,
-            approvalSagaBackend: {} as unknown as ApprovalSagaBackend,
-            personAllowlist:     {
+            approvedActions: {} as unknown as ApprovedOutboundActionBackend,
+            personAllowlist: {
                 isAllowed:       mock((_platform: string, _value: string) => false),
                 isPersonAllowed: mock(() => false),
                 addPerson:       mock(async () => {}),

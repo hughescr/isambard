@@ -1,7 +1,7 @@
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
-import type { AllowlistSagaStarter, SagaWriter } from '@/services';
+import type { AllowlistSagaStarter, ApprovedOutboundActionWriter } from '@/services';
 import { parseCustomId } from '@/utils';
 
 const GREEN = 0x00_AA_00;
@@ -30,12 +30,12 @@ export interface ApprovalActivityLogger {
  * - `handleMissingEmbed(interaction, id)` — what to do when a modal submit has no embed
  */
 export abstract class BaseOutboundApprovalHandler<TId> {
-    protected readonly sagaBackend:                 SagaWriter;
+    protected readonly sagaBackend:                 ApprovedOutboundActionWriter;
     protected readonly activityLogger?:             ApprovalActivityLogger;
     protected readonly allowlistInteractionHandler: AllowlistSagaStarter;
 
     constructor(deps: {
-        sagaBackend:                 SagaWriter
+        sagaBackend:                 ApprovedOutboundActionWriter
         activityLogger?:             ApprovalActivityLogger
         allowlistInteractionHandler: AllowlistSagaStarter
     }) {

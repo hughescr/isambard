@@ -5,7 +5,7 @@ import { InvariantViolationError } from '@/errors';
 import type { BlueskyClient } from '@/integrations/bsky/client';
 import { type BskyRejectionBackend, type BskyRejectionItem } from '@/integrations/bsky/rejection-backend';
 import { createAtUri, createCid, type BskyReplyInput } from '@/integrations/bsky/types';
-import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
+import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type ApprovedOutboundActionWriter } from '@/services';
 import { encodeCustomId } from '@/utils';
 
 const AMBER = 0xFF_AA_00;
@@ -13,7 +13,7 @@ const AMBER = 0xFF_AA_00;
 export interface BskyOutboundApprovalHandlerDeps {
     client:                      BlueskyClient
     rejectionBackend:            BskyRejectionBackend
-    sagaBackend:                 SagaWriter
+    sagaBackend:                 ApprovedOutboundActionWriter
     activityLogger?:             ApprovalActivityLogger
     allowlistInteractionHandler: AllowlistSagaStarter
     /** Q8: wakes the conductor after an admin rejects a Bluesky reply/DM. Omitted means `performRejection` never notifies (still resolves normally). */

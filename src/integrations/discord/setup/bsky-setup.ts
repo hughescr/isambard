@@ -15,7 +15,7 @@ import {
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import { createBskyDmPoller, DEFAULT_DM_POLL_INTERVAL_MS, type BskyDmPoller } from '@/integrations/discord/setup/bsky-dm-poller';
-import { TokenBucketRateLimiter, type ApprovalSagaBackend, type ServiceHealthRegistry } from '@/services';
+import { TokenBucketRateLimiter, type ApprovedOutboundActionBackend, type ServiceHealthRegistry } from '@/services';
 import type { DynamoDBClientHolder, MemoryToolBackend, PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
@@ -36,8 +36,8 @@ export interface BskySetupOptions {
     client:                      Client
     /** The admin review channel (top-level `config.adminDiscordChannelId`) for approval embeds */
     adminDiscordChannelId:       ChannelId
-    /** Approval saga backend for durable approval workflows */
-    approvalSagaBackend:         ApprovalSagaBackend
+    /** Durable record of admin-approved outbound actions, executed by the services executor */
+    approvedActions:             ApprovedOutboundActionBackend
     /** Optional activity logger for recording approval events */
     activityLogger?:             ActivityLogger
     /**
@@ -193,7 +193,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
     const outboundApprovalHandler = new BskyOutboundApprovalHandler({
         client:                      bskyClient,
         rejectionBackend,
-        sagaBackend:                 options.approvalSagaBackend,
+        sagaBackend:                 options.approvedActions,
         activityLogger:              options.activityLogger,
         allowlistInteractionHandler: options.allowlistInteractionHandler,
         notify:                      options.notify,

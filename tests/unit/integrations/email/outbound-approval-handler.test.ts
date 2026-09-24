@@ -4,7 +4,7 @@ import type { AllowlistInteractionHandler } from '../../../../src/integrations/d
 import { DRAFT_STATE_FLAG } from '../../../../src/integrations/email/draft-review-state';
 import { EmailOutboundApprovalHandler, type EmailOutboundApprovalHandlerDeps  } from '../../../../src/integrations/email/outbound-approval-handler';
 import type { WildDuckClient } from '../../../../src/integrations/email/wildduck-client';
-import type { ApprovalSagaBackend } from '../../../../src/services/approval-saga/backend';
+import type { ApprovedOutboundActionBackend } from '../../../../src/services/approved-outbound-action/backend';
 import { mockLogger } from '../../../setup';
 import type { NotifyParams } from '@/agent';
 import { BaseOutboundApprovalHandler } from '@/services';
@@ -86,9 +86,9 @@ function makeDeps(overrides: Partial<EmailOutboundApprovalHandlerDeps> = {}): Em
         getMessage:            mock(async () => ({ id: 42, to: [{ address: 'recipient@example.com' }] })),
     } as unknown as WildDuckClient;
 
-    const mockSagaBackend: ApprovalSagaBackend = {
+    const mockSagaBackend: ApprovedOutboundActionBackend = {
         create: mock(async () => { /* intentionally empty */ }),
-    } as unknown as ApprovalSagaBackend;
+    } as unknown as ApprovedOutboundActionBackend;
 
     const mockAllowlistInteractionHandler = {
         startFromApproval: mock(async () => ({ allowlistSuffix: '' })),
@@ -252,7 +252,7 @@ describe('EmailOutboundApprovalHandler', () => {
                 started.resolve();
                 await gate.promise;
             });
-            const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovalSagaBackend });
+            const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
             if(outcome === 'reject') {
                 (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('lookup unavailable'));
             } else {

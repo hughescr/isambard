@@ -15,7 +15,7 @@ import { BlueskyClient, BskyHistoryProvider, atUriSchema, cidSchema, type BskyRe
 import { CalDAVClient, CalendarCommandHandler, CalendarRegistryBackend, buildCalendarCommand } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
-import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovalSagaBackend, createSagaExecutor, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ApprovalSagaType, type ReconnectionLoop, type OutboxDrainer, type SagaExecutor } from '@/services';
+import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionRetryListener, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedOutboundActionExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type ContactChangeRequest, type EmbedderLike } from '@/storage';
 import { resolveTimezone } from '@/utils';
 
@@ -327,9 +327,9 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         }),
     });
 
-    // Outbox and approval saga backends (always available — DynamoDB is required)
-    const outboxBackend      = new OutboxBackend(storage.holder, storage.tableName);
-    const approvalSagaBackend = new ApprovalSagaBackend(storage.holder, storage.tableName);
+    // Outbox and approved-outbound-action backends (always available — DynamoDB is required)
+    const outboxBackend                 = new OutboxBackend(storage.holder, storage.tableName);
+    const approvedOutboundActionBackend = new ApprovedOutboundActionBackend(storage.holder, storage.tableName);
 
     // Discord capability facade (wraps Discord sends with outbox fallback)
     const discordCapability = new DiscordCapabilityImpl({
@@ -496,7 +496,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     healthRegistry,
                     reconnectionLoop:      emailReconnectionLoop,
                     discordCapability,
-                    approvalSagaBackend,
+                    approvedActions:       approvedOutboundActionBackend,
                     personAllowlist,
                     allowlistInteractionHandler,
                     notify:                notificationBridge.notify,
@@ -602,7 +602,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     adminDiscordChannelId: config.adminDiscordChannelId,
                     activityLogger,
                     discordCapability,
-                    approvalSagaBackend,
+                    approvedActions:       approvedOutboundActionBackend,
                     personAllowlist,
                     allowlistInteractionHandler,
                     memoryBackend:         storage.memoryBackend,
@@ -663,14 +663,14 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     });
     registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });
 
-    // Zod schemas for saga executor param validation.
+    // Zod schemas for approved-outbound-action executor param validation.
     //
-    // The wire shape stays flat (parentUri/parentCid/rootUri?/rootCid?) — the same shape
-    // outbound-approval-handler.ts's handleApprove has always written to ApprovalSagaBackend,
-    // which persists rows for up to 30 days. Reshaping this schema to the nested
-    // `{ reply: BskyReplyInput }` domain shape would silently orphan any saga already
+    // The wire shape stays flat (parentUri/parentCid/rootUri?/rootCid?) — the same shape the
+    // Bluesky approval flow has always written to ApprovedOutboundActionBackend, which
+    // persists rows for up to 30 days. Reshaping this schema to the nested
+    // `{ reply: BskyReplyInput }` domain shape would silently orphan any action already
     // 'approved' (durable, awaiting execution) at deploy time: the executor would throw on
-    // parse, `createSagaExecutor` would mark it 'failed', and it would never post. Instead,
+    // parse, the ZodError would mark it failed(permanent), and it would never post. Instead,
     // AT-URI/CID branding happens only here, at the read boundary, via atUriSchema/cidSchema;
     // the domain BskyReplyInput is built from the parsed flat fields just below.
     const bskyReplyParamsSchema = z.object({
@@ -683,14 +683,14 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
     const bskyDMParamsSchema = z.object({ text: z.string(), convoId: z.string() });
 
-    // Saga executor — re-executes approved bsky/email actions after service recovery
-    const sagaExecutor: SagaExecutor = createSagaExecutor({
-        backend:   approvalSagaBackend,
+    // Approved-outbound-action executor — executes approved bsky/email actions, including after service recovery
+    const approvedActionExecutor: ApprovedOutboundActionExecutor = createApprovedOutboundActionExecutor({
+        backend:   approvedOutboundActionBackend,
         registry:  healthRegistry,
         executors: {
             bsky_reply: async (params) => {
                 if(!bskyClient) {
-                    throw new InvariantViolationError('sagaExecutor.bsky_reply', 'Bluesky client not available');
+                    throw new InvariantViolationError('approvedActionExecutor.bsky_reply', 'Bluesky client not available');
                 }
                 const parsed = bskyReplyParamsSchema.parse(params);
                 const reply: BskyReplyInput = {
@@ -701,21 +701,14 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             },
             bsky_dm: async (params) => {
                 if(!bskyClient) {
-                    throw new InvariantViolationError('sagaExecutor.bsky_dm', 'Bluesky client not available');
+                    throw new InvariantViolationError('approvedActionExecutor.bsky_dm', 'Bluesky client not available');
                 }
                 const parsed = bskyDMParamsSchema.parse(params);
                 await bskyClient.sendDirectMessage(parsed.convoId, parsed.text);
             },
             email_send: async (params) => {
                 if(!emailSetup) {
-                    throw new InvariantViolationError('sagaExecutor.email_send', 'Email not available');
-                }
-                const uid = z.object({ uid: z.number().int() }).parse(params).uid;
-                await emailSetup.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
-            },
-            email_reply: async (params) => {
-                if(!emailSetup) {
-                    throw new InvariantViolationError('sagaExecutor.email_reply', 'Email not available');
+                    throw new InvariantViolationError('approvedActionExecutor.email_send', 'Email not available');
                 }
                 const uid = z.object({ uid: z.number().int() }).parse(params).uid;
                 await emailSetup.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
@@ -723,7 +716,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         },
         logger,
     });
-    registerCleanup({ name: 'saga executor', run: () => sagaExecutor.stop() });
+    registerCleanup({ name: 'approved outbound action executor', run: () => approvedActionExecutor.stop() });
 
     function createHistoryCoordinator(): PersonHistoryCoordinator {
         // History providers
@@ -1153,44 +1146,16 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     });
     registerCleanup({ name: 'outbox subscription', run: unsubscribeOutboxDrain });
 
-    // Subscribe to health changes: reset failed sagas when a service comes back online
-    const unsubscribeSagaRetry = healthRegistry.subscribe((change) => {
-        if(change.newState !== 'online') {
-            return;
-        }
-
-        const sagaTypes: ApprovalSagaType[] = [];
-        if(change.service === 'bsky') {
-            sagaTypes.push('bsky_reply', 'bsky_dm');
-        }
-        if(change.service === 'email') {
-            sagaTypes.push('email_send', 'email_reply');
-        }
-        if(sagaTypes.length === 0) {
-            return;
-        }
-
-        void (async () => {
-            try {
-                const failed = await approvalSagaBackend.listByState('failed');
-                const retryableTypes = new Set(sagaTypes);
-                for(const saga of failed) {
-                    if(retryableTypes.has(saga.type)) {
-                        // Keep approved writes in the backend's listed order. If one
-                        // write fails, later sagas must remain failed for the next retry.
-                        // eslint-disable-next-line no-await-in-loop -- ordered durable saga state transitions
-                        await approvalSagaBackend.updateState(saga.id, 'approved');
-                    }
-                }
-            } catch (err) {
-                logger.warn({ error: err instanceof Error ? err.message : String(err), msg: 'Failed to reset sagas on reconnect' });
-            }
-        })();
-    });
-    registerCleanup({ name: 'saga subscription', run: unsubscribeSagaRetry });
+    // Subscribe to health changes: retry transiently failed approved outbound actions when
+    // their service comes back online (the logic lives in services, under the mutation gate).
+    const unsubscribeApprovedActionRetry = healthRegistry.subscribe(createApprovedActionRetryListener({
+        backend: approvedOutboundActionBackend,
+        logger,
+    }));
+    registerCleanup({ name: 'approved action retry subscription', run: unsubscribeApprovedActionRetry });
 
     // Q6 / plan amendments B1-B2: health-outage notification source. Same unconditional
-    // composition-root scope as unsubscribeOutboxDrain/unsubscribeSagaRetry above — this wiring
+    // composition-root scope as unsubscribeOutboxDrain/unsubscribeApprovedActionRetry above — this wiring
     // never branches on session mode, and notificationBridge.notify is a safe no-op until the
     // real conductor has attached (see notification-bridge.ts's doc comment).
     const healthOutageCoalescer = createHealthOutageCoalescer({ clock: systemClock, notify: notificationBridge.notify });
@@ -1286,8 +1251,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 logger.info('Contact reconciliation scheduler started');
             }
 
-            // Start saga executor polling loop
-            sagaExecutor.start();
+            // Start the approved-outbound-action executor polling loop
+            approvedActionExecutor.start();
 
             // Session-peers block 3/5: arm the shared subscription-usage poll. Independent of
             // Discord — quota is spent by Craig's own sessions whether or not Izzy is connected.
@@ -1319,11 +1284,11 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 { name: 'Bluesky reconnection loop', run: () => bskyReconnectionLoop?.stop(), onFailure: 'propagate' },
                 { name: 'Bluesky DM poller', run: () => bskySetup?.dmPoller.stop(), onFailure: 'propagate' },
                 { name: 'outbox drainer', run: () => outboxDrainer.stop(), onFailure: 'propagate' },
-                { name: 'saga executor', run: () => sagaExecutor.stop(), onFailure: 'propagate' },
+                { name: 'approved outbound action executor', run: () => approvedActionExecutor.stop(), onFailure: 'propagate' },
                 // Stop usage polling and health notifications before detaching the bridge.
                 { name: 'quota poller', run: () => ambience.quotaPoller.stop(), onFailure: 'propagate' },
                 { name: 'outbox subscription', run: unsubscribeOutboxDrain, onFailure: 'propagate' },
-                { name: 'saga subscription', run: unsubscribeSagaRetry, onFailure: 'propagate' },
+                { name: 'approved action retry subscription', run: unsubscribeApprovedActionRetry, onFailure: 'propagate' },
                 { name: 'health notification subscription', run: unsubscribeHealthNotifications, onFailure: 'propagate' },
                 { name: 'health outage coalescer', run: () => healthOutageCoalescer.stop(), onFailure: 'propagate' },
                 { name: 'notification bridge', run: () => notificationBridge.detach(), onFailure: 'propagate' },

@@ -56,7 +56,6 @@ import { createGuildId } from '@/integrations/discord/types';
 import * as staticWildDuckClientModule from '@/integrations/email';
 import type { HealthChangeListener } from '@/services';
 import * as staticServicesModule from '@/services';
-import type { ApprovalSaga } from '@/services/approval-saga/types';
 import * as staticPersonAllowlistModule from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
@@ -72,6 +71,7 @@ const realCreateNotificationBridge = importedCreateNotificationBridge;
 const realCreateHealthOutageCoalescer = importedCreateHealthOutageCoalescer;
 const realCreateHealthNotificationListener = importedCreateHealthNotificationListener;
 const realCreateSessionAmbience = importedCreateSessionAmbience;
+const realCreateApprovedActionRetryListener = staticServicesModule.createApprovedActionRetryListener;
 
 const sessionConfig: SessionConfig = {
     compactThresholdPercent: 60,
@@ -1553,8 +1553,8 @@ describe('createApp', () => {
         });
     });
 
-    describe('Saga reconnect retry ordering', () => {
-        test('admits failed saga updates in list order and stops after the first write failure', async () => {
+    describe('Approved outbound action retry wiring', () => {
+        test('subscribes the services retry listener, built from the shared backend and logger', async () => {
             wireHappyPath(spies);
             const listeners: HealthChangeListener[] = [];
             spies.push(spyOn(staticServicesModule.ServiceHealthRegistryImpl.prototype, 'subscribe').mockImplementation(
@@ -1563,57 +1563,30 @@ describe('createApp', () => {
                     return () => undefined;
                 }
             ));
-            const timestamp = '2026-09-12T00:00:00.000Z';
-            const makeSaga = (id: string, type: ApprovalSaga['type']): ApprovalSaga => ({
-                id, type, state: 'failed', params: {}, createdAt: timestamp, updatedAt: timestamp,
-            });
-            const failed = [
-                makeSaga('00000000-0000-4000-8000-000000000001', 'email_send'),
-                makeSaga('00000000-0000-4000-8000-000000000002', 'bsky_reply'),
-                makeSaga('00000000-0000-4000-8000-000000000003', 'email_reply'),
-                makeSaga('00000000-0000-4000-8000-000000000004', 'email_send'),
-            ];
-            const listSpy = spyOn(staticServicesModule.ApprovalSagaBackend.prototype, 'listByState').mockResolvedValue(failed);
-            const firstEntered = Promise.withResolvers<void>();
-            const releaseFirst = Promise.withResolvers<void>();
-            const secondAttempted = Promise.withResolvers<void>();
-            const updateOrder: string[] = [];
-            const updateSpy = spyOn(staticServicesModule.ApprovalSagaBackend.prototype, 'updateState').mockImplementation(async (id) => {
-                updateOrder.push(id);
-                if(id === failed[0].id) {
-                    firstEntered.resolve();
-                    await releaseFirst.promise;
-                } else if(id === failed[2].id) {
-                    secondAttempted.resolve();
-                    throw new Error('second write failed');
+            const built: HealthChangeListener[] = [];
+            const createListenerSpy = spyOn(staticServicesModule, 'createApprovedActionRetryListener').mockImplementation(
+                (listenerDeps: Parameters<typeof realCreateApprovedActionRetryListener>[0]) => {
+                    const listener = realCreateApprovedActionRetryListener(listenerDeps);
+                    built.push(listener);
+                    return listener;
                 }
-            });
-            spies.push(listSpy, updateSpy);
+            );
+            const listSpy = spyOn(staticServicesModule.ApprovedOutboundActionBackend.prototype, 'listByState').mockResolvedValue([]);
+            spies.push(createListenerSpy, listSpy);
 
             await staticIndexModule.createApp();
-            // The saga listener is registered immediately before the health-outage
-            // listener; app.start() has not registered its recovery listener yet.
-            const sagaListener = listeners.at(-2);
-            expect(sagaListener).toBeDefined();
-            if(!sagaListener) {
-                throw new Error('Saga retry listener was not registered');
-            }
-            mockLogger.warn.mockClear();
-            sagaListener({
-                service: 'email', previousState: 'offline', newState: 'online', epoch: 1, timestamp: new Date(timestamp),
+
+            expect(createListenerSpy).toHaveBeenCalledTimes(1);
+            const listenerDeps = createListenerSpy.mock.calls[0]?.[0];
+            expect(listenerDeps.backend).toBeInstanceOf(staticServicesModule.ApprovedOutboundActionBackend);
+            expect(listenerDeps.logger).toBe(mockLogger as unknown as typeof listenerDeps.logger);
+            expect(listeners.filter(listener => listener === built[0])).toHaveLength(1);
+
+            built[0]({
+                service: 'bsky', previousState: 'offline', newState: 'online', epoch: 1, timestamp: new Date('2026-09-12T00:00:00.000Z'),
             });
-            await firstEntered.promise;
-            expect(updateOrder).toEqual([failed[0].id]);
-            releaseFirst.resolve();
-            await secondAttempted.promise;
-            await Bun.sleep(1);
 
             expect(listSpy).toHaveBeenCalledWith('failed');
-            expect(updateOrder).toEqual([failed[0].id, failed[2].id]);
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                error: 'second write failed',
-                msg:   'Failed to reset sagas on reconnect',
-            }));
         });
     });
 

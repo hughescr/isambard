@@ -106,7 +106,7 @@ describe.concurrent('createPrefixedKey', () => {
             expect(createPrefixedKey('SAGA', 'test-id-123')).toBe('SAGA#test-id-123');
         });
 
-        test('SAGA SK matches ApprovalSagaBackend sagaSK helper', () => {
+        test('SAGA SK matches ApprovedOutboundActionBackend actionSK helper', () => {
             expect(createPrefixedKey('SAGA', 'approval-id-456')).toBe('SAGA#approval-id-456');
         });
 

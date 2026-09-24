@@ -5,12 +5,12 @@ import { markDraftReviewState } from './draft-review-state';
 import type { NotifyFn } from '@/agent';
 import { EmailFolder, EMAIL_ALLOWLIST_SELECT_PREFIX } from '@/config';
 import type { WildDuckClient } from '@/integrations/email/wildduck-client';
-import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type SagaWriter } from '@/services';
+import { BaseOutboundApprovalHandler, type ApprovalActivityLogger, type AllowlistSagaStarter, type ApprovedOutboundActionWriter } from '@/services';
 import { encodeCustomId, parseCustomId } from '@/utils';
 
 export interface EmailOutboundApprovalHandlerDeps {
     wildDuckClient:              WildDuckClient
-    sagaBackend:                 SagaWriter
+    sagaBackend:                 ApprovedOutboundActionWriter
     activityLogger?:             ApprovalActivityLogger
     allowlistInteractionHandler: AllowlistSagaStarter
     /** Shared notification bridge (Q7, plan amendment B2) — required so every admin approval outcome (approve, approve+allowlist, reject) wakes a notification. Never lets a false return or a thrown error fail the outcome it is reporting; see call sites below. */
@@ -245,7 +245,7 @@ export class EmailOutboundApprovalHandler extends BaseOutboundApprovalHandler<nu
 
         const updatedEmbed = this.buildApprovedEmbed('Approved \u2713 \u2014 sending shortly');
 
-        // The approval saga above is already persisted, so a failed Discord UI update must not
+        // The approved outbound action above is already persisted, so a failed Discord UI update must not
         // suppress the wake notification below (mirrors performRejection's editReply guard).
         try {
             await interaction.editReply({

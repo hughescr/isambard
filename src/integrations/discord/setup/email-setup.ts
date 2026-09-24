@@ -23,7 +23,7 @@ import {
     EmailOutboundApprovalHandler,
     type ProcessEmailCallbacks
 } from '@/integrations/email';
-import { TokenBucketRateLimiter, type ApprovalSagaBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
+import { TokenBucketRateLimiter, type ApprovedOutboundActionBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import type { DynamoDBClientHolder, PersonAllowlist } from '@/storage';
 import { encodeCustomId, retryAsync } from '@/utils';
 
@@ -74,8 +74,8 @@ export interface EmailSetupOptions {
      * when Discord is offline) instead of calling channel.send() directly.
      */
     discordCapability?:          DiscordCapability
-    /** Approval saga backend for durable approval workflows */
-    approvalSagaBackend:         ApprovalSagaBackend
+    /** Durable record of admin-approved outbound actions, executed by the services executor */
+    approvedActions:             ApprovedOutboundActionBackend
     /** Pre-loaded PersonAllowlist for gating outbound email recipients */
     personAllowlist:             PersonAllowlist
     /** Allowlist interaction handler for the saga-based allowlist flow */
@@ -343,7 +343,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Create outbound approval handler (handles email-send-* button/modal interactions)
     const outboundApprovalHandler = new EmailOutboundApprovalHandler({
         wildDuckClient,
-        sagaBackend:                 options.approvalSagaBackend,
+        sagaBackend:                 options.approvedActions,
         activityLogger:              options.activityLogger,
         allowlistInteractionHandler: options.allowlistInteractionHandler,
         notify:                      options.notify,

@@ -19,7 +19,7 @@ import { ChannelNotAccessibleError } from '@/errors';
 import { createAtUri, createCid, type BlueskyClient } from '@/integrations/bsky';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { setupBsky, type BskySetupOptions } from '@/integrations/discord/setup/bsky-setup';
-import type { ApprovalSagaBackend } from '@/services';
+import type { ApprovedOutboundActionBackend } from '@/services';
 import type { MemoryToolBackend, PersonAllowlist } from '@/storage';
 
 /** Minimal in-memory-shaped fake backend — DM checkpoint round-trips through it, but starts empty every test. */
@@ -52,7 +52,7 @@ describe('setupBsky — isSendableChannel type guard', () => {
             tableName:             'test-table',
             client:                {} as unknown as Client,
             adminDiscordChannelId: createChannelId('admin-channel-id'),
-            approvalSagaBackend:   {} as unknown as ApprovalSagaBackend,
+            approvedActions:       {} as unknown as ApprovedOutboundActionBackend,
             personAllowlist:       {
                 isAllowed:       mock((_platform: string, _value: string) => false),
                 isPersonAllowed: mock(() => false),
@@ -243,7 +243,7 @@ describe('setupBsky — Q8 DM poller and notify threading', () => {
             tableName:             'test-table',
             client:                {} as unknown as Client,
             adminDiscordChannelId: createChannelId('admin-channel-id'),
-            approvalSagaBackend:   {} as unknown as ApprovalSagaBackend,
+            approvedActions:       {} as unknown as ApprovedOutboundActionBackend,
             personAllowlist:       {
                 isAllowed:       mock((_platform: string, _value: string) => false),
                 isPersonAllowed: mock(() => false),

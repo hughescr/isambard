@@ -1,12 +1,19 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
-import type { ApprovalSagaBackend } from '@/services/approval-saga/backend';
-import { createSagaExecutor, type SagaExecutorLogger  } from '@/services/approval-saga/executor';
-import type { ApprovalSaga, ApprovalSagaType } from '@/services/approval-saga/types';
+import { z } from 'zod';
+import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, WildDuckError } from '@/errors';
+import type { ApprovedOutboundActionBackend } from '@/services/approved-outbound-action/backend';
+import {
+    classifyFailure,
+    createApprovedOutboundActionExecutor,
+    requiredServiceFor,
+    type ApprovedOutboundActionExecutorLogger
+} from '@/services/approved-outbound-action/executor';
+import type { ApprovedOutboundAction, ApprovedOutboundActionType } from '@/services/approved-outbound-action/types';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 
 const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 
-function makeSaga(overrides: Partial<ApprovalSaga> = {}): ApprovalSaga {
+function makeSaga(overrides: Partial<ApprovedOutboundAction> = {}): ApprovedOutboundAction {
     return {
         id:        SAGA_UUID,
         state:     'approved',
@@ -18,21 +25,21 @@ function makeSaga(overrides: Partial<ApprovalSaga> = {}): ApprovalSaga {
     };
 }
 
-describe('createSagaExecutor', () => {
-    let backend: ApprovalSagaBackend;
+describe('createApprovedOutboundActionExecutor', () => {
+    let backend: ApprovedOutboundActionBackend;
     let registry: ServiceHealthRegistry;
-    let executors: Record<ApprovalSagaType, (params: Record<string, unknown>) => Promise<void>>;
-    let logger: SagaExecutorLogger;
+    let executors: Record<ApprovedOutboundActionType, (params: Record<string, unknown>) => Promise<void>>;
+    let logger: ApprovedOutboundActionExecutorLogger;
 
     beforeEach(() => {
         jest.useFakeTimers();
 
         backend = {
-            listByState: mock(async (): Promise<ApprovalSaga[]> => []),
+            listByState: mock(async (): Promise<ApprovedOutboundAction[]> => []),
             updateState: mock(async (): Promise<void> => undefined),
             create:      mock(async (): Promise<void> => undefined),
-            get:         mock(async (): Promise<ApprovalSaga | undefined> => undefined),
-        } as unknown as ApprovalSagaBackend;
+            get:         mock(async (): Promise<ApprovedOutboundAction | undefined> => undefined),
+        } as unknown as ApprovedOutboundActionBackend;
 
         registry = {
             isAvailable: mock((_service: string): boolean => true),
@@ -45,8 +52,6 @@ describe('createSagaExecutor', () => {
             bsky_dm: mock(async (): Promise<void> => undefined),
 
             email_send: mock(async (): Promise<void> => undefined),
-
-            email_reply: mock(async (): Promise<void> => undefined),
         };
 
         logger = {
@@ -65,10 +70,10 @@ describe('createSagaExecutor', () => {
     describe('executeOnce', () => {
         test('returns {executed: 0, failed: 0} when no approved sagas', async () => {
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => []
+                async (): Promise<ApprovedOutboundAction[]> => []
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 0, failed: 0 });
@@ -77,10 +82,10 @@ describe('createSagaExecutor', () => {
         test('executes saga and marks it as executed when service is available', async () => {
             const saga = makeSaga({ type: 'bsky_reply' });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 1, failed: 0 });
@@ -91,52 +96,71 @@ describe('createSagaExecutor', () => {
         test('skips saga when required service is unavailable', async () => {
             const saga = makeSaga({ type: 'bsky_reply' });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
             (registry.isAvailable as ReturnType<typeof mock>).mockImplementation(
                 (_service: string): boolean => false
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 0, failed: 0 });
             expect(executors.bsky_reply).not.toHaveBeenCalled();
             expect(backend.updateState).not.toHaveBeenCalled();
             expect(logger.info).toHaveBeenCalledWith(
-                expect.objectContaining({ sagaId: SAGA_UUID, service: 'bsky' }),
-                expect.stringContaining('unavailable')
+                { actionId: SAGA_UUID, type: 'bsky_reply', service: 'bsky' },
+                'Skipping approved outbound action — required service unavailable'
             );
         });
 
         test('marks saga as failed with lastError when executor throws', async () => {
             const saga = makeSaga({ type: 'bsky_reply' });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
             (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
                 async (): Promise<void> => { throw new Error('network failure'); }
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 0, failed: 1 });
             expect(backend.updateState).toHaveBeenCalledWith(
                 SAGA_UUID,
                 'failed',
-                { lastError: 'network failure' }
+                { lastError: 'network failure', failureKind: 'transient' }
             );
             expect(logger.error).toHaveBeenCalledWith(
-                expect.objectContaining({ sagaId: SAGA_UUID, error: 'network failure' }),
-                expect.stringContaining('failed')
+                { actionId: SAGA_UUID, type: 'bsky_reply', error: 'network failure', failureKind: 'transient' },
+                'Approved outbound action execution failed'
+            );
+        });
+
+        test('records a permanent failureKind when the executor throws a validation error', async () => {
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga({ type: 'bsky_reply' })]);
+            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(async (): Promise<void> => {
+                throw new BskyValidationError('Post exceeds 300 graphemes (301)');
+            });
+
+            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger }).executeOnce();
+
+            expect(backend.updateState).toHaveBeenCalledWith(
+                SAGA_UUID,
+                'failed',
+                { lastError: 'Post exceeds 300 graphemes (301)', failureKind: 'permanent' }
+            );
+            expect(logger.error).toHaveBeenCalledWith(
+                { actionId: SAGA_UUID, type: 'bsky_reply', error: 'Post exceeds 300 graphemes (301)', failureKind: 'permanent' },
+                'Approved outbound action execution failed'
             );
         });
 
         test('propagates rejection when persisting the failed state fails', async () => {
             const saga = makeSaga({ type: 'bsky_reply' });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
             (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
                 async (): Promise<void> => { throw new Error('network failure'); }
@@ -149,7 +173,7 @@ describe('createSagaExecutor', () => {
                 }
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
 
             await expect(executor.executeOnce()).rejects.toThrow('persist failed-state write failed');
         });
@@ -157,19 +181,19 @@ describe('createSagaExecutor', () => {
         test('uses String(err) for non-Error exceptions', async () => {
             const saga = makeSaga({ type: 'bsky_reply' });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
             (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
                 async (): Promise<void> => { throw 'string error'; }
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             await executor.executeOnce();
 
             expect(backend.updateState).toHaveBeenCalledWith(
                 SAGA_UUID,
                 'failed',
-                { lastError: 'string error' }
+                { lastError: 'string error', failureKind: 'transient' }
             );
         });
 
@@ -181,7 +205,7 @@ describe('createSagaExecutor', () => {
             const saga3 = makeSaga({ id: SAGA_UUID_3, type: 'email_send' });
 
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga1, saga2, saga3]
+                async (): Promise<ApprovedOutboundAction[]> => [saga1, saga2, saga3]
             );
             (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(
                 async (): Promise<void> => undefined
@@ -193,7 +217,7 @@ describe('createSagaExecutor', () => {
                 async (): Promise<void> => undefined
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 2, failed: 1 });
@@ -211,7 +235,7 @@ describe('createSagaExecutor', () => {
                 events.push(`persist:${id}`);
             });
 
-            const result = await createSagaExecutor({ backend, registry, executors, logger }).executeOnce();
+            const result = await createApprovedOutboundActionExecutor({ backend, registry, executors, logger }).executeOnce();
             expect(result).toEqual({ executed: 2, failed: 0 });
             expect(events).toEqual([
                 'execute:first', `persist:${first.id}`,
@@ -228,7 +252,7 @@ describe('createSagaExecutor', () => {
                     throw new Error('state write failed');
                 }
             });
-            await expect(createSagaExecutor({ backend, registry, executors, logger }).executeOnce()).rejects.toThrow('state write failed');
+            await expect(createApprovedOutboundActionExecutor({ backend, registry, executors, logger }).executeOnce()).rejects.toThrow('state write failed');
             expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
             expect(executors.email_send).not.toHaveBeenCalled();
             expect(backend.updateState).toHaveBeenCalledTimes(1);
@@ -239,36 +263,43 @@ describe('createSagaExecutor', () => {
         test('logs info on successful saga execution', async () => {
             const saga = makeSaga({ type: 'bsky_reply' });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             await executor.executeOnce();
 
             expect(logger.info).toHaveBeenCalledWith(
-                expect.objectContaining({ sagaId: SAGA_UUID, type: 'bsky_reply' }),
-                expect.stringContaining('executed successfully')
+                { actionId: SAGA_UUID, type: 'bsky_reply' },
+                'Approved outbound action executed successfully'
             );
         });
 
         test('calls listByState with "approved" state specifically', async () => {
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             await executor.executeOnce();
 
             expect(backend.listByState).toHaveBeenCalledWith('approved');
         });
     });
 
-    describe('getRequiredService mapping', () => {
+    describe('requiredServiceFor mapping', () => {
         test.each([
             ['bsky_reply', 'bsky'],
             ['bsky_dm',    'bsky'],
             ['email_send', 'email'],
-            ['email_reply', 'email'],
-        ] as const)('%s maps to service %s', async (sagaType, expectedService) => {
+        ] as const)('requiredServiceFor(%s) returns %s', (type, expectedService) => {
+            expect(requiredServiceFor(type)).toBe(expectedService);
+        });
+
+        test.each([
+            ['bsky_reply', 'bsky'],
+            ['bsky_dm',    'bsky'],
+            ['email_send', 'email'],
+        ] as const)('executeOnce checks %s against service %s', async (sagaType, expectedService) => {
             const saga = makeSaga({ type: sagaType });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
             // Track what service was queried
             const serviceChecked: string[] = [];
@@ -279,7 +310,7 @@ describe('createSagaExecutor', () => {
                 }
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             await executor.executeOnce();
 
             expect(serviceChecked).toContain(expectedService);
@@ -290,10 +321,10 @@ describe('createSagaExecutor', () => {
         test('start creates a timer that calls executeOnce', async () => {
             const saga = makeSaga();
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             jest.advanceTimersByTime(1000);
@@ -305,7 +336,7 @@ describe('createSagaExecutor', () => {
         });
 
         test('double-start guard: second start does not create a second timer', async () => {
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
             executor.start();
 
@@ -325,15 +356,15 @@ describe('createSagaExecutor', () => {
             //
             // Uses a deferred listByState to hold T1's IIFE suspended while we inject a redundant
             // start(). After resolving, T1 must still reschedule (T2), proving the loop is alive.
-            let resolveListByState!: (value: ApprovalSaga[]) => void;
-            const deferredListByState = new Promise<ApprovalSaga[]>((resolve) => {
+            let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
+            const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
                 resolveListByState = resolve;
             });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                (): Promise<ApprovalSaga[]> => deferredListByState
+                (): Promise<ApprovedOutboundAction[]> => deferredListByState
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // Fire T1 — IIFE starts, suspends at listByState. timeoutId still holds T1's value.
@@ -362,7 +393,7 @@ describe('createSagaExecutor', () => {
 
         test('redundant start() while running leaves exactly one pending timer', async () => {
             // After a no-op start(), timer count must remain 1 (the already-scheduled next tick).
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
             expect(jest.getTimerCount()).toBe(1);
 
@@ -374,7 +405,7 @@ describe('createSagaExecutor', () => {
         });
 
         test('stop clears timer so executeOnce is no longer called', async () => {
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
@@ -385,7 +416,7 @@ describe('createSagaExecutor', () => {
         });
 
         test('restart after stop works: stopped flag is reset', async () => {
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
@@ -400,7 +431,7 @@ describe('createSagaExecutor', () => {
         });
 
         test('stop is idempotent when not started', () => {
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             // Should not throw
             expect(() => {
                 executor.stop();
@@ -416,15 +447,15 @@ describe('createSagaExecutor', () => {
             // Without generation invalidation, the in-flight IIFE's trailing scheduleNextTick
             // runs after start() has already scheduled T2, producing two pending timers (T2+T3).
             // With the fix, the IIFE detects its generation is stale and skips rescheduling.
-            let resolveListByState!: (value: ApprovalSaga[]) => void;
-            const deferredListByState = new Promise<ApprovalSaga[]>((resolve) => {
+            let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
+            const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
                 resolveListByState = resolve;
             });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                (): Promise<ApprovalSaga[]> => deferredListByState
+                (): Promise<ApprovedOutboundAction[]> => deferredListByState
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // Fire T1 — async IIFE begins, suspends at await backend.listByState()
@@ -450,8 +481,8 @@ describe('createSagaExecutor', () => {
         });
 
         test('successive stop/start cycles discard every overlapping stale tick', async () => {
-            const first = Promise.withResolvers<ApprovalSaga[]>();
-            const second = Promise.withResolvers<ApprovalSaga[]>();
+            const first = Promise.withResolvers<ApprovedOutboundAction[]>();
+            const second = Promise.withResolvers<ApprovedOutboundAction[]>();
             let callCount = 0;
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(() => {
                 callCount++;
@@ -463,7 +494,7 @@ describe('createSagaExecutor', () => {
                 }
                 return Promise.resolve([]);
             });
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
 
             try {
                 executor.start();
@@ -499,15 +530,15 @@ describe('createSagaExecutor', () => {
         test('stop alone (no restart) leaves zero pending timers after mid-flight tick', async () => {
             // Verify that stop() without a subsequent start() leaves 0 timers, even when stop()
             // races with a mid-flight tick (deferred listByState keeps the IIFE suspended).
-            let resolveListByState!: (value: ApprovalSaga[]) => void;
-            const deferredListByState = new Promise<ApprovalSaga[]>((resolve) => {
+            let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
+            const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
                 resolveListByState = resolve;
             });
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                (): Promise<ApprovalSaga[]> => deferredListByState
+                (): Promise<ApprovedOutboundAction[]> => deferredListByState
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // Fire T1 — IIFE starts, suspends at listByState
@@ -531,10 +562,10 @@ describe('createSagaExecutor', () => {
             // If stopped started as true, timer callback would skip executeOnce
             const saga = makeSaga();
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start(); // stopped must be false for timer to execute
 
             jest.advanceTimersByTime(1000);
@@ -549,7 +580,7 @@ describe('createSagaExecutor', () => {
         test('clearTimeout is called when stop() is called after start()', async () => {
             const clearTimeoutSpy = jest.spyOn(globalThis, 'clearTimeout');
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
@@ -565,7 +596,7 @@ describe('createSagaExecutor', () => {
         });
 
         test('start() after stop() resumes at base interval', async () => {
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
 
             // Start, let it run two empty ticks (interval should have doubled to 2000)
             executor.start();
@@ -600,10 +631,10 @@ describe('createSagaExecutor', () => {
         test('uses DEFAULT_POLL_INTERVAL_MS (30000) when not provided', async () => {
             const saga = makeSaga();
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
             executor.start();
 
             // Should not trigger at 29 seconds
@@ -622,10 +653,10 @@ describe('createSagaExecutor', () => {
         test('uses custom pollIntervalMs when provided', async () => {
             const saga = makeSaga();
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => [saga]
+                async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 5000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 5000 });
             executor.start();
 
             // Should not trigger at 4999 ms
@@ -645,7 +676,7 @@ describe('createSagaExecutor', () => {
     describe('poll backoff', () => {
         test('empty result doubles the next tick interval', async () => {
             // baseInterval = 1000, empty result → next tick at 2000
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick fires at 1000ms, returns empty
@@ -673,7 +704,7 @@ describe('createSagaExecutor', () => {
             // tick 1 at 1000ms → empty → next at 2000ms
             // tick 2 at 3000ms → empty → next at 4000ms
             // tick 3 at 7000ms
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms
@@ -704,7 +735,7 @@ describe('createSagaExecutor', () => {
             // Use a large base so we reach the cap quickly without many doublings
             // base = 200_000ms → doubled = 400_000ms > MAX (300_000ms) → capped at 300_000ms
             const base = 200_000;
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: base });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: base });
             executor.start();
 
             // First tick at 200_000ms — empty result
@@ -734,7 +765,7 @@ describe('createSagaExecutor', () => {
             expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(3);
             expect(logger.debug).toHaveBeenCalledWith(
                 { intervalMs: 300_000 },
-                'Saga poll interval extended'
+                'Approved outbound action poll interval extended'
             );
             expect(logger.debug).toHaveBeenCalledTimes(1);
 
@@ -746,14 +777,14 @@ describe('createSagaExecutor', () => {
             const saga = makeSaga();
             let callCount = 0;
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => {
+                async (): Promise<ApprovedOutboundAction[]> => {
                     callCount += 1;
                     // First call: empty; second call: has a saga
                     return callCount === 1 ? [] : [saga];
                 }
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms — empty → interval doubles to 2000
@@ -769,7 +800,7 @@ describe('createSagaExecutor', () => {
             expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
             expect(logger.debug).toHaveBeenCalledWith(
                 { intervalMs: 1000 },
-                'Saga poll interval reset to base'
+                'Approved outbound action poll interval reset to base'
             );
 
             // Third tick should fire at 1000ms after (not 2000ms), i.e. 4000ms total
@@ -786,7 +817,7 @@ describe('createSagaExecutor', () => {
 
         test('non-empty first tick does not emit a redundant base-reset log', async () => {
             (backend.listByState as ReturnType<typeof mock>).mockResolvedValue([makeSaga()]);
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             jest.advanceTimersByTime(1000);
@@ -805,13 +836,13 @@ describe('createSagaExecutor', () => {
             const saga = makeSaga();
             let callCount = 0;
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => {
+                async (): Promise<ApprovedOutboundAction[]> => {
                     callCount += 1;
                     return callCount === 2 ? [saga] : [];
                 }
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // Tick 1 at 1000ms
@@ -842,7 +873,7 @@ describe('createSagaExecutor', () => {
         });
 
         test('stop() mid-backoff cancels the scheduled timer', async () => {
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms — empty → next scheduled at 2000ms
@@ -864,7 +895,7 @@ describe('createSagaExecutor', () => {
             const saga = makeSaga();
             let callCount = 0;
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => {
+                async (): Promise<ApprovedOutboundAction[]> => {
                     callCount += 1;
                     return callCount === 1 ? [] : [saga];
                 }
@@ -874,7 +905,7 @@ describe('createSagaExecutor', () => {
                 async (): Promise<void> => { throw new Error('oops'); }
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms — empty → interval doubles to 2000
@@ -905,7 +936,7 @@ describe('createSagaExecutor', () => {
             // If listByState throws, executeOnce rejects and the .catch() handler reschedules
             let callCount = 0;
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
-                async (): Promise<ApprovalSaga[]> => {
+                async (): Promise<ApprovedOutboundAction[]> => {
                     callCount += 1;
                     if(callCount === 1) {
                         throw new Error('DynamoDB unavailable');
@@ -914,7 +945,7 @@ describe('createSagaExecutor', () => {
                 }
             );
 
-            const executor = createSagaExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms — throws, catch block logs at debug level, reschedules at base interval
@@ -924,7 +955,7 @@ describe('createSagaExecutor', () => {
             expect((backend.listByState as ReturnType<typeof mock>).mock.calls).toHaveLength(1);
             expect(logger.debug).toHaveBeenCalledWith(
                 expect.objectContaining({ error: 'DynamoDB unavailable' }),
-                expect.stringContaining('Saga poll tick threw')
+                expect.stringContaining('Approved outbound action poll tick threw')
             );
 
             // Next tick should still fire at base interval (not doubled — rejection doesn't backoff)
@@ -939,4 +970,29 @@ describe('createSagaExecutor', () => {
             executor.stop();
         });
     });
+});
+
+describe('classifyFailure', () => {
+    const zodError = z.object({ uid: z.number() }).safeParse({ uid: 'x' }).error;
+
+    const cases: [string, unknown, 'transient' | 'permanent'][] = [
+        ['a ZodError (unreadable params)', zodError, 'permanent'],
+        ['a BskyValidationError', new BskyValidationError('too long'), 'permanent'],
+        ['a BskyError with status 400', new BskyError('bad', undefined, { status: 400 }), 'permanent'],
+        ['a BskyError with status 499', new BskyError('bad', undefined, { status: 499 }), 'permanent'],
+        ['a BskyError with status 399', new BskyError('odd', undefined, { status: 399 }), 'transient'],
+        ['a BskyError with status 500', new BskyError('down', undefined, { status: 500 }), 'transient'],
+        ['a BskyError with a non-numeric status', new BskyError('odd', undefined, { status: '404' }), 'transient'],
+        ['a BskyError with no context', new BskyError('no context'), 'transient'],
+        ['a BskyAuthError even if it carries status 401', new BskyAuthError('auth', { status: 401 }), 'transient'],
+        ['a BskyRateLimitError even if it carries status 429', new BskyRateLimitError('slow down', { status: 429 }), 'transient'],
+        ['a WildDuckError', new WildDuckError('smtp down'), 'transient'],
+        ['a plain Error', new Error('network failure'), 'transient'],
+        ['a thrown string', 'string error', 'transient'],
+    ];
+    for(const [name, err, expected] of cases) {
+        test(`classifies ${name} as ${expected}`, () => {
+            expect(classifyFailure(err)).toBe(expected);
+        });
+    }
 });

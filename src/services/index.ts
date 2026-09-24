@@ -18,9 +18,16 @@ export { serializedDiscordPayloadSchema, OutboxBackend } from './outbox';
 export type { OutboxDrainer } from './outbox';
 export { createOutboxDrainer } from './outbox';
 
-// Approval saga
-export type { ApprovalSagaState, ApprovalSagaType, SagaExecutor, SagaWriter } from './approval-saga';
-export { ApprovalSagaBackend, createSagaExecutor } from './approval-saga';
+// Approved outbound actions
+export type {
+    ApprovedOutboundAction,
+    ApprovedOutboundActionState,
+    ApprovedOutboundActionType,
+    ApprovedOutboundActionWriter,
+    ApprovedOutboundActionExecutor,
+    FailureKind
+} from './approved-outbound-action';
+export { ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionRetryListener } from './approved-outbound-action';
 
 // Allowlist saga
 export type { SagaStepResult, SagaInteractionResult, AllowlistSagaStarter } from './allowlist-saga';

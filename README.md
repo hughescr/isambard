@@ -558,10 +558,11 @@ src/
 │   │   ├── key-generator.ts            # Outbox DynamoDB key construction
 │   │   ├── types.ts                    # Outbox types
 │   │   └── index.ts                    # Public exports
-│   ├── approval-saga/                  # Distributed approval workflow
-│   │   ├── backend.ts                  # Approval saga storage
-│   │   ├── executor.ts                 # Saga executor
-│   │   ├── types.ts                    # Saga types
+│   ├── approved-outbound-action/       # Durable records of admin-approved outbound actions
+│   │   ├── backend.ts                  # Row storage, assertTransition, conditional state moves
+│   │   ├── executor.ts                 # Polling executor; transient/permanent failure classification
+│   │   ├── retry-on-reconnect.ts       # Health listener resetting transient failures on reconnect
+│   │   ├── types.ts                    # approved/executed/failed schema and writer interface
 │   │   └── index.ts                    # Public exports
 │   ├── allowlist-saga/                 # Multi-step Discord UI flow for adding a contact to the person allowlist
 │   │   ├── backend.ts                  # Strongly-consistent read/conditional-put saga row storage

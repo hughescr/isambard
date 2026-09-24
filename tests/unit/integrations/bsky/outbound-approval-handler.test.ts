@@ -4,7 +4,7 @@ import type { BlueskyClient } from '../../../../src/integrations/bsky/client';
 import { BskyOutboundApprovalHandler, type BskyOutboundApprovalHandlerDeps } from '../../../../src/integrations/bsky/outbound-approval-handler';
 import { type BskyRejectionBackend } from '../../../../src/integrations/bsky/rejection-backend';
 import type { AllowlistInteractionHandler } from '../../../../src/integrations/discord/allowlist-interaction-handler';
-import type { ApprovalSagaBackend } from '../../../../src/services/approval-saga/backend';
+import type { ApprovedOutboundActionBackend } from '../../../../src/services/approved-outbound-action/backend';
 import { mockLogger } from '../../../setup';
 
 // ---------------------------------------------------------------------------
@@ -158,9 +158,9 @@ function makeDeps(overrides: Partial<BskyOutboundApprovalHandlerDeps> = {}): Bsk
         clearAll:        mock(async () => { /* intentionally empty */ }),
     } as unknown as BskyRejectionBackend;
 
-    const mockSagaBackend: ApprovalSagaBackend = {
+    const mockSagaBackend: ApprovedOutboundActionBackend = {
         create: mock(async () => { /* intentionally empty */ }),
-    } as unknown as ApprovalSagaBackend;
+    } as unknown as ApprovedOutboundActionBackend;
 
     const mockAllowlistInteractionHandler = {
         startFromApproval: mock(async () => ({ allowlistSuffix: '' })),
@@ -352,7 +352,7 @@ describe('BskyOutboundApprovalHandler', () => {
                 started.resolve();
                 await gate.promise;
             });
-            const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovalSagaBackend });
+            const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
             const handler = new BskyOutboundApprovalHandler(deps);
             const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
             const operation = handler.handleButton(interaction);

@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { EmbedBuilder, type ButtonInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { mockLogger } from '../../setup';
-import type { AllowlistSagaStarter, SagaWriter } from '@/services';
+import type { AllowlistSagaStarter, ApprovedOutboundActionWriter } from '@/services';
 import { BaseOutboundApprovalHandler } from '@/services/outbound-approval-handler-base';
 
 // ---------------------------------------------------------------------------
@@ -75,9 +75,9 @@ class TestOutboundApprovalHandler extends BaseOutboundApprovalHandler<string> {
     }
 }
 
-function makeDeps(): { sagaBackend: SagaWriter, allowlistInteractionHandler: AllowlistSagaStarter } {
+function makeDeps(): { sagaBackend: ApprovedOutboundActionWriter, allowlistInteractionHandler: AllowlistSagaStarter } {
     return {
-        sagaBackend:                 {} as unknown as SagaWriter,
+        sagaBackend:                 {} as unknown as ApprovedOutboundActionWriter,
         allowlistInteractionHandler: {} as unknown as AllowlistSagaStarter,
     };
 }

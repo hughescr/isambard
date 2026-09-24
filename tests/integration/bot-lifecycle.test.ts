@@ -680,7 +680,7 @@ describe('Bot Lifecycle Integration', () => {
                 outboxOwners.push(owner);
                 return owner;
             });
-            const createSaga = spyOn(servicesModule, 'createSagaExecutor').mockImplementation(() => {
+            const createSaga = spyOn(servicesModule, 'createApprovedOutboundActionExecutor').mockImplementation(() => {
                 const owner = {
                     start:       mock(() => undefined),
                     stop:        mock(() => undefined),
