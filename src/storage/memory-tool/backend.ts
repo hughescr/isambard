@@ -359,14 +359,8 @@ export class MemoryToolBackend extends DynamoTableAccess {
         return this.queryOps.getStateItemsScored(options);
     }
 
-    [reconciliationAccess](): {
-        tagIndex:             TagIndexReconciliationOps
-        updateMemoryMetadata: (path: MemoryPath, input: { metadata: Record<string, unknown> }) => Promise<MemoryToolItemData>
-    } {
-        return {
-            tagIndex:             this.tagIndexOps,
-            updateMemoryMetadata: (path, input) => this.coreOps.update(path, { ...input, preserveUpdatedAt: true }),
-        };
+    [reconciliationAccess](): { tagIndex: TagIndexReconciliationOps } {
+        return { tagIndex: this.tagIndexOps };
     }
 
     /**

@@ -44,8 +44,7 @@ function makeDeps(
             deleteTagIndexItems:  empty,
             listTagCounts:        mock(async () => []),
         },
-        getMemory:            mock(async (_path: MemoryPath): Promise<MemoryToolItemData | undefined> => undefined),
-        updateMemoryMetadata: mock(async (): Promise<MemoryToolItemData> => memoryItem),
+        getMemory: mock(async (_path: MemoryPath): Promise<MemoryToolItemData | undefined> => undefined),
         ...overrides,
     };
 }

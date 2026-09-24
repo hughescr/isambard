@@ -26,7 +26,6 @@ describe('createMemoryTagIndexReconciliationScheduler', () => {
             updatedAt:   '2026-01-01T00:00:00Z',
         };
         const get = mock(async () => item);
-        const updateMemoryMetadata = mock(async () => item);
         const tagIndex = {
             createTagIndexItems:  mock(async () => {}),
             refreshTagIndexItems: mock(async () => {}),
@@ -35,7 +34,7 @@ describe('createMemoryTagIndexReconciliationScheduler', () => {
         };
         const backend = {
             get,
-            [reconciliationAccess]: () => ({ tagIndex, updateMemoryMetadata }),
+            [reconciliationAccess]: () => ({ tagIndex }),
         } as unknown as MemoryToolBackend;
         const docClient = {} as DynamoDBDocumentClient;
         const result = { success: true, totalDurationMs: 0 } as ReconciliationResult;
@@ -51,8 +50,6 @@ describe('createMemoryTagIndexReconciliationScheduler', () => {
             expect(deps.tagIndex).toBe(tagIndex);
             expect(await deps.getMemory(path)).toBe(item);
             expect(get).toHaveBeenCalledWith(path);
-            expect(await deps.updateMemoryMetadata(path, { metadata: { previouslyKnownAs: [] } })).toBe(item);
-            expect(updateMemoryMetadata).toHaveBeenCalledWith(path, { metadata: { previouslyKnownAs: [] } });
             expect(options.operationDelayMs).toBe(0);
         } finally {
             scheduler.stop();
@@ -72,7 +69,6 @@ describe('createMemoryTagIndexReconciliationScheduler', () => {
                     deleteTagIndexItems:  mock(async () => {}),
                     listTagCounts:        mock(async () => []),
                 },
-                updateMemoryMetadata: mock(async () => { throw new Error('unexpected update'); }),
             }),
         } as unknown as MemoryToolBackend;
         const scheduler = createMemoryTagIndexReconciliationScheduler(backend, config, {

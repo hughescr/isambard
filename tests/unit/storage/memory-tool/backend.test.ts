@@ -12,7 +12,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../setup';
 import { ItemNotFoundError, ValidationError } from '@/errors/storage';
 import { MemoryToolBackend, reconciliationAccess } from '@/storage/memory-tool/backend';
-import type { MemoryToolItem, MemoryToolItemData, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
+import type { MemoryToolItem, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 
 describe('MemoryToolBackend', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -939,41 +939,6 @@ describe('MemoryToolBackend', () => {
             expect(tagIndexBackend).toBeInstanceOf(Object);
             // Should have the expected methods from MemoryToolBackendTagIndex
             expect(typeof tagIndexBackend.createTagIndexItems).toBe('function');
-        });
-
-        test('reconciliation metadata updater preserves updatedAt', async () => {
-            const testPath = '/state/reconcile-test' as MemoryPath;
-            const existingData: MemoryToolItemData = {
-                path:        testPath,
-                content:     'Test content',
-                contentType: 'text/plain',
-                metadata:    { previouslyKnownAs: ['old-path'] },
-                createdAt:   '2024-01-01T00:00:00.000Z',
-                updatedAt:   '2024-01-01T00:00:00.000Z',
-            };
-
-            // Setup: backend will fetch the item
-            const existingItem: MemoryToolItem = {
-                PK:     'DIR#/state',
-                SK:     'FILE#reconcile-test',
-                GSI1PK: 'LAYER#state',
-                GSI1SK: 'UPDATED#2024-01-01T00:00:00.000Z',
-                ...existingData,
-            };
-            ddbMock.on(GetCommand).resolves({ Item: existingItem });
-            ddbMock.on(PutCommand).resolves({});
-
-            const result = await backend[reconciliationAccess]().updateMemoryMetadata(testPath, {
-                metadata: {},
-            });
-
-            // Should preserve original updatedAt (not refresh) since reconciliation is maintenance
-            const putCalls = ddbMock.commandCalls(PutCommand);
-            const mainItem = putCalls[0].args[0].input.Item as MemoryToolItemData;
-            expect(mainItem.updatedAt).toBe('2024-01-01T00:00:00.000Z');
-
-            // Should return updated data
-            expect(result.metadata).toEqual({});
         });
     });
 

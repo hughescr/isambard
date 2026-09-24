@@ -14,7 +14,6 @@ import {
     type TagIndexReconciliationSchedulerDeps
 } from '@/storage/memory-tool/reconciliation/scheduler';
 import type { ReconciliationConfig, ReconciliationResult } from '@/storage/memory-tool/reconciliation/types';
-import type { MemoryToolItemData } from '@/storage/memory-tool/types';
 
 function makePhaseC(): ReconciliationResult['phaseC'] {
     return {
@@ -71,11 +70,10 @@ describe('TagIndexReconciliationScheduler', () => {
 
         // Create mock reconciler deps
         mockReconcilerDeps = {
-            docClient:            {} as DynamoDBDocumentClient,
-            tableName:            'TestTable',
-            tagIndex:             {} as MemoryToolBackendTagIndex,
-            getMemory:            mock(() => Promise.resolve(undefined)),
-            updateMemoryMetadata: mock(() => Promise.resolve({} as MemoryToolItemData)),
+            docClient: {} as DynamoDBDocumentClient,
+            tableName: 'TestTable',
+            tagIndex:  {} as MemoryToolBackendTagIndex,
+            getMemory: mock(() => Promise.resolve(undefined)),
         };
 
         scheduler = null;

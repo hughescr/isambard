@@ -94,8 +94,7 @@ function launchAbortScenario(
             refreshTagIndexItems: unreachable,
             listTagCounts:        unreachable,
         },
-        getMemory:            async (_path: MemoryPath): Promise<MemoryToolItemData | undefined> => undefined,
-        updateMemoryMetadata: unreachable,
+        getMemory: async (_path: MemoryPath): Promise<MemoryToolItemData | undefined> => undefined,
     };
     const options: ReconcilerOptions = {
         operationDelayMs: 0,

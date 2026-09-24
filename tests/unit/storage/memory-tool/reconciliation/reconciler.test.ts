@@ -158,7 +158,6 @@ describe('runTagIndexReconciliation', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let tagIndex: MemoryToolBackendTagIndex;
     let getMemory: ReturnType<typeof mock>;
-    let updateMemoryMetadata: ReturnType<typeof mock>;
     let deps: ReconcilerDeps;
     let options: ReconcilerOptions;
 
@@ -223,6 +222,7 @@ describe('runTagIndexReconciliation', () => {
 
     beforeEach(() => {
         ddbMock.reset();
+        ddbMock.on(UpdateCommand).resolves({});
         mockLogger.debug.mockReset();
         mockLogger.info.mockReset();
         mockLogger.warn.mockReset();
@@ -231,14 +231,12 @@ describe('runTagIndexReconciliation', () => {
             'TestTable'
         );
         getMemory = mock(async () => undefined);
-        updateMemoryMetadata = mock(async () => ({} as MemoryToolItemData));
 
         deps = {
             docClient: ddbMock as unknown as DynamoDBDocumentClient,
             tableName: 'TestTable',
             tagIndex,
             getMemory,
-            updateMemoryMetadata,
         };
 
         options = {
@@ -812,7 +810,7 @@ describe('runTagIndexReconciliation', () => {
             const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.itemsScanned).toBe(1);
             expect(result.phaseA.metadataCleaned).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
         });
 
         test('should clean previouslyKnownAs metadata when old path indices are gone', async () => {
@@ -860,15 +858,20 @@ describe('runTagIndexReconciliation', () => {
                 Key: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' },
             }).resolves({ Item: undefined });
 
-            updateMemoryMetadata.mockResolvedValue({
-                ...memoryItem,
-                metadata: {},
-            });
-
             const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(1);
-            expect(updateMemoryMetadata).toHaveBeenCalled();
+            const cleanupCommand = ddbMock.commandCalls(UpdateCommand)[0]?.args[0].input;
+            expect(cleanupCommand.TableName).toBe('TestTable');
+            expect(cleanupCommand.Key).toEqual({ PK: 'DIR#/identity', SK: 'FILE#core.md' });
+            expect(cleanupCommand.UpdateExpression).toBe('REMOVE #metadata.#previouslyKnownAs, #metadata.#previouslyKnownAsTags');
+            expect(cleanupCommand.ConditionExpression).toBe('attribute_exists(PK) AND attribute_type(#metadata, :map)');
+            expect(cleanupCommand.ExpressionAttributeNames).toEqual({
+                '#metadata':              'metadata',
+                '#previouslyKnownAs':     'previouslyKnownAs',
+                '#previouslyKnownAsTags': 'previouslyKnownAsTags',
+            });
+            expect(cleanupCommand.ExpressionAttributeValues).toEqual({ ':map': 'M' });
             expect(mockLogger.debug).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'Cleaned previouslyKnownAs metadata',
             }));
@@ -922,7 +925,7 @@ describe('runTagIndexReconciliation', () => {
             const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
         });
 
         test('should NOT clean previouslyKnownAs when tag enumeration fails (getAllTagNames returns undefined)', async () => {
@@ -968,7 +971,7 @@ describe('runTagIndexReconciliation', () => {
 
             // Should NOT clean previouslyKnownAs since we couldn't confirm old indices are gone
             expect(result.phaseA.metadataCleaned).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
         });
 
         test('should handle pagination (multiple pages per layer)', async () => {
@@ -1271,7 +1274,7 @@ describe('runTagIndexReconciliation', () => {
             }));
         });
 
-        test('should catch errors from updateMemoryMetadata in cleanPreviouslyKnownAs', async () => {
+        test('reports an error and does not count cleanup when the conditional metadata removal fails', async () => {
             const memoryItem = {
                 PK:          'DIR#/identity',
                 SK:          'FILE#renamed.md',
@@ -1316,13 +1319,13 @@ describe('runTagIndexReconciliation', () => {
                 Key: { PK: 'TAG#test', SK: 'PATH#/identity/old-name.md' },
             }).resolves({ Item: undefined });
 
-            // Make updateMemoryMetadata throw
-            updateMemoryMetadata.mockRejectedValue(new Error('Failed to update metadata'));
+            ddbMock.on(UpdateCommand).rejects(new Error('Conditional metadata removal failed'));
 
             const result = await runTagIndexReconciliation(deps, options);
 
-            expect(result.phaseA.errors).toBeGreaterThan(0);
-            expect(updateMemoryMetadata).toHaveBeenCalled();
+            expect(result.phaseA.errors).toBe(1);
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(1);
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
                 msg: 'Failed to clean previouslyKnownAs',
             }));
@@ -1369,7 +1372,7 @@ describe('runTagIndexReconciliation', () => {
 
             // Should NOT clean because old path index still exists
             expect(result.phaseA.metadataCleaned).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
         });
 
         test('should clean previouslyKnownAs immediately when previouslyKnownAsTags is empty array (no tags to check)', async () => {
@@ -1399,19 +1402,11 @@ describe('runTagIndexReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            updateMemoryMetadata.mockResolvedValue({
-                ...memoryItem,
-                metadata: { someOtherKey: 'preserved' },
-            });
-
             const result = await runTagIndexReconciliation(deps, options);
 
             // Empty previouslyKnownAsTags → immediately clean (no GetItem needed)
             expect(result.phaseA.metadataCleaned).toBe(1);
-            expect(updateMemoryMetadata).toHaveBeenCalledWith(
-                '/identity/core.md',
-                expect.objectContaining({ metadata: { someOtherKey: 'preserved' } })
-            );
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(1);
             // No GetCommand should have been issued for tag checking
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
         });
@@ -1462,15 +1457,10 @@ describe('runTagIndexReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            updateMemoryMetadata.mockResolvedValue({
-                ...memoryItem,
-                metadata: {},
-            });
-
             const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(1);
-            expect(updateMemoryMetadata).toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(1);
 
             // Verify GSI2 TAG_COUNTS was NOT queried for checkOldPathIndicesClean
             // (it IS queried for Phase B and Phase C, but not for Phase A's checkOldPathIndicesClean)
@@ -1548,11 +1538,6 @@ describe('runTagIndexReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            updateMemoryMetadata.mockResolvedValue({
-                ...memoryItem,
-                metadata: {},
-            });
-
             // Start reconciliation without awaiting — so we can observe mid-flight state
             const reconciliationPromise = runTagIndexReconciliation(deps, options);
 
@@ -1623,11 +1608,6 @@ describe('runTagIndexReconciliation', () => {
             // Fake Phase B to avoid extra GSI2 calls
             mockEmptyPhaseB();
 
-            updateMemoryMetadata.mockResolvedValue({
-                ...memoryItem,
-                metadata: {},
-            });
-
             const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(1);
@@ -1678,21 +1658,17 @@ describe('runTagIndexReconciliation', () => {
 
             mockEmptyPhaseB();
 
-            updateMemoryMetadata.mockResolvedValue({
-                ...memoryItem,
-                metadata: { someOtherKey: 'preserved' },
-            });
-
             const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseA.metadataCleaned).toBe(1);
-            // Verify updateMemoryMetadata was called with metadata that has NEITHER previouslyKnownAs NOR previouslyKnownAsTags
-            // Access call args directly to avoid nested expect matchers typed-as-any causing lint errors
-            const calledArg = updateMemoryMetadata.mock.calls[0][1] as { metadata: Record<string, unknown> };
-            expect(calledArg.metadata).not.toHaveProperty('previouslyKnownAs');
-            expect(calledArg.metadata).not.toHaveProperty('previouslyKnownAsTags');
-            // But other metadata is preserved
-            expect(calledArg.metadata).toHaveProperty('someOtherKey', 'preserved');
+            const cleanupCommand = ddbMock.commandCalls(UpdateCommand)[0]?.args[0].input;
+            expect(cleanupCommand.Key).toEqual({ PK: 'DIR#/identity', SK: 'FILE#core.md' });
+            expect(cleanupCommand.UpdateExpression).toBe('REMOVE #metadata.#previouslyKnownAs, #metadata.#previouslyKnownAsTags');
+            expect(cleanupCommand.ExpressionAttributeNames).toEqual({
+                '#metadata':              'metadata',
+                '#previouslyKnownAs':     'previouslyKnownAs',
+                '#previouslyKnownAsTags': 'previouslyKnownAsTags',
+            });
         });
     });
 
@@ -2463,7 +2439,7 @@ describe('runTagIndexReconciliation', () => {
             const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.itemsScanned).toBe(1);
             expect(result.phaseA.errors).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
         });
 
         test('ignores a malformed previous path without enumerating rename tags', async () => {
@@ -2480,7 +2456,7 @@ describe('runTagIndexReconciliation', () => {
             const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.metadataCleaned).toBe(0);
             expect(result.phaseA.errors).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
         });
 
@@ -2505,7 +2481,7 @@ describe('runTagIndexReconciliation', () => {
 
             const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.metadataCleaned).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
             expect(ddbMock.commandCalls(GetCommand).map(call => call.args[0].input.Key?.PK)).toEqual(['TAG#fallback']);
         });
     });
@@ -2605,7 +2581,7 @@ describe('runTagIndexReconciliation', () => {
                 context: 'checkOldPathIndicesClean:known:/identity/old.md',
             }));
             expect(result.phaseA.metadataCleaned).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
         });
 
         test('propagates an abort thrown by alias metadata cleanup', async () => {
@@ -2614,7 +2590,7 @@ describe('runTagIndexReconciliation', () => {
             })]);
             mockLayerQuery('state', []);
             mockLayerQuery('events', []);
-            updateMemoryMetadata.mockRejectedValue(new DOMException('Aborted', 'AbortError'));
+            ddbMock.on(UpdateCommand).rejects(new DOMException('Aborted', 'AbortError'));
             mockEmptyPhaseB();
 
             await expect(runTagIndexReconciliation(deps, options)).rejects.toMatchObject({
@@ -2638,7 +2614,7 @@ describe('runTagIndexReconciliation', () => {
 
             const result = await runTagIndexReconciliation(deps, options);
             expect(result.phaseA.metadataCleaned).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(2);
         });
 
@@ -2656,7 +2632,7 @@ describe('runTagIndexReconciliation', () => {
                 context: 'checkOldPathIndicesClean:fallback:/identity/old.md',
             }));
             expect(result.phaseA.metadataCleaned).toBe(0);
-            expect(updateMemoryMetadata).not.toHaveBeenCalled();
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
         });
 
         test('identifies count query failures by tag', async () => {

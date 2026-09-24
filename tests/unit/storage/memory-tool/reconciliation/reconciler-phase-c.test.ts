@@ -3,13 +3,11 @@ import { DynamoDBDocumentClient, QueryCommand, UpdateCommand, DeleteCommand } fr
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { runTagIndexReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
-import type { MemoryToolItemData } from '@/storage/memory-tool/types';
 
 describe('runTagIndexReconciliation - Phase C (META_COUNT verification)', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
     let tagIndex: MemoryToolBackendTagIndex;
     let getMemory: ReturnType<typeof mock>;
-    let updateMemoryMetadata: ReturnType<typeof mock>;
     let deps: ReconcilerDeps;
     let options: ReconcilerOptions;
 
@@ -20,14 +18,12 @@ describe('runTagIndexReconciliation - Phase C (META_COUNT verification)', () => 
             'TestTable'
         );
         getMemory = mock(async () => undefined);
-        updateMemoryMetadata = mock(async () => ({} as MemoryToolItemData));
 
         deps = {
             docClient: ddbMock as unknown as DynamoDBDocumentClient,
             tableName: 'TestTable',
             tagIndex,
             getMemory,
-            updateMemoryMetadata,
         };
 
         options = {

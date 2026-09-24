@@ -15,7 +15,7 @@ export function createMemoryTagIndexReconciliationScheduler(
         runReconciliation?: (deps: ReconcilerDeps, options: ReconcilerOptions) => Promise<ReconciliationResult>
     }
 ): TagIndexReconciliationScheduler {
-    const { tagIndex, updateMemoryMetadata } = backend[reconciliationAccess]();
+    const { tagIndex } = backend[reconciliationAccess]();
     return createTagIndexReconciliationScheduler({
         config,
         runReconciliation: deps.runReconciliation ?? runTagIndexReconciliation,
@@ -24,7 +24,6 @@ export function createMemoryTagIndexReconciliationScheduler(
             tableName: deps.tableName,
             tagIndex,
             getMemory: path => backend.get(path),
-            updateMemoryMetadata,
         },
     });
 }

@@ -30,11 +30,10 @@ export interface TagIndexReconciliationOps {
  * Dependencies interface for testability
  */
 export interface ReconcilerDeps {
-    docClient:            DynamoDBDocumentClient | DynamoDBClientHolder
-    tableName:            string
-    tagIndex:             TagIndexReconciliationOps
-    getMemory:            (path: MemoryPath) => Promise<MemoryToolItemData | undefined>
-    updateMemoryMetadata: (path: MemoryPath, input: { metadata: Record<string, unknown> }) => Promise<MemoryToolItemData>
+    docClient: DynamoDBDocumentClient | DynamoDBClientHolder
+    tableName: string
+    tagIndex:  TagIndexReconciliationOps
+    getMemory: (path: MemoryPath) => Promise<MemoryToolItemData | undefined>
 }
 
 /** @internal Resolved deps with a concrete docClient (holder already resolved at run-start). */
@@ -385,13 +384,22 @@ async function cleanPreviouslyKnownAs(
         const isClean = await checkOldPathIndicesClean(ctx, cleanup);
 
         if(isClean) {
-            // Remove previouslyKnownAs and previouslyKnownAsTags from metadata
-            const { previouslyKnownAs: _, previouslyKnownAsTags: __, ...cleanMetadata } = memoryItem.metadata;
+            await ctx.deps.docClient.send(new UpdateCommand({
+                TableName: ctx.deps.tableName,
 
-            await ctx.deps.updateMemoryMetadata(
-                memoryItem.path,
-                { metadata: cleanMetadata }
-            );
+                Key: { PK: memoryItem.PK, SK: memoryItem.SK },
+
+                UpdateExpression: 'REMOVE #metadata.#previouslyKnownAs, #metadata.#previouslyKnownAsTags',
+
+                ConditionExpression: 'attribute_exists(PK) AND attribute_type(#metadata, :map)',
+
+                ExpressionAttributeNames: {
+                    '#metadata':              'metadata',
+                    '#previouslyKnownAs':     'previouslyKnownAs',
+                    '#previouslyKnownAsTags': 'previouslyKnownAsTags',
+                },
+                ExpressionAttributeValues: { ':map': 'M' },
+            }));
 
             ctx.progress.metadataCleaned++;
             logger.debug({ path: memoryItem.path, oldPath: cleanup.oldPath, msg: 'Cleaned previouslyKnownAs metadata' });
