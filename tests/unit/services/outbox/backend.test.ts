@@ -476,6 +476,13 @@ describe('OutboxBackend', () => {
             );
         });
 
+        test('a persist failure during terminal cleanup propagates instead of the original delete error', async () => {
+            ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
+            ddbMock.on(PutCommand).rejects(new Error('put failed'));
+
+            await expect(backend.markFailed(makeItem({ progress: { attemptCount: 9 } }), 'offline', { retryable: false })).rejects.toThrow('put failed');
+        });
+
         test('failed terminal delete persists exhausted marker before rethrowing', async () => {
             ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
             ddbMock.on(PutCommand).resolves({});

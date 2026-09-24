@@ -23,6 +23,7 @@ const BSKY_ID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const BSKY_ID_2 = 'aaaaaaaa-1111-4222-8333-000000000002';
 const EMAIL_ID = 'bbbbbbbb-1111-4222-8333-444444444444';
 const STALE_ID = 'cccccccc-1111-4222-8333-444444444444';
+const STALE_ID_2 = 'cccccccc-1111-4222-8333-000000000002';
 const CLAIM_ID = '11111111-2222-4333-8444-555555555555';
 const OTHER_CLAIM_ID = '99999999-2222-4333-8444-555555555555';
 /** The fake clock's time in every test: when the default claim mock stamps its claims. */
@@ -538,6 +539,18 @@ describe('createApprovedOutboundActionExecutor', () => {
             await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce();
             expect(settleClaim.mock.calls[0]).toEqual([STALE, STALE_OUTCOME]);
             expect(settleClaim.mock.invocationCallOrder[0]).toBeLessThan(claim.mock.invocationCallOrder[0]);
+        });
+
+        test('a stale-claim settle failure stops the sweep before the next stale claim', async () => {
+            const stale2: ClaimedApprovedOutboundAction = { ...STALE, id: STALE_ID_2 };
+            listed = [STALE, stale2];
+            settleClaim.mockImplementationOnce(async () => {
+                throw new Error('write failed');
+            });
+
+            await expect(build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce()).rejects.toThrow('write failed');
+
+            expect(settleClaim).toHaveBeenCalledTimes(1);
         });
 
         test('a swept claim already resolved elsewhere is logged and not counted', async () => {

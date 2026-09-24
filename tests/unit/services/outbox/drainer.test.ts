@@ -299,6 +299,16 @@ describe('createOutboxDrainer', () => {
             custom.stop();
         });
 
+        test('eighth prior failure is still retryable on the ninth failed delivery', async () => {
+            const item = makeItem({ progress: { attemptCount: 8 } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Channel unavailable');
+            });
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Channel unavailable', { retryable: true });
+        });
+
         test('ninth prior failure is terminal on the tenth failed delivery', async () => {
             const item = makeItem({ progress: { attemptCount: 9 } });
             outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
