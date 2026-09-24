@@ -433,7 +433,7 @@ describe('EmailApprovalInteractionAdapter', () => {
                 await Promise.resolve();
 
                 expect(activityLogger.log).toHaveBeenCalledWith({
-                    type:    'email-sent',
+                    type:    'email-send-approved',
                     summary: 'Email approved for sending',
                 });
                 expect(mockLogger.warn).toHaveBeenCalledWith({
@@ -1232,7 +1232,7 @@ describe('EmailApprovalInteractionAdapter', () => {
             await Promise.resolve();
 
             expect(activityLogger.log).toHaveBeenCalledWith({
-                type:    'email-sent',
+                type:    'email-send-approved',
                 summary: 'Email approved for sending',
             });
             expect(mockLogger.warn).toHaveBeenCalledWith({

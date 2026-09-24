@@ -38,7 +38,7 @@ export class BskyOutboundApprovals {
 
     /**
      * Record an approved reply for the executor, carrying the approval card so the real outcome
-     * can be shown on it, then log the activity (fire-and-forget).
+     * can be shown on it, then log the approval activity (fire-and-forget).
      */
     async approveReply(reply: BskyApprovedReply, card: ApprovalCardRef): Promise<void> {
         const now = new Date().toISOString();
@@ -52,12 +52,12 @@ export class BskyOutboundApprovals {
             updatedAt:    now,
         });
 
-        void this.deps.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch((err: unknown) => {
+        void this.deps.activityLogger?.log({ type: 'bsky-reply-approved', summary: 'Bluesky reply approved for posting' }).catch((err: unknown) => {
             logger.warn({ err, msg: 'Activity log failed for Bluesky post approval' });
         });
     }
 
-    /** Record an approved DM for the executor with its approval card, then log the activity (fire-and-forget). */
+    /** Record an approved DM for the executor with its approval card, then log the approval activity (fire-and-forget). */
     async approveDm(dm: BskyApprovedDm, card: ApprovalCardRef): Promise<void> {
         const now = new Date().toISOString();
         await this.deps.actionWriter.create({
@@ -70,7 +70,7 @@ export class BskyOutboundApprovals {
             updatedAt:    now,
         });
 
-        void this.deps.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch((err: unknown) => {
+        void this.deps.activityLogger?.log({ type: 'bsky-dm-approved', summary: 'Bluesky DM approved for sending' }).catch((err: unknown) => {
             logger.warn({ err, msg: 'Activity log failed for Bluesky DM approval' });
         });
     }

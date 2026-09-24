@@ -746,6 +746,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             },
         },
         logger,
+        activityLogger,
     });
     registerCleanup({ name: 'approved outbound action executor', run: () => approvedActionExecutor.stop() });
     wakeApprovedActionExecutor = () => {

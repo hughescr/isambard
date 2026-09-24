@@ -2,9 +2,9 @@ import { createActivityLogger as createStorageActivityLogger, type ActivityLogge
 
 /** Agent and integration-owned vocabulary for automatically logged activities. */
 export type ActivityType
-    = | 'email-sent' | 'email-rejected'
-      | 'bsky-post-sent' | 'bsky-post-rejected'
-      | 'bsky-dm-sent' | 'bsky-dm-rejected'
+    = | 'email-send-approved' | 'email-sent' | 'email-rejected'
+      | 'bsky-reply-approved' | 'bsky-post-sent' | 'bsky-post-rejected'
+      | 'bsky-dm-approved' | 'bsky-dm-sent' | 'bsky-dm-rejected'
       | 'discord-exchange'
       | 'perch-start' | 'perch-end'
       | 'catchup-start' | 'catchup-complete';

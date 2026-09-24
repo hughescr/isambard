@@ -85,12 +85,13 @@ describe('EmailOutboundApprovals', () => {
             expect(action.id).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/);
         });
 
-        test('logs the email-sent activity after the write', async () => {
+        test.each(['direct', 'allowlist'] as const)('logs one email-send-approved activity after the %s write and never email-sent', async (via) => {
             const h = makeHarness();
 
-            await h.ops.approveSend(UID, 'direct', CARD);
+            await h.ops.approveSend(UID, via, CARD);
 
-            expect(h.activityLog.mock.calls).toEqual([[{ type: 'email-sent', summary: 'Email approved for sending' }]]);
+            expect(h.activityLog.mock.calls).toEqual([[{ type: 'email-send-approved', summary: 'Email approved for sending' }]]);
+            expect(h.activityLog).not.toHaveBeenCalledWith({ type: 'email-sent', summary: expect.any(String) });
             expect(h.events).toEqual(['create', 'activity']);
         });
 

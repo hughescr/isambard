@@ -92,7 +92,8 @@ describe('BskyOutboundApprovals', () => {
                 updatedAt:    NOW,
             });
             expect(action.id).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/);
-            expect(h.activityLog.mock.calls).toEqual([[{ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }]]);
+            expect(h.activityLog.mock.calls).toEqual([[{ type: 'bsky-reply-approved', summary: 'Bluesky reply approved for posting' }]]);
+            expect(h.activityLog).not.toHaveBeenCalledWith({ type: 'bsky-post-sent', summary: expect.any(String) });
             expect(h.events).toEqual(['create', 'activity']);
         });
 
@@ -145,7 +146,8 @@ describe('BskyOutboundApprovals', () => {
                 createdAt:    NOW,
                 updatedAt:    NOW,
             });
-            expect(h.activityLog.mock.calls).toEqual([[{ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }]]);
+            expect(h.activityLog.mock.calls).toEqual([[{ type: 'bsky-dm-approved', summary: 'Bluesky DM approved for sending' }]]);
+            expect(h.activityLog).not.toHaveBeenCalledWith({ type: 'bsky-dm-sent', summary: expect.any(String) });
         });
 
         test('a failed activity log warns and never rejects', async () => {

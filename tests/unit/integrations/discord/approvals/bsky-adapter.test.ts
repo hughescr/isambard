@@ -2122,7 +2122,7 @@ describe('BskyApprovalInteractionAdapter', () => {
                 await Promise.resolve();
 
                 expect(activityLogger.log).toHaveBeenCalledWith({
-                    type:    'bsky-post-sent',
+                    type:    'bsky-reply-approved',
                     summary: 'Bluesky reply approved for posting',
                 });
             });
@@ -2137,7 +2137,7 @@ describe('BskyApprovalInteractionAdapter', () => {
                 await Promise.resolve();
 
                 expect(activityLogger.log).toHaveBeenCalledWith({
-                    type:    'bsky-dm-sent',
+                    type:    'bsky-dm-approved',
                     summary: 'Bluesky DM approved for sending',
                 });
             });

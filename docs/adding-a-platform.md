@@ -182,29 +182,45 @@ Follow the patterns in `src/agent/bsky-mcp-server.ts` or `src/agent/email-mcp-se
 
 ### 5. Activity Logger Hooks
 
-When your platform client performs an action (send, reject, etc.), log it via the activity logger.
+When your platform performs an action (send, reject, etc.), log it via the activity logger. The event must describe what has actually happened — an admin approval is not a successful send.
 
 First, add `ActivityType` values for your platform in `src/agent/activity-types.ts` (storage's activity logger is generic; the agent owns the action vocabulary):
 
 ```typescript
 export type ActivityType
-    = | 'email-sent' | 'email-rejected'
-      | 'bsky-post-sent' | 'bsky-post-rejected'
-      | 'bsky-dm-sent' | 'bsky-dm-rejected'
+    = | 'email-send-approved' | 'email-sent' | 'email-rejected'
+      | 'bsky-reply-approved' | 'bsky-post-sent' | 'bsky-post-rejected'
+      | 'bsky-dm-approved' | 'bsky-dm-sent' | 'bsky-dm-rejected'
       | 'discord-exchange'
       | 'perch-start' | 'perch-end'
       | 'catchup-start' | 'catchup-complete'
-      | 'yourplatform-sent' | 'yourplatform-rejected';  // add here
+      | 'yourplatform-send-approved' | 'yourplatform-sent' | 'yourplatform-rejected';  // add here
 ```
 
 (There is no `perch-suspend`/`perch-resume`/`catchup-suspend` — the conductor's perch driver and startup catch-up turn don't suspend/resume; see the Session Architecture section of `docs/architecture.md`.)
 
-Then wire fire-and-forget logging at the action site (typically in the MCP server handler or outbound approval handler):
+For a direct action that does not need approval, log the `*-sent` event only after the client call succeeds. For an approval-backed action, inject the activity logger into both the approval service and the `ApprovedOutboundActionExecutor` when wiring them in `src/index.ts`:
+
+1. After the approval service has durably created its `ApprovedOutboundAction`, fire-and-forget a `*-approved` event. This records the admin decision, not delivery.
+2. Extend the executor's action-to-activity mapping for the new action type. It emits the `*-sent` event only after the executor has successfully sent and durably settled the action as `executed`; it must not be emitted by the approval handler.
+3. Log a `*-rejected` event after a rejection is recorded.
+
+For example, an approval handler logs this after its `actionWriter.create()` completes:
+
+```typescript
+void activityLogger.log({
+    type:    'yourplatform-send-approved',
+    summary: `Message to ${recipient} approved for sending`,
+    tags:    ['yourplatform', recipient],
+}).catch(() => undefined);
+```
+
+The executor owns the eventual sent event, using the same fire-and-forget pattern only from its settled-success path:
 
 ```typescript
 void activityLogger.log({
     type:    'yourplatform-sent',
-    summary: `Sent message to ${recipient}: ${truncate(text)}`,
+    summary: `Message sent to ${recipient}`,
     tags:    ['yourplatform', recipient],
 }).catch(() => undefined);
 ```
@@ -228,7 +244,7 @@ const yourPlatformMcpServer = options.yourPlatformClient
     : undefined;
 ```
 
-Fire-and-forget activity logging is called inline in the MCP tool handler itself (see "5. Activity Logger Hooks" above), not injected as a dependency here.
+For direct MCP actions, fire-and-forget activity logging can be called inline after the client action succeeds. Approval-backed actions need the activity logger injected into the approval service and the `ApprovedOutboundActionExecutor` here, so approval and settled-success events occur at their respective lifecycle points (see "5. Activity Logger Hooks" above).
 
 **`src/index.ts`** (or the relevant `src/app/*.ts` factory) — instantiate your client and history provider, then register the provider with `PersonHistoryCoordinator`:
 
@@ -270,8 +286,10 @@ Export only what other modules need. Run `bun dead-code` (knip) to verify no unu
 - [ ] `src/integrations/{platform}/index.ts` — barrel exports (public API only)
 - [ ] `src/storage/contacts/types.ts` — add platform to `platformTypeSchema`
 - [ ] `src/agent/{platform}-mcp-server.ts` — MCP tools (if platform supports interactive ops)
-- [ ] `src/agent/activity-types.ts` — add `ActivityType` values for platform actions
-- [ ] Activity logger calls wired at action sites (fire-and-forget)
+- [ ] `src/agent/activity-types.ts` — add `*-approved`, `*-sent`, and rejection `ActivityType` values as applicable
+- [ ] Direct actions log `*-sent` only after the client action succeeds (fire-and-forget)
+- [ ] Approval handlers log `*-approved` after their durable approval write; never `*-sent`
+- [ ] `ApprovedOutboundActionExecutor` maps approval-backed actions to `*-sent` and logs only from the settled-success path
 - [ ] `src/app/mcp-servers.ts` — register MCP server
 - [ ] `src/index.ts` / `src/app/*.ts` — instantiate client, register history provider
 - [ ] `eslint-boundaries.config.mjs` — add boundary element and allow rules

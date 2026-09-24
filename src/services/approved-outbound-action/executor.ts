@@ -12,9 +12,26 @@ import {
     type FailureKind
 } from './types';
 import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError } from '@/errors';
+import type { ActivityLogEntry, ActivityLogger } from '@/storage';
 
 /** Logger interface for the approved-outbound-action executor. Alias for {@link ServiceLogger}. */
 export type ApprovedOutboundActionExecutorLogger = ServiceLogger;
+
+type SentActivityType = 'email-sent' | 'bsky-post-sent' | 'bsky-dm-sent';
+
+function sentActivityFor(type: ApprovedOutboundActionType): ActivityLogEntry<SentActivityType> {
+    switch(type) {
+        case 'email_send': {
+            return { type: 'email-sent', summary: 'Email sent' };
+        }
+        case 'bsky_reply': {
+            return { type: 'bsky-post-sent', summary: 'Bluesky reply posted' };
+        }
+        case 'bsky_dm': {
+            return { type: 'bsky-dm-sent', summary: 'Bluesky DM sent' };
+        }
+    }
+}
 
 /**
  * How long one external send may take before its outcome is recorded as unknown (2 minutes).
@@ -43,6 +60,8 @@ interface ApprovedOutboundActionExecutorDeps {
     registry:          ServiceHealthRegistry
     executors:         Record<ApprovedOutboundActionType, (params: Record<string, unknown>) => Promise<void>>
     logger:            ServiceLogger
+    /** Best-effort event sink for sends that have already settled durably as executed. */
+    activityLogger?:   ActivityLogger<SentActivityType>
     /**
      * Called after each durable terminal write (`executed` or `failed`), so the outcome
      * reporter can report it straight away. The write itself carries the report's outbox marker
@@ -149,6 +168,7 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
         registry,
         executors,
         logger,
+        activityLogger,
         onOutcomeRecorded,
         sendTimeoutMs = DEFAULT_SEND_TIMEOUT_MS,
         claimLeaseMs = DEFAULT_CLAIM_LEASE_MS,
@@ -213,6 +233,9 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
             if(outcome.state === 'executed') {
                 result.executed++;
                 logger.info({ actionId: claimed.id, type: claimed.type }, 'Approved outbound action executed successfully');
+                void activityLogger?.log(sentActivityFor(claimed.type)).catch((err: unknown) => {
+                    logger.warn({ actionId: claimed.id, type: claimed.type, error: errorMessage(err) }, 'Approved outbound action sent activity log failed');
+                });
             } else {
                 result.failed++;
                 logger.error(

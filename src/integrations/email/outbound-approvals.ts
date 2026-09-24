@@ -27,7 +27,7 @@ export class EmailOutboundApprovals {
 
     /**
      * Record the approved send as a durable ApprovedOutboundAction for the executor, carrying
-     * the approval card so the real outcome can be shown on it, then log the activity
+     * the approval card so the real outcome can be shown on it, then log the approval activity
      * (fire-and-forget). The rate limiter is intentionally not charged here: the admin's manual
      * approval is itself the rate control for non-allowlisted sends.
      */
@@ -43,7 +43,7 @@ export class EmailOutboundApprovals {
             updatedAt:    now,
         });
 
-        void this.deps.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch((err: unknown) => {
+        void this.deps.activityLogger?.log({ type: 'email-send-approved', summary: 'Email approved for sending' }).catch((err: unknown) => {
             logger.warn({ err, msg: `Activity log failed for email send (${via} path)` });
         });
     }

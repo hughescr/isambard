@@ -78,10 +78,11 @@ describe('createApprovedOutboundActionExecutor', () => {
     let registry: ServiceHealthRegistry;
     let executors: Record<ApprovedOutboundActionType, ReturnType<typeof mock<(params: Record<string, unknown>) => Promise<void>>>>;
     let logger: ApprovedOutboundActionExecutorLogger;
+    let activityLog: ReturnType<typeof mock<(entry: { type: string, summary: string }) => Promise<void>>>;
     let onOutcomeRecorded: ReturnType<typeof mock<() => void>>;
 
     function build(extra: Partial<ExecutorDeps> = {}): ApprovedOutboundActionExecutor {
-        return createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, ...extra });
+        return createApprovedOutboundActionExecutor({ backend, registry, executors, logger, activityLogger: { log: activityLog }, onOutcomeRecorded, ...extra });
     }
 
     beforeEach(() => {
@@ -119,6 +120,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             error: mock((): void => undefined),
             info:  mock((): void => undefined),
         };
+        activityLog = mock(async (_entry: { type: string, summary: string }): Promise<void> => undefined);
     });
 
     afterEach(() => {
@@ -145,6 +147,27 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(logger.info).toHaveBeenCalledWith({ actionId: BSKY_ID, type: 'bsky_reply' }, 'Approved outbound action executed successfully');
         });
 
+        test.each([
+            [BSKY, { type: 'bsky-post-sent', summary: 'Bluesky reply posted' }],
+            [makeAction({ type: 'bsky_dm', params: { convoId: 'c1', text: 'hi' } }), { type: 'bsky-dm-sent', summary: 'Bluesky DM sent' }],
+            [EMAIL, { type: 'email-sent', summary: 'Email sent' }],
+        ] as const)('logs %s as sent only after its executed settle succeeds', async (action, expectedEntry) => {
+            listed = [action];
+
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0 });
+
+            expect(activityLog.mock.calls).toEqual([[expectedEntry]]);
+            expect(settleClaim.mock.invocationCallOrder[0]).toBeLessThan(activityLog.mock.invocationCallOrder[0]);
+        });
+
+        test('settles a successful send without an activity logger', async () => {
+            listed = [BSKY];
+
+            expect(await build({ activityLogger: undefined }).executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(settleClaim).toHaveBeenCalledWith(claimedOf(BSKY), { state: 'executed' });
+            expect(activityLog).not.toHaveBeenCalled();
+        });
+
         test('skips a row whose service is unavailable without claiming it', async () => {
             listed = [BSKY];
             (registry.isAvailable as ReturnType<typeof mock>).mockImplementation((): boolean => false);
@@ -153,6 +176,7 @@ describe('createApprovedOutboundActionExecutor', () => {
 
             expect(claim).not.toHaveBeenCalled();
             expect(executors.bsky_reply).not.toHaveBeenCalled();
+            expect(activityLog).not.toHaveBeenCalled();
             expect(logger.info).toHaveBeenCalledWith(
                 { actionId: BSKY_ID, type: 'bsky_reply', service: 'bsky' },
                 'Skipping approved outbound action — required service unavailable'
@@ -167,6 +191,7 @@ describe('createApprovedOutboundActionExecutor', () => {
 
             expect(executors.bsky_reply).not.toHaveBeenCalled();
             expect(settleClaim).not.toHaveBeenCalled();
+            expect(activityLog).not.toHaveBeenCalled();
             expect(onOutcomeRecorded).not.toHaveBeenCalled();
             expect(logger.info).toHaveBeenCalledWith({ actionId: BSKY_ID, type: 'bsky_reply' }, 'Skipping approved outbound action — already claimed elsewhere');
         });
@@ -191,6 +216,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(await build().executeOnce()).toEqual({ executed: 0, failed: 1 });
 
             expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: 'network failure', failureKind: 'transient' }]]);
+            expect(activityLog).not.toHaveBeenCalled();
             expect(logger.error).toHaveBeenCalledWith(
                 { actionId: BSKY_ID, type: 'bsky_reply', error: 'network failure', failureKind: 'transient' },
                 'Approved outbound action execution failed'
@@ -303,6 +329,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0 });
 
             expect(onOutcomeRecorded).not.toHaveBeenCalled();
+            expect(activityLog).not.toHaveBeenCalled();
             expect(logger.warn).toHaveBeenCalledWith(
                 { actionId: BSKY_ID, outcome: { state: 'executed' } },
                 'Approved outbound action outcome not recorded: its claim was already resolved elsewhere'
@@ -315,6 +342,23 @@ describe('createApprovedOutboundActionExecutor', () => {
             });
 
             await expect(build().executeOnce()).rejects.toThrow('DynamoDB unavailable');
+        });
+
+        test('warns when a settled sent activity log fails without changing the successful outcome', async () => {
+            listed = [BSKY];
+            const failure = new Error('activity down');
+            activityLog.mockImplementation(async () => {
+                throw failure;
+            });
+
+            expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0 });
+            await Promise.resolve();
+
+            expect(logger.warn).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, type: 'bsky_reply', error: 'activity down' },
+                'Approved outbound action sent activity log failed'
+            );
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
         });
 
         test('signals a recorded outcome after the executed write', async () => {
@@ -356,8 +400,10 @@ describe('createApprovedOutboundActionExecutor', () => {
             });
             const executor = build();
             await expect(executor.executeOnce()).rejects.toThrow('state write failed');
+            expect(activityLog).not.toHaveBeenCalled();
 
             expect(await executor.executeOnce()).toEqual({ executed: 1, failed: 0 });
+            expect(activityLog.mock.calls).toEqual([[{ type: 'bsky-post-sent', summary: 'Bluesky reply posted' }]]);
 
             expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
             expect(claim).toHaveBeenCalledTimes(1);
