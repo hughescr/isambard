@@ -19,7 +19,7 @@ import { BskyApprovalInteractionAdapter } from '@/integrations/discord/approvals
 import { buildBskyApprovalEmbed } from '@/integrations/discord/approvals/bsky-embeds';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import { TokenBucketRateLimiter, type ApprovedOutboundActionWriter, type ServiceHealthRegistry } from '@/services';
-import type { DynamoDBClientHolder, MemoryToolBackend, PersonAllowlist } from '@/storage';
+import type { DynamoDBClientHolder, OperationalStateStore, PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
 /** Type guard: check if a Discord channel supports sending messages (has send method). */
@@ -55,8 +55,8 @@ export interface BskySetupOptions {
     personAllowlist:             PersonAllowlist
     /** Allowlist interaction handler for the saga-based allowlist flow */
     allowlistInteractionHandler: AllowlistInteractionHandler
-    /** Backend for the Q8 DM checkpoint manager (same backend as every other memory-tool consumer) */
-    memoryBackend:               MemoryToolBackend
+    /** Operational-state store for the Q8 DM checkpoint manager (the same store the MCP shared deps use) */
+    operationalStateStore:       OperationalStateStore
     /** Health registry the Q8 DM poller gates its tick on ('bsky' service) */
     healthRegistry:              ServiceHealthRegistry
     /** Notification bridge's `notify` — threaded into both the outbound approval handler (rejection wake) and the DM poller (accumulate) */
@@ -206,7 +206,7 @@ export async function setupBsky(options: BskySetupOptions): Promise<BskySetupRes
 
     // Q8: DM checkpoint manager + health-gated poller. Built here but not started — the caller
     // (src/index.ts) starts/stops it alongside the other Bluesky lifecycle pieces.
-    const checkpointManager = new BskyCheckpointManager({ backend: options.memoryBackend });
+    const checkpointManager = new BskyCheckpointManager({ store: options.operationalStateStore });
     const dmPoller = createBskyDmPoller({
         client:         bskyClient,
         checkpointManager,

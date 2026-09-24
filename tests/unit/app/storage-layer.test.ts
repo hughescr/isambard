@@ -20,6 +20,8 @@ import * as staticMemoryToolModule from '@/storage/memory-tool';
 import * as staticReconciliationModule from '@/storage/memory-tool/reconciliation';
 import type { TagIndexReconciliationScheduler } from '@/storage/memory-tool/reconciliation/scheduler';
 import * as staticVecStoreModule from '@/storage/memory-vec-store';
+import type { OperationalStateBackend, OperationalStateStore } from '@/storage/operational-state';
+import * as staticOperationalStateModule from '@/storage/operational-state';
 import type { SessionJournalBackend } from '@/storage/session-journal';
 import * as staticSessionJournalModule from '@/storage/session-journal';
 import * as staticSessionResumeModule from '@/storage/session-resume';
@@ -196,6 +198,26 @@ describe('createStorageLayer', () => {
 
             expect(createResumeStoreSpy).toHaveBeenCalledWith(mockSessionResumeBackend, 'perch');
             expect(store).toBe(mockResumeStore);
+        });
+
+        test('operationalStateStore wraps an OperationalStateBackend on the holder and table with the memory backend as legacy reader', async () => {
+            mockCommonDeps();
+            const mockBackend = {} as unknown as OperationalStateBackend;
+            // @ts-expect-error - Mocking constructor
+            const backendSpy = spyOn(staticOperationalStateModule, 'OperationalStateBackend').mockImplementation(() => mockBackend);
+            const mockStore = {} as unknown as OperationalStateStore;
+            const createStoreSpy = spyOn(staticOperationalStateModule, 'createOperationalStateStore').mockReturnValue(mockStore);
+            spies.push(backendSpy, createStoreSpy);
+
+            const result = await staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig);
+
+            expect(backendSpy).toHaveBeenCalledTimes(1);
+            expect(backendSpy.mock.calls[0] as unknown[]).toEqual([result.holder, 'TestTable']);
+            expect(createStoreSpy).toHaveBeenCalledTimes(1);
+            expect(createStoreSpy.mock.calls[0]?.[0]).toEqual({ backend: mockBackend, legacyMemoryBackend: result.memoryBackend });
+            expect(createStoreSpy.mock.calls[0]?.[0].backend).toBe(mockBackend);
+            expect(createStoreSpy.mock.calls[0]?.[0].legacyMemoryBackend).toBe(result.memoryBackend);
+            expect(result.operationalStateStore).toBe(mockStore);
         });
     });
 

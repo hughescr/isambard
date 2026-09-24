@@ -31,22 +31,22 @@ import {
     type MessageSearchService,
     type InboxManager as InboxManagerType
 } from '@/integrations/discord';
-import type { DynamoDBClientHolder, MemoryToolBackend } from '@/storage';
+import type { DynamoDBClientHolder, OperationalStateStore } from '@/storage';
 
 /**
  * Options for creating Discord infrastructure.
  */
 interface DiscordInfrastructureOptions {
     /** Discord configuration (bot token, home guild, etc.) */
-    discordConfig:    DiscordConfig
+    discordConfig:         DiscordConfig
     /** DynamoDB document client or holder for channel registry backend */
-    docClient:        DynamoDBDocumentClient | DynamoDBClientHolder
+    docClient:             DynamoDBDocumentClient | DynamoDBClientHolder
     /** DynamoDB table name for channel registry */
-    tableName:        string
-    /** Memory tool backend for checkpoint manager */
-    memoryBackend:    MemoryToolBackend
+    tableName:             string
+    /** Operational-state store for the inbox checkpoint manager */
+    operationalStateStore: OperationalStateStore
     /** Optional construction owner; called as soon as the client is acquired. */
-    onClientCreated?: (client: Client) => void
+    onClientCreated?:      (client: Client) => void
 }
 
 /**
@@ -85,7 +85,7 @@ interface DiscordInfrastructure {
  *   discordConfig,
  *   docClient,
  *   tableName,
- *   memoryBackend,
+ *   operationalStateStore,
  * });
  *
  * // Later: log in to Discord
@@ -93,7 +93,7 @@ interface DiscordInfrastructure {
  * ```
  */
 export function createDiscordInfrastructure(options: DiscordInfrastructureOptions): DiscordInfrastructure {
-    const { discordConfig, docClient, tableName, memoryBackend, onClientCreated } = options;
+    const { discordConfig, docClient, tableName, operationalStateStore, onClientCreated } = options;
 
     // Create Discord client early (shared with bot and channel registry)
     const discordClient = createDiscordClient(discordConfig);
@@ -124,7 +124,7 @@ export function createDiscordInfrastructure(options: DiscordInfrastructureOption
         logger.info('Discord message history enabled');
 
         // Create checkpoint manager for inbox
-        const checkpointManager = new CheckpointManager({ backend: memoryBackend });
+        const checkpointManager = new CheckpointManager({ store: operationalStateStore });
 
         // Create inbox manager with channel registry
         const inboxManager: InboxManagerType = new InboxManager({

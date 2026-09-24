@@ -17,6 +17,16 @@ export { SessionResumeBackend, createSessionId, type SessionId } from './session
 // Session Journal
 export { SessionJournalBackend, journalEntrySchema, type SessionJournalItem } from './session-journal';
 
+// Operational State
+export {
+    OperationalStateBackend,
+    createOperationalStateStore,
+    type OperationalStateKey,
+    type OperationalStateRead,
+    type OperationalStateSchema,
+    type OperationalStateStore
+} from './operational-state';
+
 // Memory Tool
 export * from './memory-tool';
 

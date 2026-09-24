@@ -27,6 +27,7 @@ import type { ServiceHealthRegistry } from '@/services';
 import type { TokenBucketRateLimiter } from '@/services/rate-limiters/token-bucket';
 import type { ContactBackend, ContactChangeRequest, PersonAllowlist } from '@/storage';
 import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
+import type { OperationalStateStore } from '@/storage/operational-state';
 
 type McpServerInstance = ReturnType<typeof createMemoryMCPServer>;
 
@@ -55,13 +56,14 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
 
         // Create mock options with all required properties
         mockOptions = {
-            memoryBackend:        {} as unknown as MemoryToolBackend,
-            messageSearchService: {} as unknown as MessageSearchService,
-            discordClient:        {} as unknown as Client,
-            questionRegistry:     {} as unknown as QuestionRegistry,
-            channelRegistry:      {} as unknown as ChannelRegistryManager,
-            inboxManager:         {} as unknown as InboxManager,
-            timezone:             'America/New_York',
+            memoryBackend:         {} as unknown as MemoryToolBackend,
+            operationalStateStore: {} as unknown as OperationalStateStore,
+            messageSearchService:  {} as unknown as MessageSearchService,
+            discordClient:         {} as unknown as Client,
+            questionRegistry:      {} as unknown as QuestionRegistry,
+            channelRegistry:       {} as unknown as ChannelRegistryManager,
+            inboxManager:          {} as unknown as InboxManager,
+            timezone:              'America/New_York',
         };
     });
 
@@ -540,13 +542,14 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
     beforeEach(() => {
         spies = [];
         mockOptions = {
-            memoryBackend:        {} as unknown as MemoryToolBackend,
-            messageSearchService: {} as unknown as MessageSearchService,
-            discordClient:        {} as unknown as Client,
-            questionRegistry:     {} as unknown as QuestionRegistry,
-            channelRegistry:      {} as unknown as ChannelRegistryManager,
-            inboxManager:         {} as unknown as InboxManager,
-            timezone:             'America/New_York',
+            memoryBackend:         {} as unknown as MemoryToolBackend,
+            operationalStateStore: {} as unknown as OperationalStateStore,
+            messageSearchService:  {} as unknown as MessageSearchService,
+            discordClient:         {} as unknown as Client,
+            questionRegistry:      {} as unknown as QuestionRegistry,
+            channelRegistry:       {} as unknown as ChannelRegistryManager,
+            inboxManager:          {} as unknown as InboxManager,
+            timezone:              'America/New_York',
         };
 
         spies.push(
@@ -585,6 +588,7 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
 
         expect(dmTrackerSpy).toHaveBeenCalledTimes(1);
         expect(checkpointSpy).toHaveBeenCalledTimes(1);
+        expect(checkpointSpy).toHaveBeenCalledWith({ store: mockOptions.operationalStateStore });
         expect(shared.dmTracker).toBe(fakeDmTracker);
         expect(shared.bskyCheckpointManager).toBe(fakeCheckpointManager);
     });

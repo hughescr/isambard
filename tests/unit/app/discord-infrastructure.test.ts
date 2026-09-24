@@ -20,7 +20,7 @@ import type { MessageSearchService } from '@/integrations/discord/message-histor
 import * as summarizerModule from '@/integrations/discord/message-history/summarizer';
 import type { MessageSummarizer } from '@/integrations/discord/message-history/summarizer';
 import { createGuildId } from '@/integrations/discord/types';
-import type { MemoryToolBackend } from '@/storage/memory-tool/backend';
+import type { OperationalStateStore } from '@/storage/operational-state';
 
 describe('createDiscordInfrastructure', () => {
     let spies: ReturnType<typeof spyOn>[];
@@ -43,7 +43,7 @@ describe('createDiscordInfrastructure', () => {
 
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const mockTableName = 'test-table';
-    const mockMemoryBackend = {} as unknown as MemoryToolBackend;
+    const mockOperationalStateStore = {} as unknown as OperationalStateStore;
 
     beforeEach(() => {
         spies = [];
@@ -113,10 +113,10 @@ describe('createDiscordInfrastructure', () => {
         spies.push(inboxSpy);
 
         const result = discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         });
 
         expect(result).toEqual({
@@ -148,10 +148,10 @@ describe('createDiscordInfrastructure', () => {
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         });
 
         expect(clientSpy).toHaveBeenCalledWith(mockDiscordConfig);
@@ -177,10 +177,10 @@ describe('createDiscordInfrastructure', () => {
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         });
 
         expect(backendSpy).toHaveBeenCalledWith(mockDocClient, mockTableName);
@@ -209,10 +209,10 @@ describe('createDiscordInfrastructure', () => {
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         });
 
         expect(managerSpy).toHaveBeenCalledWith({
@@ -246,10 +246,10 @@ describe('createDiscordInfrastructure', () => {
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         });
 
         expect(fetcherSpy).toHaveBeenCalledWith(mockDiscordClient);
@@ -260,7 +260,7 @@ describe('createDiscordInfrastructure', () => {
         });
     });
 
-    test('creates CheckpointManager with memoryBackend', () => {
+    test('creates CheckpointManager with the operational-state store', () => {
         // @ts-expect-error - Mocking constructor
         const checkpointSpy = spyOn(inboxModule, 'CheckpointManager').mockImplementation(() => {
             return {};
@@ -280,13 +280,13 @@ describe('createDiscordInfrastructure', () => {
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         });
 
-        expect(checkpointSpy).toHaveBeenCalledWith({ backend: mockMemoryBackend });
+        expect(checkpointSpy).toHaveBeenCalledWith({ store: mockOperationalStateStore });
     });
 
     test('creates InboxManager with correct dependencies', () => {
@@ -313,10 +313,10 @@ describe('createDiscordInfrastructure', () => {
         );
 
         discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         });
 
         expect(inboxSpy).toHaveBeenCalledWith({
@@ -335,10 +335,10 @@ describe('createDiscordInfrastructure', () => {
         spies.push(clientSpy);
 
         expect(() => discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         })).toThrow(testError);
     });
 
@@ -355,10 +355,10 @@ describe('createDiscordInfrastructure', () => {
         spies.push(backendSpy);
 
         expect(() => discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         })).toThrow(testError);
         await Promise.resolve();
         expect(destroy).toHaveBeenCalledTimes(1);
@@ -376,10 +376,10 @@ describe('createDiscordInfrastructure', () => {
         );
 
         expect(() => discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: mockDiscordConfig,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         })).toThrow(testError);
         await Promise.resolve();
         expect(destroy).toHaveBeenCalledTimes(1);
@@ -397,11 +397,11 @@ describe('createDiscordInfrastructure', () => {
         );
 
         expect(() => discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig:   mockDiscordConfig,
-            docClient:       mockDocClient,
-            tableName:       mockTableName,
-            memoryBackend:   mockMemoryBackend,
-            onClientCreated: (owner) => { acquired.push(owner); },
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
+            onClientCreated:       (owner) => { acquired.push(owner); },
         })).toThrow(testError);
         expect(acquired).toEqual([client]);
         expect(destroy).not.toHaveBeenCalled();
@@ -415,11 +415,11 @@ describe('createDiscordInfrastructure', () => {
         spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue({ destroy } as unknown as Client));
 
         expect(() => discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig:   mockDiscordConfig,
-            docClient:       mockDocClient,
-            tableName:       mockTableName,
-            memoryBackend:   mockMemoryBackend,
-            onClientCreated: () => {
+            discordConfig:         mockDiscordConfig,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
+            onClientCreated:       () => {
                 throw registrationError;
             },
         })).toThrow(registrationError);
@@ -449,10 +449,10 @@ describe('createDiscordInfrastructure', () => {
         };
 
         expect(() => discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: configWithoutPresence,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         configWithoutPresence,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         })).not.toThrow();
     });
 
@@ -483,10 +483,10 @@ describe('createDiscordInfrastructure', () => {
         };
 
         discordInfrastructureModule.createDiscordInfrastructure({
-            discordConfig: configWithoutInbox,
-            docClient:     mockDocClient,
-            tableName:     mockTableName,
-            memoryBackend: mockMemoryBackend,
+            discordConfig:         configWithoutInbox,
+            docClient:             mockDocClient,
+            tableName:             mockTableName,
+            operationalStateStore: mockOperationalStateStore,
         });
 
         expect(inboxSpy).toHaveBeenCalledWith({

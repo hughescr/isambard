@@ -6,7 +6,7 @@ import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend, t
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
-import type { MemoryToolBackend, MemoryPath, ContactBackend, ContactChangeRequest, PersonAllowlist, EmbedderLike, VectorIndex } from '@/storage';
+import type { MemoryToolBackend, MemoryPath, ContactBackend, ContactChangeRequest, PersonAllowlist, EmbedderLike, VectorIndex, OperationalStateStore } from '@/storage';
 
 /**
  * Options for creating MCP servers.
@@ -16,6 +16,11 @@ export interface MCPServersOptions {
      * Memory tool backend for the memory MCP server.
      */
     memoryBackend: MemoryToolBackend
+
+    /**
+     * Operational-state store for the Bluesky checkpoint manager.
+     */
+    operationalStateStore: OperationalStateStore
 
     /**
      * Message search service for Discord message history.
@@ -298,7 +303,7 @@ export function createMcpSharedDeps(options: MCPServersOptions): McpSharedDeps {
     return {
         options,
         dmTracker:             new DMTracker(options.channelRegistry, options.discordClient),
-        bskyCheckpointManager: new BskyCheckpointManager({ backend: options.memoryBackend }),
+        bskyCheckpointManager: new BskyCheckpointManager({ store: options.operationalStateStore }),
     };
 }
 

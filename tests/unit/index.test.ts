@@ -60,6 +60,8 @@ import * as staticServicesModule from '@/services';
 import * as staticPersonAllowlistModule from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
+import type { OperationalStateStore } from '@/storage/operational-state';
+import * as staticOperationalStateModule from '@/storage/operational-state';
 import * as staticSessionResumeModule from '@/storage/session-resume';
 
 // Captured as a plain variable (not a live ES-module binding) at file-load time, before any
@@ -1350,7 +1352,7 @@ describe('createApp', () => {
             expect(emailOptions.notify).toBe(capturedBridge!.notify);
         });
 
-        test('threads memoryBackend, healthRegistry, and notificationBridge.notify into setupBsky\'s options (Q8)', async () => {
+        test('threads operationalStateStore, healthRegistry, and notificationBridge.notify into setupBsky\'s options (Q8)', async () => {
             let capturedBridge: NotificationBridge | undefined;
             const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
                 (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
@@ -1363,17 +1365,24 @@ describe('createApp', () => {
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
-            spies.push(createBridgeSpy, createConversationConductorSpy);
+            const operationalStateStore = { read: mock(), put: mock(), listByPrefix: mock() } as unknown as OperationalStateStore;
+            const createStoreSpy = spyOn(staticOperationalStateModule, 'createOperationalStateStore').mockReturnValue(operationalStateStore);
+            const createMcpSharedDepsSpy = spyOn(staticMcpServersModule, 'createMcpSharedDeps');
+            spies.push(createBridgeSpy, createConversationConductorSpy, createStoreSpy, createMcpSharedDepsSpy);
 
             const { createApp } = staticIndexModule;
             await createApp();
 
             expect(capturedBridge).toBeDefined();
             expect(bskySetupSpy).toBeDefined();
-            const bskyOptions = bskySetupSpy!.mock.calls[0]?.[0] as { memoryBackend?: unknown, healthRegistry?: unknown, notify?: NotifyFn };
+            const bskyOptions = bskySetupSpy!.mock.calls[0]?.[0] as { operationalStateStore?: unknown, healthRegistry?: unknown, notify?: NotifyFn };
             expect(bskyOptions.notify).toBe(capturedBridge!.notify);
-            expect(bskyOptions.memoryBackend).toBeDefined();
+            expect(bskyOptions.operationalStateStore).toBe(operationalStateStore);
             expect(bskyOptions.healthRegistry).toBeDefined();
+            // The same store reaches the Discord inbox checkpoint manager and the MCP shared deps.
+            const checkpointManagerSpy = staticCheckpointModule.CheckpointManager as unknown as ReturnType<typeof spyOn>;
+            expect(checkpointManagerSpy.mock.calls[0]?.[0]).toEqual({ store: operationalStateStore });
+            expect(createMcpSharedDepsSpy.mock.calls[0]?.[0].operationalStateStore).toBe(operationalStateStore);
         });
 
         test('bsky present, email absent: safety rails are built and Bluesky stays enabled', async () => {

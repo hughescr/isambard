@@ -12,6 +12,7 @@ import { describe, it, expect, mock, beforeEach, jest, afterEach } from 'bun:tes
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import type { Client } from 'discord.js';
 import { makeHealthRegistry } from '../../../../helpers/fake-health-registry';
+import { createFakeOperationalStateStore, type FakeOperationalStateStore } from '../../../../helpers/fake-operational-state-store';
 import { mockLogger } from '../../../../setup';
 import type { NotifyParams } from '@/agent';
 import { createChannelId } from '@/agent/types';
@@ -20,16 +21,7 @@ import { createAtUri, createCid, type BlueskyClient } from '@/integrations/bsky'
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { setupBsky, type BskySetupOptions } from '@/integrations/discord/setup/bsky-setup';
 import type { ApprovedOutboundActionBackend } from '@/services';
-import type { MemoryToolBackend, PersonAllowlist } from '@/storage';
-
-/** Minimal in-memory-shaped fake backend — DM checkpoint round-trips through it, but starts empty every test. */
-function makeMockMemoryBackend(): MemoryToolBackend {
-    return {
-        get:    mock(async () => undefined),
-        create: mock(async () => {}),
-        update: mock(async () => {}),
-    } as unknown as MemoryToolBackend;
-}
+import type { PersonAllowlist } from '@/storage';
 
 /** Build a mock DynamoDB document client whose send() always returns {} (empty item). */
 function makeMockDocClient(): DynamoDBDocumentClient {
@@ -67,10 +59,10 @@ describe('setupBsky — isSendableChannel type guard', () => {
                 handleButton:      mock(async () => {}),
                 handleModalSubmit: mock(async () => {}),
             } as unknown as AllowlistInteractionHandler,
-            memoryBackend:  makeMockMemoryBackend(),
-            healthRegistry: makeHealthRegistry({ available: { bsky: true } }),
-            notify:         mock((_params: NotifyParams) => true),
-            _deps:          { sleep: noopSleep },
+            operationalStateStore: createFakeOperationalStateStore(),
+            healthRegistry:        makeHealthRegistry({ available: { bsky: true } }),
+            notify:                mock((_params: NotifyParams) => true),
+            _deps:                 { sleep: noopSleep },
         };
     });
 
@@ -258,10 +250,10 @@ describe('setupBsky — Q8 DM poller and notify threading', () => {
                 handleButton:      mock(async () => {}),
                 handleModalSubmit: mock(async () => {}),
             } as unknown as AllowlistInteractionHandler,
-            memoryBackend:  makeMockMemoryBackend(),
-            healthRegistry: makeHealthRegistry({ available: { bsky: true } }),
-            notify:         mock((_params: NotifyParams) => true),
-            _deps:          { sleep: noopSleep },
+            operationalStateStore: createFakeOperationalStateStore(),
+            healthRegistry:        makeHealthRegistry({ available: { bsky: true } }),
+            notify:                mock((_params: NotifyParams) => true),
+            _deps:                 { sleep: noopSleep },
         };
     });
 
@@ -300,6 +292,9 @@ describe('setupBsky — Q8 DM poller and notify threading', () => {
         expect((options.notify as ReturnType<typeof mock>).mock.calls[0]?.[0]).toMatchObject({
             source: 'bsky-dm', text: '1 new unread Bluesky conversation(s)', wake: false, key: 'msg-1',
         });
+        // The poller's DM checkpoint persists through options.operationalStateStore.
+        expect((options.operationalStateStore as FakeOperationalStateStore).stored({ owner: 'bsky', name: 'dm/checkpoint' }))
+            .toMatchObject({ processedMessageIds: ['msg-1'] });
 
         result.dmPoller.stop();
     });

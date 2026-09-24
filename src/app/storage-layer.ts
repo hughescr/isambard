@@ -6,7 +6,7 @@ import {
 import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig, VectorIndexConfig } from '@/config';
 import {
     DynamoDBClientHolder, type TagIndexReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, SessionResumeBackend, createTagIndexReconciliationScheduler, runTagIndexReconciliation, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike,
-    SessionJournalBackend
+    SessionJournalBackend, OperationalStateBackend, createOperationalStateStore, type OperationalStateStore
 } from '@/storage';
 
 /**
@@ -50,6 +50,12 @@ export interface StorageLayer {
     sessionJournalBackend:            SessionJournalBackend
     /** Builds a {@link SessionJournal} bound to `role`, backed by {@link sessionJournalBackend}. */
     createJournal:                    (role: SessionRole, clock: Clock) => SessionJournal
+    /**
+     * Operational-state store (OPERATIONAL_STATE#<owner> partitions) for integration replay
+     * checkpoints. Transitionally reads through to the legacy `/state/services/...` memory rows
+     * on a miss (read-only) until the checkpoint migration removes that fallback.
+     */
+    operationalStateStore:            OperationalStateStore
     /** Builds a role-bound resume store over the shared `sessionResumeBackend`'s TASK_SESSION#<role> rows. */
     createResumeStore:                (role: SessionRole) => RoleResumeStore
     tagIndexReconciliationScheduler?: TagIndexReconciliationScheduler
@@ -221,6 +227,11 @@ export async function createStorageLayer(
             backend: sessionJournalBackend, role, clock, logger,
         });
         const createResumeStoreForRole = (role: SessionRole): RoleResumeStore => createResumeStore(sessionResumeBackend, role);
+        // #57: integration checkpoints live in OPERATIONAL_STATE#<owner>, reading through to the legacy memory rows on a miss
+        const operationalStateStore = createOperationalStateStore({
+            backend:             new OperationalStateBackend(holder, tableName),
+            legacyMemoryBackend: memoryBackend,
+        });
 
         return {
             holder,
@@ -229,6 +240,7 @@ export async function createStorageLayer(
             contactBackend,
             sessionJournalBackend,
             createJournal,
+            operationalStateStore,
             createResumeStore: createResumeStoreForRole,
             tagIndexReconciliationScheduler,
             contactReconciliationScheduler,

@@ -316,11 +316,11 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
     const botForConstructionCleanup: { bot: DiscordBot | undefined } = { bot: undefined };
     const discordInfra = createDiscordInfrastructure({
-        discordConfig:   config.discord,
-        docClient:       storage.holder,
-        tableName:       storage.tableName,
-        memoryBackend:   storage.memoryBackend,
-        onClientCreated: client => registerCleanup({
+        discordConfig:         config.discord,
+        docClient:             storage.holder,
+        tableName:             storage.tableName,
+        operationalStateStore: storage.operationalStateStore,
+        onClientCreated:       client => registerCleanup({
             name: 'Discord bot/client',
             run:  () => botForConstructionCleanup.bot?.stop() ?? client.destroy(),
         }),
@@ -615,7 +615,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     approvedActions:       approvedActionWriter,
                     personAllowlist,
                     allowlistInteractionHandler,
-                    memoryBackend:         storage.memoryBackend,
+                    operationalStateStore: storage.operationalStateStore,
                     healthRegistry,
                     notify:                notificationBridge.notify,
                 });
@@ -864,6 +864,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     function buildMcpSharedDeps(): ReturnType<typeof createMcpSharedDeps> {
         return createMcpSharedDeps({
             memoryBackend:             storage.memoryBackend,
+            operationalStateStore:     storage.operationalStateStore,
             messageSearchService:      discordInfra.messageSearchService,
             discordClient:             discordInfra.discordClient,
             questionRegistry,

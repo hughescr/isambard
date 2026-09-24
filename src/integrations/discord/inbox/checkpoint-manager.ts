@@ -2,20 +2,23 @@ import { logger } from '@hughescr/logger';
 import { type DiscordChannelCheckpoint, discordChannelCheckpointSchema  } from './types';
 import { InvariantViolationError } from '@/errors';
 import type { ChannelId, ChannelScope } from '@/integrations/discord/types';
-import { type MemoryToolBackend, type MemoryPath, createMemoryPath  } from '@/storage';
+import type { OperationalStateKey, OperationalStateRead, OperationalStateStore } from '@/storage';
 
 /**
  * Options for creating a CheckpointManager.
  */
 interface CheckpointManagerOptions {
-    backend: MemoryToolBackend
+    store: OperationalStateStore
 }
+
+/** Every Discord channel checkpoint key starts with this name prefix in the `discord` partition. */
+const CHANNEL_CHECKPOINT_PREFIX: OperationalStateKey = { owner: 'discord', name: 'channels/' };
 
 /**
  * Manages Discord channel checkpoints for tracking last-seen messages.
- * Uses the memory tool backend for persistent storage.
+ * Persists them in the operational-state store (src/storage/operational-state), not as memories.
  *
- * Checkpoints are stored at: `/state/services/discord/channels/{channelId}/checkpoint`
+ * Checkpoints are keyed `{ owner: 'discord', name: 'channels/{channelId}/checkpoint' }`.
  * Each checkpoint tracks:
  * - Last seen timestamp (when the bot last processed messages)
  * - Last seen message ID (optional - the most recent message processed)
@@ -23,7 +26,7 @@ interface CheckpointManagerOptions {
  *
  * @example
  * ```ts
- * const manager = new CheckpointManager({ backend });
+ * const manager = new CheckpointManager({ store });
  *
  * // Initialize checkpoint for a new channel
  * const checkpoint = await manager.initializeIfMissing(channelId, guildId);
@@ -39,29 +42,30 @@ interface CheckpointManagerOptions {
  * ```
  */
 export class CheckpointManager {
-    private readonly backend: MemoryToolBackend;
+    private readonly store: OperationalStateStore;
 
     /**
      * Per-channel write serialisation. Each entry is a promise chain (settled, never rejects)
      * that the next write for that channel is appended to, so a receipt write (updateLastSeen)
      * and a handled write (updateHandled) for the same channel can never interleave their
-     * get/update cycles — each write's full read-modify-write completes before the next starts.
+     * read/put cycles — each write's full read-modify-write completes before the next starts.
+     * The store's reads are strongly consistent, so each cycle sees the previous cycle's put.
      */
     private readonly channelWriteChains = new Map<ChannelId, Promise<unknown>>();
 
     constructor(options: CheckpointManagerOptions) {
-        this.backend = options.backend;
+        this.store = options.store;
     }
 
     /**
-     * Gets the memory path for a channel checkpoint.
-     * Path format: `/state/services/discord/channels/{channelId}/checkpoint`
+     * The operational-state key for a channel checkpoint:
+     * `{ owner: 'discord', name: 'channels/{channelId}/checkpoint' }`.
      *
      * @param channelId - Discord channel ID
-     * @returns Validated memory path for the checkpoint
+     * @returns The checkpoint's operational-state key
      */
-    private getCheckpointPath(channelId: ChannelId): MemoryPath {
-        return createMemoryPath(`/state/services/discord/channels/${channelId}/checkpoint`);
+    private checkpointKey(channelId: ChannelId): OperationalStateKey {
+        return { owner: 'discord', name: `channels/${channelId}/checkpoint` };
     }
 
     /**
@@ -78,34 +82,26 @@ export class CheckpointManager {
         return result;
     }
 
+    /** Reads a channel's checkpoint from the store. */
+    private async readCheckpoint(channelId: ChannelId): Promise<OperationalStateRead<DiscordChannelCheckpoint>> {
+        return this.store.read(this.checkpointKey(channelId), discordChannelCheckpointSchema);
+    }
+
     /**
-     * Parses and validates a raw checkpoint item's content, logging distinctly for corrupt JSON
-     * vs corrupt schema. Returns undefined for either failure.
+     * The checkpoint a read yields, logging distinctly for corrupt JSON vs corrupt schema.
+     * Returns undefined for an absent or corrupt row.
      */
-    private parseCheckpoint(channelId: ChannelId, content: string): DiscordChannelCheckpoint | undefined {
-        let rawParsed: unknown;
-        try {
-            rawParsed = JSON.parse(content);
-        } catch (error) {
+    private checkpointFrom(channelId: ChannelId, read: OperationalStateRead<DiscordChannelCheckpoint>): DiscordChannelCheckpoint | undefined {
+        if(read.status === 'invalid') {
             logger.warn({
                 channelId,
-                err: error,
-                msg: 'Checkpoint data is corrupt: failed to parse JSON',
+                err: read.error,
+                msg: read.reason === 'json'
+                    ? 'Checkpoint data is corrupt: failed to parse JSON'
+                    : 'Checkpoint data is corrupt: schema validation failed',
             });
-            return undefined;
         }
-
-        const parseResult = discordChannelCheckpointSchema.safeParse(rawParsed);
-        if(!parseResult.success) {
-            logger.warn({
-                channelId,
-                issues: parseResult.error.issues,
-                msg:    'Checkpoint data is corrupt: schema validation failed',
-            });
-            return undefined;
-        }
-
-        return parseResult.data;
+        return read.value;
     }
 
     /**
@@ -124,19 +120,11 @@ export class CheckpointManager {
      * ```
      */
     async load(channelId: ChannelId): Promise<DiscordChannelCheckpoint | undefined> {
-        const path = this.getCheckpointPath(channelId);
-        const item = await this.backend.get(path);
-
-        if(!item) {
-            return undefined;
-        }
-
-        return this.parseCheckpoint(channelId, item.content);
+        return this.checkpointFrom(channelId, await this.readCheckpoint(channelId));
     }
 
     /**
-     * Saves a checkpoint for a channel.
-     * Creates or updates the checkpoint as needed.
+     * Saves a checkpoint for a channel (an idempotent upsert — no pre-read).
      *
      * @param checkpoint - The checkpoint data to save
      *
@@ -154,19 +142,7 @@ export class CheckpointManager {
      * ```
      */
     async save(checkpoint: DiscordChannelCheckpoint): Promise<void> {
-        const path = this.getCheckpointPath(checkpoint.channelId);
-        const content = JSON.stringify(checkpoint);
-
-        // Check if checkpoint exists
-        const existing = await this.backend.get(path);
-
-        await (existing
-            ? this.backend.update(path, { content })
-            : this.backend.create({
-                path,
-                content,
-                contentType: 'application/json',
-            }));
+        await this.store.put(this.checkpointKey(checkpoint.channelId), checkpoint);
     }
 
     /**
@@ -210,7 +186,7 @@ export class CheckpointManager {
      * Updates the lastSeenAt and optionally lastSeenMessageId for a channel.
      * Creates the checkpoint if it doesn't exist.
      *
-     * Read-modify-write: loads the existing item first so an in-flight `handled` watermark
+     * Read-modify-write: reads the existing checkpoint first so an in-flight `handled` watermark
      * (see {@link updateHandled}) is preserved across a receipt-time lastSeen update rather than
      * being clobbered by a checkpoint object that doesn't carry it. Serialised per channel with
      * {@link serializeChannelWrites} so this cannot interleave with a concurrent updateHandled
@@ -241,9 +217,7 @@ export class CheckpointManager {
         lastSeenMessageId?: string
     ): Promise<DiscordChannelCheckpoint> {
         return this.serializeChannelWrites(channelId, async () => {
-            const path = this.getCheckpointPath(channelId);
-            const existingItem = await this.backend.get(path);
-            const existingCheckpoint = existingItem ? this.parseCheckpoint(channelId, existingItem.content) : undefined;
+            const existingCheckpoint = await this.load(channelId);
 
             const checkpoint: DiscordChannelCheckpoint = {
                 service:   'discord',
@@ -255,11 +229,7 @@ export class CheckpointManager {
                 handled:   existingCheckpoint?.handled,
             };
 
-            const content = JSON.stringify(checkpoint);
-            await (existingItem
-                ? this.backend.update(path, { content })
-                : this.backend.create({ path, content, contentType: 'application/json' }));
-
+            await this.save(checkpoint);
             return checkpoint;
         });
     }
@@ -267,15 +237,15 @@ export class CheckpointManager {
     /**
      * Advances the per-channel HANDLED watermark: the newest message whose batch has finished
      * being handled (sent, `@@NO_RESPONSE@@` skip, or outbox-queued). Read-modify-write,
-     * preserving lastSeenAt/lastSeenMessageId/guildId from the existing item.
+     * preserving lastSeenAt/lastSeenMessageId/guildId from the existing checkpoint.
      *
      * No-ops (returns the existing checkpoint unchanged) when the existing watermark's messageId
      * is already >= the new one (compared numerically as Discord snowflakes, not lexically), so
      * an older batch that finishes handling later cannot regress a newer watermark.
      *
-     * Throws {@link InvariantViolationError} when no checkpoint item exists for the channel —
-     * receipt (updateLastSeen/initializeIfMissing) always initialises the item first, so a
-     * missing item here indicates a logic error in the caller.
+     * Throws {@link InvariantViolationError} when no checkpoint exists for the channel —
+     * receipt (updateLastSeen/initializeIfMissing) always initialises it first, so a missing
+     * checkpoint here indicates a logic error in the caller — or when the stored one is corrupt.
      *
      * @param channelId - Discord channel ID
      * @param messageId - Discord message ID (snowflake) of the newest message in the handled batch
@@ -284,13 +254,12 @@ export class CheckpointManager {
      */
     async updateHandled(channelId: ChannelId, messageId: string, at: string): Promise<DiscordChannelCheckpoint> {
         return this.serializeChannelWrites(channelId, async () => {
-            const path = this.getCheckpointPath(channelId);
-            const existingItem = await this.backend.get(path);
-            if(!existingItem) {
+            const read = await this.readCheckpoint(channelId);
+            if(read.status === 'absent') {
                 throw new InvariantViolationError('updateHandled', `no checkpoint exists for channel ${channelId}; receipt must initialise it first`);
             }
 
-            const existingCheckpoint = this.parseCheckpoint(channelId, existingItem.content);
+            const existingCheckpoint = this.checkpointFrom(channelId, read);
             if(!existingCheckpoint) {
                 throw new InvariantViolationError('updateHandled', `checkpoint for channel ${channelId} is corrupt`);
             }
@@ -305,13 +274,18 @@ export class CheckpointManager {
                 updatedAt: new Date().toISOString(),
             };
 
-            await this.backend.update(path, { content: JSON.stringify(checkpoint) });
+            await this.save(checkpoint);
             return checkpoint;
         });
     }
 
     /**
-     * Lists all channel checkpoints.
+     * Lists all channel checkpoints in the `discord` operational-state partition. The partition
+     * holds only checkpoints, and the store skips (and logs) any row that fails to decode.
+     *
+     * Legacy `/state/services/discord/channels/...` memory rows are not listed: a channel whose
+     * checkpoint has not been rewritten since the operational-state store shipped is not
+     * replayed until its next write (the legacy listing never found nested checkpoints either).
      *
      * @returns Array of all stored checkpoints
      *
@@ -325,28 +299,6 @@ export class CheckpointManager {
      * ```
      */
     async listAll(): Promise<DiscordChannelCheckpoint[]> {
-        const result = await this.backend.list('/state/services/discord/channels');
-        const checkpoints: DiscordChannelCheckpoint[] = [];
-
-        // Stryker disable next-line llm: an empty path never ends with '/checkpoint', so filtering falsy paths cannot change the output.
-        for(const item of result.items) {
-            // Only include checkpoint files (not other items in channel directories) - tested with non-checkpoint path test
-            if(item.path.endsWith('/checkpoint')) {
-                try {
-                    // Parse and validate with Zod
-                    // Stryker disable next-line llm: empty content falls back to '{}' which the schema rejects like a parse error, and JSON.parse ignores surrounding whitespace, so both are skipped identically.
-                    const parsed: unknown = JSON.parse(item.content);
-                    // Stryker disable next-line llm: reparsing the unchanged JSON string yields the same value.
-                    const checkpoint = discordChannelCheckpointSchema.parse(parsed);
-                    // Stryker disable next-line llm: spreading a one-element array into push is equivalent.
-                    checkpoints.push(checkpoint);
-                } catch{
-                    // Malformed or schema-invalid checkpoint data is skipped. Reaching the next
-                    // loop iteration naturally keeps startup alive and re-scans that channel.
-                }
-            }
-        }
-
-        return checkpoints;
+        return this.store.listByPrefix(CHANNEL_CHECKPOINT_PREFIX, discordChannelCheckpointSchema);
     }
 }

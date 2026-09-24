@@ -9,83 +9,54 @@ import {
 } from './types';
 import { sanitizeFeedName } from './uri-sanitizer';
 import type { BskyFeedItem, BskyNotification, BskyConversation } from '@/integrations/bsky/types';
-import { type MemoryToolBackend, type MemoryPath, createMemoryPath } from '@/storage';
+import type { OperationalStateKey, OperationalStateSchema, OperationalStateStore } from '@/storage';
 
 /**
  * Options for creating a BskyCheckpointManager.
  */
 interface BskyCheckpointManagerOptions {
-    backend: MemoryToolBackend
+    store: OperationalStateStore
+}
+
+/** Operational-state key of the notification checkpoint. */
+const NOTIFICATION_CHECKPOINT_KEY: OperationalStateKey = { owner: 'bsky', name: 'notifications/checkpoint' };
+
+/** Operational-state key of the DM checkpoint. */
+const DM_CHECKPOINT_KEY: OperationalStateKey = { owner: 'bsky', name: 'dm/checkpoint' };
+
+/** Operational-state key of a feed checkpoint: `{ owner: 'bsky', name: 'feeds/{sanitizedFeedName}/checkpoint' }`. */
+function feedCheckpointKey(feedName: string): OperationalStateKey {
+    return { owner: 'bsky', name: `feeds/${sanitizeFeedName(feedName)}/checkpoint` };
 }
 
 /**
- * Manages Bluesky checkpoints for tracking processed feed posts and notifications.
- * Uses the memory tool backend for persistent storage.
+ * Manages Bluesky checkpoints for tracking processed feed posts, notifications and DMs.
+ * Persists them in the operational-state store (src/storage/operational-state), not as memories.
  *
- * Feed checkpoints stored at: `/state/services/bsky/feeds/{sanitizedFeedName}/checkpoint`
- * Notification checkpoint stored at: `/state/services/bsky/notifications/checkpoint`
+ * Keys, all in the `bsky` partition: `feeds/{sanitizedFeedName}/checkpoint`,
+ * `notifications/checkpoint` and `dm/checkpoint`.
  */
 export class BskyCheckpointManager {
-    private readonly backend: MemoryToolBackend;
+    private readonly store: OperationalStateStore;
 
     constructor(options: BskyCheckpointManagerOptions) {
-        this.backend = options.backend;
+        this.store = options.store;
     }
 
     /**
-     * Gets the memory path for a feed checkpoint.
+     * Generic helper: loads a checkpoint and parses it with the given schema. An absent or
+     * invalid persisted checkpoint is treated as absent.
      */
-    private getFeedCheckpointPath(feedName: string): MemoryPath {
-        const sanitized = sanitizeFeedName(feedName);
-        return createMemoryPath(`/state/services/bsky/feeds/${sanitized}/checkpoint`);
+    private async loadCheckpoint<T>(key: OperationalStateKey, schema: OperationalStateSchema<T>): Promise<T | undefined> {
+        const read = await this.store.read(key, schema);
+        return read.value;
     }
 
     /**
-     * Gets the memory path for the notification checkpoint.
+     * Generic helper: saves a checkpoint (an idempotent upsert).
      */
-    private getNotificationCheckpointPath(): MemoryPath {
-        return createMemoryPath('/state/services/bsky/notifications/checkpoint');
-    }
-
-    /**
-     * Gets the memory path for the DM checkpoint.
-     */
-    private getDmCheckpointPath(): MemoryPath {
-        return createMemoryPath('/state/services/bsky/dm/checkpoint');
-    }
-
-    /**
-     * Generic helper: loads a checkpoint from a memory path and parses it with the given schema.
-     */
-    private async loadCheckpoint<T>(path: MemoryPath, schema: { parse: (data: unknown) => T }): Promise<T | undefined> {
-        const item = await this.backend.get(path);
-
-        if(!item) {
-            return undefined;
-        }
-
-        try {
-            const parsed: unknown = JSON.parse(item.content);
-            return schema.parse(parsed);
-        } catch{
-            // Invalid persisted checkpoints are treated as absent.
-        }
-        return undefined;
-    }
-
-    /**
-     * Generic helper: saves a checkpoint to a memory path, creating or updating as needed.
-     */
-    private async saveCheckpoint<T>(path: MemoryPath, checkpoint: T, exists: boolean): Promise<void> {
-        const content = JSON.stringify(checkpoint);
-
-        await (exists
-            ? this.backend.update(path, { content })
-            : this.backend.create({
-                path,
-                content,
-                contentType: 'application/json',
-            }));
+    private async saveCheckpoint(key: OperationalStateKey, checkpoint: unknown): Promise<void> {
+        await this.store.put(key, checkpoint);
     }
 
     /**
@@ -95,23 +66,19 @@ export class BskyCheckpointManager {
      * @returns The checkpoint data, or undefined if not found or invalid
      */
     async loadFeedCheckpoint(feedName: string): Promise<BskyFeedCheckpoint | undefined> {
-        return this.loadCheckpoint(this.getFeedCheckpointPath(feedName), bskyFeedCheckpointSchema);
+        return this.loadCheckpoint(feedCheckpointKey(feedName), bskyFeedCheckpointSchema);
     }
 
     /**
-     * Saves a feed checkpoint.
-     * Creates or updates the checkpoint as needed.
+     * Saves (upserts) a feed checkpoint.
      * Applies FIFO eviction to processedUris if over MAX_PROCESSED_URIS.
      *
      * @param checkpoint - The checkpoint data to save
-     * @param exists - Whether the checkpoint already exists in the backend (skips a redundant backend.get)
      */
-    async saveFeedCheckpoint(checkpoint: BskyFeedCheckpoint, exists: boolean): Promise<void> {
-        const path = this.getFeedCheckpointPath(checkpoint.feedName);
-
+    async saveFeedCheckpoint(checkpoint: BskyFeedCheckpoint): Promise<void> {
         const bounded = { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) };
 
-        await this.saveCheckpoint(path, bounded, exists);
+        await this.saveCheckpoint(feedCheckpointKey(checkpoint.feedName), bounded);
     }
 
     /**
@@ -120,23 +87,19 @@ export class BskyCheckpointManager {
      * @returns The checkpoint data, or undefined if not found or invalid
      */
     async loadNotificationCheckpoint(): Promise<BskyNotificationCheckpoint | undefined> {
-        return this.loadCheckpoint(this.getNotificationCheckpointPath(), bskyNotificationCheckpointSchema);
+        return this.loadCheckpoint(NOTIFICATION_CHECKPOINT_KEY, bskyNotificationCheckpointSchema);
     }
 
     /**
-     * Saves the notification checkpoint.
-     * Creates or updates the checkpoint as needed.
+     * Saves (upserts) the notification checkpoint.
      * Applies FIFO eviction to processedUris if over MAX_PROCESSED_URIS.
      *
      * @param checkpoint - The checkpoint data to save
-     * @param exists - Whether the checkpoint already exists in the backend (skips a redundant backend.get)
      */
-    async saveNotificationCheckpoint(checkpoint: BskyNotificationCheckpoint, exists: boolean): Promise<void> {
-        const path = this.getNotificationCheckpointPath();
-
+    async saveNotificationCheckpoint(checkpoint: BskyNotificationCheckpoint): Promise<void> {
         const bounded = { ...checkpoint, processedUris: checkpoint.processedUris.slice(-MAX_PROCESSED_URIS) };
 
-        await this.saveCheckpoint(path, bounded, exists);
+        await this.saveCheckpoint(NOTIFICATION_CHECKPOINT_KEY, bounded);
     }
 
     /**
@@ -172,7 +135,7 @@ export class BskyCheckpointManager {
             updatedAt:     now,
         };
 
-        await this.saveFeedCheckpoint(updatedCheckpoint, !!checkpoint);
+        await this.saveFeedCheckpoint(updatedCheckpoint);
 
         return { newItems, totalFetched };
     }
@@ -207,7 +170,7 @@ export class BskyCheckpointManager {
             lastSeenAt,
             processedUris: updatedUris,
             updatedAt:     now,
-        }, hadExistingCheckpoint);
+        });
 
         return { newNotifications, totalFetched, lastSeenAt, hadExistingCheckpoint };
     }
@@ -218,23 +181,19 @@ export class BskyCheckpointManager {
      * @returns The checkpoint data, or undefined if not found or invalid
      */
     async loadDmCheckpoint(): Promise<BskyDmCheckpoint | undefined> {
-        return this.loadCheckpoint(this.getDmCheckpointPath(), bskyDmCheckpointSchema);
+        return this.loadCheckpoint(DM_CHECKPOINT_KEY, bskyDmCheckpointSchema);
     }
 
     /**
-     * Saves the DM checkpoint.
-     * Creates or updates the checkpoint as needed.
+     * Saves (upserts) the DM checkpoint.
      * Applies FIFO eviction to processedMessageIds if over MAX_PROCESSED_URIS.
      *
      * @param checkpoint - The checkpoint data to save
-     * @param exists - Whether the checkpoint already exists in the backend (skips a redundant backend.get)
      */
-    async saveDmCheckpoint(checkpoint: BskyDmCheckpoint, exists: boolean): Promise<void> {
-        const path = this.getDmCheckpointPath();
-
+    async saveDmCheckpoint(checkpoint: BskyDmCheckpoint): Promise<void> {
         const bounded = { ...checkpoint, processedMessageIds: checkpoint.processedMessageIds.slice(-MAX_PROCESSED_URIS) };
 
-        await this.saveCheckpoint(path, bounded, exists);
+        await this.saveCheckpoint(DM_CHECKPOINT_KEY, bounded);
     }
 
     /**
@@ -250,7 +209,7 @@ export class BskyCheckpointManager {
      * Skips the save entirely when nothing would change (`newConvos` empty and `lastSeenSentAt`
      * unchanged) — a tick with zero unread activity must not write to DynamoDB (review finding:
      * an unconditional write here turns the poller's fixed cadence into a perpetual no-op write
-     * against a free-tier table, and inflates memory-layer recency for an item nobody read).
+     * against a free-tier table).
      *
      * @param convos - All fetched conversations
      * @returns newConvos (unread, not-yet-processed by lastMessage.id — each entry is guaranteed
@@ -293,7 +252,7 @@ export class BskyCheckpointManager {
                 lastSeenSentAt,
                 processedMessageIds: updatedMessageIds,
                 updatedAt:           now,
-            }, hadExistingCheckpoint);
+            });
         }
 
         return { newConvos, totalFetched, lastSeenSentAt, hadExistingCheckpoint };
@@ -323,6 +282,6 @@ export class BskyCheckpointManager {
             return;
         }
 
-        await this.saveDmCheckpoint({ ...checkpoint, processedMessageIds: remaining, updatedAt: new Date().toISOString() }, true);
+        await this.saveDmCheckpoint({ ...checkpoint, processedMessageIds: remaining, updatedAt: new Date().toISOString() });
     }
 }
