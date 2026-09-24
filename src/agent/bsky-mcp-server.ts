@@ -6,11 +6,16 @@ import { mcpErrorResult, mcpJsonResult, mcpTextResult, withHealthGuard, withWrit
 import { createAtUri, createCid, type BskyCheckpointManager, type BlueskyClient, type BskyConversation, type BskyFeedItem, type BskyRejectionBackend, type BskyDirectMessage, type BskyReplyInput, type BskyStrongRef } from '@/integrations/bsky';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
-/** Shared pagination schema fields for feed tools that support checkpointing. */
+/**
+ * Shared pagination schema fields for feed tools that support checkpointing.
+ * `includeProcessed` is plain `.optional()` — an omitted value is falsy in the handlers, which is the
+ * documented `false` default. A zod `.default()` here would be rejected when omitted by the Agent
+ * SDK's bundled-zod input validator ("expected nonoptional").
+ */
 const FEED_PAGINATION_SCHEMA = {
     limit:            z.number().int().positive().optional().describe('Maximum number of items to return'),
     cursor:           z.string().optional().describe('Pagination cursor from previous response'),
-    includeProcessed: z.boolean().optional().default(false).describe('Include already-processed items (default: false)'),
+    includeProcessed: z.boolean().optional().describe('Include already-processed items (default: false)'),
 } as const;
 
 /** Builds the checkpointed feed response shape shared by getFeed and getAuthorFeed. */
@@ -155,7 +160,7 @@ export function createBskyMCPServer(options: BskyMCPServerOptions) {
                 {
                     limit:            z.number().int().positive().optional().describe('Maximum number of notifications to return'),
                     cursor:           z.string().optional().describe('Pagination cursor from previous response'),
-                    includeProcessed: z.boolean().optional().default(false).describe('Include already-processed notifications (default: false)'),
+                    includeProcessed: z.boolean().optional().describe('Include already-processed notifications (default: false)'),
                 },
                 withHealthGuard(options.healthRegistry, 'bsky', options.reconnectionLoop,
                     withToolErrorHandling('getNotifications', async (args): Promise<CallToolResult> => {

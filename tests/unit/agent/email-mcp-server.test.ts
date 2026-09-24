@@ -9,6 +9,7 @@ import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters
 import type { ServiceHealthEntry } from '../../../src/services/types';
 import type { PersonAllowlist } from '../../../src/storage';
 import * as utils from '../../../src/utils';
+import { callSdkTool } from '../../helpers/sdk-mcp-client';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 
 /** Minimal offline-state ServiceHealthRegistry double for the getRejectedDrafts health-guard test. */
@@ -194,11 +195,15 @@ describe('createEmailMCPServer', () => {
 
         test('exposes senderProfile without the legacy identity tool parameter', () => {
             const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools;
-            for(const name of ['sendEmail', 'replyToEmail', 'amendAndResubmitDraft']) {
+            for(const [name, description] of [
+                ['sendEmail', 'Sender profile for the From address: formal or informal (default: formal)'],
+                ['replyToEmail', 'Sender profile for the From address: formal or informal (default: formal)'],
+                ['amendAndResubmitDraft', 'Sender profile for the From address: formal or informal'],
+            ] as const) {
                 const shape = registered[name].inputSchema.shape;
                 expect(shape).toHaveProperty('senderProfile');
                 expect(shape).not.toHaveProperty('identity');
-                expect((shape.senderProfile as { description?: string }).description).toBe('Sender profile for the From address: formal or informal');
+                expect((shape.senderProfile as { description?: string }).description).toBe(description);
             }
         });
 
@@ -2120,6 +2125,21 @@ describe('createEmailMCPServer', () => {
             expect((payload.from as { name: string }).name).toBe('Izzy Informal');
         });
 
+        test('sendEmail through the SDK MCP validator accepts an omitted senderProfile and sends from the formal address', async () => {
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
+            const server = createEmailMCPServer({
+                wildDuckClient: mockSendWildDuck,
+                allowlist:      mockAllowlist,
+            });
+
+            const result = await callSdkTool(server, 'sendEmail', { to: 'alice@example.com', subject: 'Hi', body: 'Hello' });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockUploadMessage).toHaveBeenCalledTimes(1);
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.from).toEqual({ address: 'formal@example.com', name: 'Izzy Formal' });
+        });
+
         test('should pass structured to object { name, email_address } to uploadMessage as { name, address }', async () => {
             mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
@@ -2760,6 +2780,20 @@ describe('createEmailMCPServer', () => {
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.from as { address: string }).address).toBe('informal@example.com');
             expect((payload.from as { name: string }).name).toBe('Izzy Informal');
+        });
+
+        test('replyToEmail through the SDK MCP validator accepts an omitted senderProfile and replies from the formal address', async () => {
+            const server = createEmailMCPServer({
+                wildDuckClient: mockReplyWildDuck,
+                allowlist:      mockAllowlist,
+            });
+
+            const result = await callSdkTool(server, 'replyToEmail', { message: 'CleanInbox:42', body: 'Reply', mode: 'reply' });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockUploadMessage).toHaveBeenCalledTimes(1);
+            const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.from).toEqual({ address: 'formal@example.com', name: 'Izzy Formal' });
         });
 
         test('should pass undefined cc to sendApprovalRequest in plain reply mode', async () => {

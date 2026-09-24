@@ -9,6 +9,7 @@ import type { BskyRejectionBackend, BskyRejectionItem } from '../../../src/integ
 import type { BskyAuthor, BskyConversation, BskyDirectMessage, BskyFeedItem, BskyNotification, BskyPost } from '../../../src/integrations/bsky/types';
 import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
 import type { PersonAllowlist } from '../../../src/storage';
+import { callSdkTool } from '../../helpers/sdk-mcp-client';
 import { mockLogger, textContent } from '../../setup';
 import { BskyValidationError } from '@/errors';
 
@@ -268,9 +269,10 @@ describe('createBskyMCPServer', () => {
             expect(tools.getDirectMessages.inputSchema.shape.recipients.safeParse(['alice.bsky.social']).success).toBe(true);
             expect(tools.sendDirectMessage.inputSchema.shape.recipients.safeParse([]).success).toBe(false);
             expect(tools.sendDirectMessage.inputSchema.shape.recipients.safeParse(['alice.bsky.social']).success).toBe(true);
-            expect(tools.getFeed.inputSchema.shape.includeProcessed.parse(undefined)).toBe(false);
-            expect(tools.getNotifications.inputSchema.shape.includeProcessed.parse(undefined)).toBe(false);
-            expect(tools.getAuthorFeed.inputSchema.shape.includeProcessed.parse(undefined)).toBe(false);
+            // includeProcessed stays undefined when omitted; the handlers treat that as the documented false default.
+            expect(tools.getFeed.inputSchema.shape.includeProcessed.parse(undefined)).toBeUndefined();
+            expect(tools.getNotifications.inputSchema.shape.includeProcessed.parse(undefined)).toBeUndefined();
+            expect(tools.getAuthorFeed.inputSchema.shape.includeProcessed.parse(undefined)).toBeUndefined();
             expect(tools.getFeed.inputSchema.shape.limit.safeParse(0).success).toBe(false);
         });
     });
@@ -706,6 +708,33 @@ describe('createBskyMCPServer', () => {
             processNotifications:       mock(async (notifications: BskyNotification[]) => ({ newNotifications: notifications, totalFetched: notifications.length, lastSeenAt: notifications[0]?.indexedAt, hadExistingCheckpoint: false })),
         };
     }
+
+    describe('SDK MCP validator with an omitted includeProcessed', () => {
+        test.each([
+            ['getFeed', {}, 'for-you'],
+            ['getAuthorFeed', { actor: 'alice.bsky.social' }, 'did:plc:abc123'],
+        ] as const)('%s through the SDK MCP validator accepts an omitted includeProcessed and applies checkpoint filtering', async (toolName, args, checkpointKey) => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            const server = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
+
+            const result = await callSdkTool(server, toolName, args);
+
+            expect(result.isError).toBeUndefined();
+            expect(mockCheckpointManager.processFeedItems).toHaveBeenCalledTimes(1);
+            expect(mockCheckpointManager.processFeedItems.mock.calls[0][0]).toBe(checkpointKey);
+        });
+
+        test('getNotifications through the SDK MCP validator accepts an omitted includeProcessed and applies checkpoint filtering', async () => {
+            const mockCheckpointManager = createMockCheckpointManager();
+            const server = createBskyMCPServer({ client: mockClient, checkpointManager: mockCheckpointManager as unknown as BskyCheckpointManager });
+
+            const result = await callSdkTool(server, 'getNotifications', {});
+
+            expect(result.isError).toBeUndefined();
+            expect(mockCheckpointManager.processNotifications).toHaveBeenCalledTimes(1);
+            expect(mockCheckpointManager.processNotifications).toHaveBeenCalledWith([mockNotification()]);
+        });
+    });
 
     describe('getFeed tool with checkpoint manager', () => {
         test('should filter out already-processed items', async () => {

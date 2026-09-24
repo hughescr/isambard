@@ -19,6 +19,7 @@ import { createMemoryPath, type MemoryPath, type MemoryToolItemData } from '../.
 import type { Embedder } from '../../../src/storage/memory-vec';
 import type { VectorIndex } from '../../../src/storage/memory-vec-store/backend';
 import type { VectorQueryResult } from '../../../src/storage/memory-vec-store/types';
+import { callSdkTool } from '../../helpers/sdk-mcp-client';
 import { mockLogger, textContent } from '../../setup';
 
 interface RegisteredTool {
@@ -28,7 +29,6 @@ interface RegisteredTool {
     inputSchema: {
         shape: {
             layer: { unwrap: () => { safeParse: (value: unknown) => { success: boolean } } }
-            limit: { parse: (value: unknown) => number }
         }
     }
 }
@@ -129,12 +129,15 @@ describe('semantic_search MCP tool', () => {
         expect(layer!.safeParse('').success).toBe(false);
     });
 
-    test('semantic search publishes and applies its documented default result limit', () => {
+    test('semantic_search through the SDK MCP validator accepts an omitted limit and queries 5 results', async () => {
         const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
-        const limit = (server.instance as unknown as RegisteredToolInstance)._registeredTools.semantic_search?.inputSchema.shape.limit;
 
-        expect(limit).toBeDefined();
-        expect(limit!.parse(undefined)).toBe(5);
+        const result = await callSdkTool(server, 'semantic_search', { query: 'what Craig prefers for breakfast' });
+
+        expect(result.isError).toBeUndefined();
+        const query = mockVectorIndex.query as ReturnType<typeof mock>;
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(query.mock.calls[0][1]).toBe(5);
     });
 
     describe('empty results', () => {

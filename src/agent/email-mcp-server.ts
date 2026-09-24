@@ -32,6 +32,14 @@ const ACCESSIBLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.Clea
 /** Mailboxes readable by getEmailContent (also includes Drafts and Sent Mail). */
 const READABLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts, EmailFolder.Sent]);
 
+/**
+ * Description for a `senderProfile` that the handler defaults to `'formal'` when omitted.
+ * The default lives in the handler, not in a zod `.default()`: the Agent SDK validates tool
+ * arguments with its own bundled zod, which rejects an omitted `.default()` field as
+ * "expected nonoptional" even though the advertised JSON schema marks it optional.
+ */
+const SENDER_PROFILE_DEFAULT_FORMAL_DESCRIPTION = 'Sender profile for the From address: formal or informal (default: formal)';
+
 function isEmailFolder(folder: string): folder is EmailFolder {
     return Object.values(EmailFolder).includes(folder as EmailFolder);
 }
@@ -547,13 +555,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         .describe('Recipient email: plain address string or {name, email_address} object, or array of either'),
                     subject:       z.string().describe('Email subject'),
                     body:          z.string().describe('Email body text'),
-                    senderProfile: emailSenderProfileSchema.default('formal').describe('Sender profile for the From address: formal or informal'),
+                    senderProfile: emailSenderProfileSchema.optional().describe(SENDER_PROFILE_DEFAULT_FORMAL_DESCRIPTION),
                     attachments:   z.array(z.string()).optional().describe('File paths to attach'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('sendEmail', async (args): Promise<CallToolResult> => {
                         // Resolve from address based on sender profile (loads addresses lazily)
-                        const fromResult = await resolveFromAddress(args.senderProfile);
+                        const fromResult = await resolveFromAddress(args.senderProfile ?? 'formal');
                         if(!fromResult.ok) {
                             return fromResult.error;
                         }
@@ -602,7 +610,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     message:       mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format to reply to'),
                     body:          z.string().describe('Reply body text'),
                     mode:          z.enum(['reply', 'replyAll']).describe('Reply mode: reply to sender only, or reply-all'),
-                    senderProfile: emailSenderProfileSchema.default('formal').describe('Sender profile for the From address: formal or informal'),
+                    senderProfile: emailSenderProfileSchema.optional().describe(SENDER_PROFILE_DEFAULT_FORMAL_DESCRIPTION),
                     attachments:   z.array(z.string()).optional().describe('File paths to attach'),
                 },
 
@@ -610,7 +618,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     withToolErrorHandling('replyToEmail',
                         async (args): Promise<CallToolResult> => {
                         // Resolve from address based on sender profile (loads addresses lazily)
-                            const fromResult = await resolveFromAddress(args.senderProfile);
+                            const fromResult = await resolveFromAddress(args.senderProfile ?? 'formal');
                             if(!fromResult.ok) {
                                 return fromResult.error;
                             }

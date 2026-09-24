@@ -180,7 +180,8 @@ export function createBrowserMCPServer(deps: BrowserMCPServerDeps) {
                 'getLinks',
                 'Get links on the page as an array of {href, text} objects. Use containerSelector to scope to a specific section.',
                 {
-                    containerSelector: z.string().optional().default('body').describe('CSS selector of container element to scope link search (default: body)'),
+                    // Defaulted in the handler's destructuring: the Agent SDK's bundled-zod validator rejects an omitted zod `.default()` field.
+                    containerSelector: z.string().optional().describe('CSS selector of container element to scope link search (default: body)'),
                 },
                 async ({ containerSelector = 'body' }): Promise<CallToolResult> => {
                     try {

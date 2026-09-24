@@ -69,7 +69,8 @@ export function createMemoryMCPServer(
                 {
                     query: z.string().describe('Natural language query to search for semantically similar memories'),
                     layer: z.enum(['identity', 'state', 'events']).optional().describe('Optional layer filter'),
-                    limit: z.number().int().positive().default(5).describe('Maximum number of results to return (default: 5)'),
+                    // The default lives in the handler: the Agent SDK's bundled-zod validator rejects an omitted zod `.default()` field.
+                    limit: z.number().int().positive().optional().describe('Maximum number of results to return (default: 5)'),
                 },
                 // eslint-disable-next-line @stylistic/no-extra-parens -- Babel 8 needs this disambiguation in Stryker's ternary array parser.
                 (async (args): Promise<CallToolResult> => {
@@ -84,7 +85,7 @@ export function createMemoryMCPServer(
 
                         // Query the vector index for nearest neighbors
                         const layerFilter = args.layer ? createLayerName(args.layer) : undefined;
-                        const queryResults = vectorIndex.query(queryVec, args.limit, layerFilter);
+                        const queryResults = vectorIndex.query(queryVec, args.limit ?? 5, layerFilter);
 
                         // Resolve paths from PK/SK and fetch full items in parallel
                         const itemPromises = queryResults.map(async (r) => {

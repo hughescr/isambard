@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
 import type { BrowserAdapter, BrowserHostPolicy } from '../../../src/agent/browser/types';
 import { createBrowserMCPServer, truncateToBytes } from '../../../src/agent/browser-mcp-server';
+import { callSdkTool } from '../../helpers/sdk-mcp-client';
 import { textContent } from '../../setup';
 
 interface RegisteredTool {
@@ -112,7 +113,8 @@ describe('browser MCP discovery contract', () => {
     test('exposes defaults, enums, and range limits that protect adapter calls', () => {
         const server = createBrowserMCPServer({ adapter: makeFakeAdapter(), policy: noPolicy, ...policy2mb });
         const tools = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
-        expect(tools.getLinks.inputSchema.shape.containerSelector.parse(undefined)).toBe('body');
+        // The 'body' default is applied by the handler, so the schema leaves an omitted selector undefined.
+        expect(tools.getLinks.inputSchema.shape.containerSelector.parse(undefined)).toBeUndefined();
         expect(tools.click.inputSchema.shape.button.safeParse('back').success).toBe(false);
         for(const button of ['left', 'right', 'middle']) {
             expect(tools.click.inputSchema.shape.button.safeParse(button).success).toBe(true);
@@ -404,6 +406,18 @@ describe('browserMcpServer — getLinks', () => {
         const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
         await callTool(server, 'getLinks');
         expect(capturedExpr).toContain('"body"');
+    });
+
+    test('getLinks through the SDK MCP validator accepts an omitted containerSelector and scopes to body', async () => {
+        const evaluate = mock(async (_expr: string): Promise<unknown[]> => []);
+        const adapter = makeFakeAdapter({ evaluate: evaluate as BrowserAdapter['evaluate'] });
+        const server = createBrowserMCPServer({ adapter, policy: noPolicy, ...policy2mb });
+
+        const result = await callSdkTool(server, 'getLinks', {});
+
+        expect(result.isError).toBeUndefined();
+        expect(evaluate).toHaveBeenCalledTimes(1);
+        expect(evaluate.mock.calls[0][0]).toContain('document.querySelectorAll("body" + \' a[href]\')');
     });
 
     test('getLinks uses custom containerSelector when provided', async () => {
