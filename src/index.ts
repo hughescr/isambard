@@ -3,7 +3,6 @@ import { stat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { logger, setTimezone } from '@hughescr/logger';
-import type { SlashCommandBuilder } from 'discord.js';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { z } from 'zod';
@@ -1131,7 +1130,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     logger.info('Discord bot created');
 
     // Collect slash command builders for bulk registration at startup
-    const commandBuilders: (() => SlashCommandBuilder)[] = [buildCalendarCommand, buildContactCommand, buildAllowlistCommand];
+    const commandBuilders = [buildCalendarCommand, buildContactCommand, buildAllowlistCommand];
 
     // Wire Discord client into the capability facade now (client may not be logged in yet,
     // but the facade checks isReady() before sending, so this is safe to set eagerly).

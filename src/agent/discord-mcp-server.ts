@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+// eslint-disable-next-line no-restricted-imports -- Discord MCP adapter hosted in src/agent by convention; the sole #40 fence exemption
 import type { Client, TextChannel, GuildTextBasedChannel, Message, MessageCreateOptions } from 'discord.js';
 import { z } from 'zod';
 import type { DiscordMcpChannelRegistry, MCPDMTracker, MCPMessageSearchService, MCPMessageSplitter, MCPRetryHelper } from './discord-ports';

@@ -13,7 +13,9 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  * 2. errors     - Error types, minimal dependencies
  * 3. config     - Configuration loading, minimal dependencies
  * 4. storage    - Data layer, independent of application/agent
- * 4b. services  - Service health, lifecycle, outbox infrastructure
+ * 4b. services  - Platform-neutral resilience infrastructure: health, lifecycle, outbox (Discord
+ *                 wire types via discord-api-types only), approved-outbound-action executor,
+ *                 allowlist saga; never discord.js (fenced in eslint.config.mjs, #40)
  * 5. agent      - Agent core plus per-platform MCP adapters; never imports src/integrations/discord
  *                 Discord-specific MCP ports live in src/agent/discord-ports.ts
  * 6. discord    - Discord integration, depends on agent

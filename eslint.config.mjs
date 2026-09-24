@@ -71,23 +71,31 @@ const eslintConfig = [
     },
     boundariesConfig,
     {
-        // #40 lint-fence prep (#49): the outbox takes Discord wire types from
-        // discord-api-types/v10, so it must not need a discord.js/@discordjs exemption
-        // when the real #40 fence lands. Flat config REPLACES (not merges) a rule's
-        // options across matching entries for the same file, so this re-states the base
-        // config's lodash restriction (@hughescr/eslint-config-default) alongside the new
-        // patterns rather than silently dropping it for files under src/services/outbox.
-        files: ['src/services/outbox/**/*.ts'],
-        rules: {
+        // #40 Discord fence: discord.js and @discordjs/* are the Discord client/UI library, so
+        // only the Discord layer (src/integrations/discord) and the composition root (src/app)
+        // may import them. Everything else takes Discord wire types from discord-api-types/v10,
+        // which is deliberately NOT fenced — it is the wire format, not the client (#49).
+        // The one exemption is src/agent/discord-mcp-server.ts, the honestly named Discord MCP
+        // adapter that src/agent hosts by convention; it carries a single eslint-disable
+        // comment rather than an `ignores` entry so the exemption is visible at the import.
+        // Tests are outside this block's `files` and so are exempt.
+        //
+        // Flat config REPLACES (not merges) a rule's options across matching entries for the
+        // same file, so this re-states the base config's lodash restriction
+        // (@hughescr/eslint-config-default) alongside the fence rather than silently dropping
+        // it for every file under src/.
+        files:   ['src/**/*.ts'],
+        ignores: ['src/integrations/discord/**', 'src/app/**'],
+        rules:   {
             'no-restricted-imports': ['error', {
                 paths: [
                     { name: 'lodash', message: 'Use lodash-es instead for proper ESM tree-shaking.' },
-                    { name: 'discord.js', message: 'Outbox code must use discord-api-types/v10 for Discord wire types, not discord.js (#40 bans discord.js outside src/integrations/discord and src/app; see #49).' },
+                    { name: 'discord.js', message: 'Discord client/UI code lives in src/integrations/discord or src/app; take wire types from discord-api-types/v10 (#40).' },
                 ],
                 patterns: [
                     {
                         group:   ['@discordjs/*'],
-                        message: 'Outbox code must use discord-api-types/v10 for Discord wire types, not @discordjs/* (#40 bans @discordjs/* outside src/integrations/discord and src/app; see #49).',
+                        message: 'Discord client/UI code lives in src/integrations/discord or src/app; take wire types from discord-api-types/v10 (#40).',
                     },
                 ],
             }],
