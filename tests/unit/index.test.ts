@@ -1178,7 +1178,11 @@ describe('createApp', () => {
 
             /** A ledger carrying one five-hour quota reading, as a `rate_limit_event` would leave it. */
             function ledgerAtFiveHour(role: 'conversation' | 'perch', utilization: number): Ledger {
-                return { ...initialLedger(role), quota: { fiveHour: { utilization, resetsAt: RESETS_AT }, source: 'headers', at: new Date('2026-09-09T20:00:00.000Z') } };
+                const observedAt = new Date('2026-09-09T20:00:00.000Z');
+                return {
+                    ...initialLedger(role),
+                    quota: { fiveHour: { utilization, resetsAt: RESETS_AT, source: 'headers', observedAt }, revisedAt: observedAt },
+                };
             }
 
             test('a five-hour window at agent.quota.perchPauseAtPercent pauses isPerchPaused(), with no daily cost ceiling configured at all', async () => {

@@ -137,12 +137,35 @@ export interface QuotaWindows {
     perModel?: Record<string, QuotaWindow>
 }
 
-/** {@link Ledger.quota}: the last known windows, plus which source produced them and when. */
-export type LedgerQuota = QuotaWindows & {
-    /** `'headers'` for an SDK `rate_limit_event`; `'poll'` for the usage-endpoint poller. */
-    source: 'headers' | 'poll'
-    at:     Date
+/** `'headers'` for an SDK `rate_limit_event`; `'poll'` for the usage-endpoint poller. */
+export type QuotaSource = 'headers' | 'poll';
+
+/**
+ * One window as the ledger holds it, plus the provenance of that specific reading: which source
+ * reported it, and when. `observedAt` is stamped with the source's OWN reading time — the `at`
+ * the caller attached to the `rate_limit_event` frame or the `quota_polled` event that carried
+ * this window — the instant this window's value or source last changed. A repeat reading from
+ * the SAME source that says exactly the same thing (same `utilization`, same `resetsAt`) leaves
+ * `observedAt` untouched, so `observedAt` promises "last actually moved", not "last polled" — see
+ * {@link foldWindow}. Each unified window carries its OWN `observedAt`/`source` rather than one
+ * stamp for the whole {@link LedgerQuota}, because a partial update (a `rate_limit_event` frame
+ * naming only the window that tripped it, or a poll that reports only one window) genuinely
+ * ages the two windows independently — stamping the whole ledger with one instant used to make a
+ * retained, untouched window silently inherit a newer sibling's freshness.
+ */
+export type QuotaWindowObservation = QuotaWindow & {
+    observedAt: Date
+    source:     QuotaSource
 };
+
+/** {@link Ledger.quota}: the last known windows, each dated and sourced independently. */
+export interface LedgerQuota {
+    fiveHour?: QuotaWindowObservation
+    sevenDay?: QuotaWindowObservation
+    perModel?: Record<string, QuotaWindowObservation>
+    /** When this ledger's quota was last touched by a fold that actually moved something. */
+    revisedAt: Date
+}
 
 /** The full session ledger state, folded from a stream of {@link LedgerEvent}s by {@link reduceLedger}. */
 export interface Ledger {
@@ -826,75 +849,105 @@ function quotaWindowsFromFrame(frame: RateLimitFrame): QuotaWindows {
     return windows;
 }
 
-/** Per-model maps merge key by key, so a source that reports only one model keeps the others. */
-function mergePerModel(previous: Record<string, QuotaWindow> | undefined, next: Record<string, QuotaWindow> | undefined): Record<string, QuotaWindow> | undefined {
-    if(previous === undefined) {
-        return next;
-    }
-    return { ...previous, ...next };
-}
-
-/** Two readings of one window are the same reading when both numbers and the rollover stamp agree. */
-function sameQuotaWindow(previous: QuotaWindow | undefined, next: QuotaWindow | undefined): boolean {
+/**
+ * Two readings of one window carry the same VALUE when both numbers and the rollover stamp
+ * agree. Deliberately excludes `source`/`observedAt` — those are provenance, folded separately by
+ * {@link foldWindow} — so this is purely "did the number the window reports change".
+ */
+function sameQuotaValue(previous: QuotaWindow | undefined, next: QuotaWindow | undefined): boolean {
     return previous?.utilization === next?.utilization && previous?.resetsAt?.getTime() === next?.resetsAt?.getTime();
 }
 
 /**
- * Per-model maps compare key by key. `next` is always the merge of `previous` with whatever the
- * source carried, so its key set can only GROW — iterating `next`'s keys therefore covers every
- * key of both, and a window type `previous` never had compares its own (absent) reading against a
- * real window and fails. No size check is needed, and adding one would be unreachable code.
+ * Folds one freshly-reported window into its tracked {@link QuotaWindowObservation} — see that
+ * type's docstring for the dedupe rule this implements. Returns `previous` BY REFERENCE when the
+ * SAME source reports the SAME value again, which is what lets {@link reduceQuota} detect "this
+ * window didn't move" with a `===` check rather than a deep comparison. A reading from a
+ * DIFFERENT source always refreshes `observedAt`, even when the number itself didn't move,
+ * because the provenance changed — two sources agreeing is itself new information.
  */
-function samePerModel(previous: Record<string, QuotaWindow> | undefined, next: Record<string, QuotaWindow> | undefined): boolean {
-    return Object.keys(next ?? {}).every(key => sameQuotaWindow(previous?.[key], next?.[key]));
+function foldWindow(previous: QuotaWindowObservation | undefined, next: QuotaWindow, source: QuotaSource, observedAt: Date): QuotaWindowObservation {
+    if(previous?.source === source && sameQuotaValue(previous, next)) {
+        return previous;
+    }
+    return { ...next, source, observedAt };
 }
 
-/** Whether a merged reading says exactly what the ledger already holds — see {@link reduceQuota}. */
-function sameQuotaReading(previous: LedgerQuota, next: LedgerQuota): boolean {
-    return previous.source === next.source
-      && sameQuotaWindow(previous.fiveHour, next.fiveHour)
-      && sameQuotaWindow(previous.sevenDay, next.sevenDay)
-      && samePerModel(previous.perModel, next.perModel);
+/**
+ * Folds `next` — one source's freshly-reported per-model windows — into `previous`'s accumulated
+ * map, key by key via {@link foldWindow}, so a source that names only one model leaves every
+ * other tracked model exactly as it was (including its own `source`/`observedAt`). Returns
+ * `previous` BY REFERENCE when `next` is absent — mirroring {@link foldWindow}'s own undefined
+ * case — so a unified-window-only reading never turns an absent `perModel` into an allocated
+ * empty map. The merged key set can only GROW: nothing here, or anywhere `QuotaWindows` is
+ * produced, ever removes a key, so no key of `previous` is ever dropped.
+ */
+function foldPerModel(
+    previous: Record<string, QuotaWindowObservation> | undefined,
+    next: Record<string, QuotaWindow> | undefined,
+    source: QuotaSource,
+    observedAt: Date
+): Record<string, QuotaWindowObservation> | undefined {
+    if(next === undefined) {
+        return previous;
+    }
+    const merged: Record<string, QuotaWindowObservation> = { ...previous };
+    for(const [key, window] of Object.entries(next)) {
+        merged[key] = foldWindow(previous?.[key], window, source, observedAt);
+    }
+    return merged;
+}
+
+/**
+ * True when `merged` (this fold's {@link foldPerModel} result) holds any window whose OBJECT
+ * REFERENCE differs from `previous`'s same key — an added key or a changed value/source alike,
+ * since `foldWindow` already returns a stable reference for a key that did not move. `merged`'s
+ * key set is always a superset of `previous`'s (see {@link foldPerModel}: no key is ever
+ * removed), so iterating `merged` alone covers everything that could possibly have moved.
+ */
+function perModelMoved(previous: Record<string, QuotaWindowObservation> | undefined, merged: Record<string, QuotaWindowObservation> | undefined): boolean {
+    if(merged === undefined) {
+        return false;
+    }
+    return Object.keys(merged).some(key => merged[key] !== previous?.[key]);
 }
 
 /**
  * Merges `windows` into `ledger.quota` window by window — a source that knows only one window
- * leaves the others at their last known value — stamping `source` and `at`. Returns `ledger` by
- * reference when `windows` carries nothing at all, so a frame naming only untracked window types
- * (or a poll that parsed to nothing) is a no-op rather than a bogus refresh of the timestamp.
+ * leaves the others EXACTLY as they were, including their own already-stamped `source` and
+ * `observedAt` (see {@link foldWindow} and {@link foldPerModel}). Returns `ledger` by reference
+ * when `windows` carries nothing at all, so a frame naming only untracked window types (or a poll
+ * that parsed to nothing) is a no-op rather than a bogus refresh.
  *
- * It also returns `ledger` by reference when the merge MOVED nothing: same windows, same rollover
- * stamps, same source. The poller repeats the same numbers every five minutes and every quota
- * subscriber (`quota-notes.ts`, presence, the ambient-line providers) is woken by a changed ledger
- * reference, so re-allocating on an identical reading is pure noise.
+ * It also returns `ledger` by reference when the fold MOVED nothing: every tracked window, and
+ * every per-model window, came back from its fold by the SAME REFERENCE it already held. The
+ * poller repeats the same numbers every five minutes and every quota subscriber
+ * (`quota-notes.ts`, presence, the ambient-line providers) is woken by a changed ledger reference,
+ * so re-allocating on an identical reading is pure noise.
  *
- * `at` is deliberately NOT bumped for a deduped reading, which is what makes the dedupe a pure
- * reference test. `ambient-lines.ts` merges the two roles' ledgers by taking, per window, the
- * reading with the later `quota.at` — and that merge is unaffected here, because a deduped
- * reading agrees with the value already filed: the losing ledger's stale-looking `at` is attached
- * to the very number the fresher reading would have written. (The two sources cannot mask each
- * other either: `source` is part of the comparison, so a poll landing on a headers reading always
- * refreshes.) The one behaviour that does change is `quota-notes.ts`'s retry of a note the bridge
- * refused at boot: it now waits for the next reading that actually moved rather than the next
- * identical repeat — which is the same wait, one poll later, for a note that is `wake: false`
- * anyway.
+ * `revisedAt` (the ledger's own last-actually-touched instant) is deliberately NOT bumped for a
+ * deduped reading, mirroring each window's own `observedAt`. This per-window stamping is the fix
+ * for the bug this module used to have: the OLD `LedgerQuota` shared one `source`/`at` pair
+ * across the whole reading, so a partial update — a `rate_limit_event` frame naming only the
+ * window that tripped it, or a poll reporting only one window — let a genuinely untouched window
+ * silently INHERIT a newer sibling's stamp (or a different source). `ambient-lines.ts`'s
+ * cross-ledger freshness merge could then prefer a stale retained reading over a genuinely
+ * fresher one from the other ledger, and `sdkLedgerFallbackData` could null out an entire
+ * ledger's SDK-only rendering because exactly one window in it happened to be poll-sourced. Now
+ * every window carries its own provenance, so neither failure mode is reachable.
  */
-function reduceQuota(ledger: Ledger, windows: QuotaWindows, source: LedgerQuota['source'], at: Date): Ledger {
+function reduceQuota(ledger: Ledger, windows: QuotaWindows, source: QuotaSource, observedAt: Date): Ledger {
     if(!hasQuotaWindow(windows)) {
         return ledger;
     }
     const previous = ledger.quota;
-    const quota: LedgerQuota = {
-        fiveHour: windows.fiveHour ?? previous?.fiveHour,
-        sevenDay: windows.sevenDay ?? previous?.sevenDay,
-        perModel: mergePerModel(previous?.perModel, windows.perModel),
-        source,
-        at,
-    };
-    if(previous !== undefined && sameQuotaReading(previous, quota)) {
+    const fiveHour = windows.fiveHour === undefined ? previous?.fiveHour : foldWindow(previous?.fiveHour, windows.fiveHour, source, observedAt);
+    const sevenDay = windows.sevenDay === undefined ? previous?.sevenDay : foldWindow(previous?.sevenDay, windows.sevenDay, source, observedAt);
+    const perModel = foldPerModel(previous?.perModel, windows.perModel, source, observedAt);
+    if(previous !== undefined && fiveHour === previous.fiveHour && sevenDay === previous.sevenDay && !perModelMoved(previous.perModel, perModel)) {
         return ledger;
     }
-    return { ...ledger, quota };
+    return { ...ledger, quota: { fiveHour, sevenDay, perModel, revisedAt: observedAt } };
 }
 
 /**

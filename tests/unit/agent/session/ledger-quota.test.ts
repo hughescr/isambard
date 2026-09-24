@@ -121,10 +121,9 @@ describe('reduceLedger sdk_frame rate_limit_event', () => {
         });
 
         expect(fold(initialLedger('conversation'), frame).quota).toEqual({
-            fiveHour: { utilization: 2, resetsAt: FIVE_HOUR_RESET },
-            sevenDay: { utilization: 53, resetsAt: SEVEN_DAY_RESET },
-            source:   'headers',
-            at:       T1,
+            fiveHour:  { utilization: 2, resetsAt: FIVE_HOUR_RESET, source: 'headers', observedAt: T1 },
+            sevenDay:  { utilization: 53, resetsAt: SEVEN_DAY_RESET, source: 'headers', observedAt: T1 },
+            revisedAt: T1,
         });
     });
 
@@ -136,7 +135,9 @@ describe('reduceLedger sdk_frame rate_limit_event', () => {
             unifiedWindows: { five_hour: { utilization: 0.02, resetsAt: FIVE_HOUR_RESET_SECONDS } },
         });
 
-        expect(fold(initialLedger('conversation'), frame).quota?.fiveHour).toEqual({ utilization: 90, resetsAt: FIVE_HOUR_RESET });
+        expect(fold(initialLedger('conversation'), frame).quota?.fiveHour).toEqual({
+            utilization: 90, resetsAt: FIVE_HOUR_RESET, source: 'headers', observedAt: T1,
+        });
     });
 
     it('files every seven_day_* variant under perModel, keyed by its raw rate-limit type', () => {
@@ -148,8 +149,8 @@ describe('reduceLedger sdk_frame rate_limit_event', () => {
         });
 
         expect(fold(initialLedger('conversation'), frame).quota?.perModel).toEqual({
-            seven_day_opus:   { utilization: 40, resetsAt: SEVEN_DAY_RESET },
-            seven_day_sonnet: { utilization: 10 },
+            seven_day_opus:   { utilization: 40, resetsAt: SEVEN_DAY_RESET, source: 'headers', observedAt: T1 },
+            seven_day_sonnet: { utilization: 10, source: 'headers', observedAt: T1 },
         });
     });
 
@@ -162,9 +163,8 @@ describe('reduceLedger sdk_frame rate_limit_event', () => {
         const frame = rateLimitEvent({ rateLimitType: 'seven_day', utilization: 0.53, resetsAt: SEVEN_DAY_RESET_SECONDS });
 
         expect(fold(initialLedger('conversation'), frame).quota).toEqual({
-            sevenDay: { utilization: 53, resetsAt: SEVEN_DAY_RESET },
-            source:   'headers',
-            at:       T1,
+            sevenDay:  { utilization: 53, resetsAt: SEVEN_DAY_RESET, source: 'headers', observedAt: T1 },
+            revisedAt: T1,
         });
     });
 
@@ -189,7 +189,7 @@ describe('reduceLedger sdk_frame rate_limit_event', () => {
         const after = fold(before, frame);
 
         expect(after.quota?.fiveHour).toBeUndefined();
-        expect(after.quota?.sevenDay).toEqual({ utilization: 53 });
+        expect(after.quota?.sevenDay).toEqual({ utilization: 53, source: 'headers', observedAt: T1 });
     });
 
     it('skips the top-level window when its rateLimitType is named but its utilization is unusable', () => {
@@ -198,26 +198,32 @@ describe('reduceLedger sdk_frame rate_limit_event', () => {
         const after = fold(before, frame);
 
         expect(after.quota?.fiveHour).toBeUndefined();
-        expect(after.quota?.sevenDay).toEqual({ utilization: 53 });
+        expect(after.quota?.sevenDay).toEqual({ utilization: 53, source: 'headers', observedAt: T1 });
     });
 
-    it('keeps a window an earlier event set when a later event does not carry it', () => {
+    it('keeps a window an earlier event set when a later event does not carry it, by the SAME observation object', () => {
         const first = fold(initialLedger('conversation'), rateLimitEvent({ unifiedWindows: { five_hour: { utilization: 0.02 } } }));
         const second = fold(first, rateLimitEvent({ unifiedWindows: { seven_day: { utilization: 0.53 } } }), T2);
 
         expect(second.quota).toEqual({
-            fiveHour: { utilization: 2 },
-            sevenDay: { utilization: 53 },
-            source:   'headers',
-            at:       T2,
+            fiveHour:  { utilization: 2, source: 'headers', observedAt: T1 },
+            sevenDay:  { utilization: 53, source: 'headers', observedAt: T2 },
+            revisedAt: T2,
         });
+        // The untouched fiveHour observation is the exact object the first fold produced, not a
+        // structurally-equal copy — proves the second fold's `windows.fiveHour === undefined`
+        // branch returns `previous` rather than re-deriving it.
+        expect(second.quota?.fiveHour).toBe(first.quota?.fiveHour);
     });
 
     it('merges perModel across events rather than replacing the map', () => {
         const first = fold(initialLedger('conversation'), rateLimitEvent({ unifiedWindows: { seven_day_opus: { utilization: 0.4 } } }));
         const second = fold(first, rateLimitEvent({ unifiedWindows: { seven_day_sonnet: { utilization: 0.1 } } }), T2);
 
-        expect(second.quota?.perModel).toEqual({ seven_day_opus: { utilization: 40 }, seven_day_sonnet: { utilization: 10 } });
+        expect(second.quota?.perModel).toEqual({
+            seven_day_opus:   { utilization: 40, source: 'headers', observedAt: T1 },
+            seven_day_sonnet: { utilization: 10, source: 'headers', observedAt: T2 },
+        });
     });
 
     it('shares every untouched sub-object with the previous ledger', () => {
@@ -235,19 +241,25 @@ describe('reduceLedger quota_polled', () => {
     it('records polled windows with source poll and the event stamp', () => {
         const after = polled(initialLedger('perch'), { fiveHour: { utilization: 42, resetsAt: FIVE_HOUR_RESET } });
 
-        expect(after.quota).toEqual({ fiveHour: { utilization: 42, resetsAt: FIVE_HOUR_RESET }, source: 'poll', at: T1 });
+        expect(after.quota).toEqual({
+            fiveHour:  { utilization: 42, resetsAt: FIVE_HOUR_RESET, source: 'poll', observedAt: T1 },
+            revisedAt: T1,
+        });
     });
 
-    it('merges over a headers-sourced quota, keeping windows the poll did not carry', () => {
+    it('merges over a headers-sourced quota, keeping windows the poll did not carry — each window under its OWN source and stamp', () => {
         const seeded = fold(initialLedger('perch'), rateLimitEvent({ unifiedWindows: { five_hour: { utilization: 0.02 }, seven_day: { utilization: 0.53 } } }));
         const after = polled(seeded, { sevenDay: { utilization: 61 } }, T2);
 
         expect(after.quota).toEqual({
-            fiveHour: { utilization: 2 },
-            sevenDay: { utilization: 61 },
-            source:   'poll',
-            at:       T2,
+            fiveHour:  { utilization: 2, source: 'headers', observedAt: T1 },
+            sevenDay:  { utilization: 61, source: 'poll', observedAt: T2 },
+            revisedAt: T2,
         });
+        // The retained fiveHour window is untouched by this partial poll, right down to the
+        // object reference — the exact regression this issue fixes: it must not inherit the
+        // poll's source or stamp just because a sibling window in the same ledger moved.
+        expect(after.quota?.fiveHour).toBe(seeded.quota?.fiveHour);
     });
 
     it('returns the ledger by reference when the poll carries no window at all', () => {
@@ -278,13 +290,13 @@ describe('reduceLedger quota dedupe', () => {
         };
     }
 
-    it('returns the ledger by reference — and leaves `at` where it was — when a poll repeats the current reading exactly', () => {
+    it('returns the ledger by reference — and leaves `revisedAt` where it was — when a poll repeats the current reading exactly', () => {
         const first = polled(initialLedger('perch'), READING, T1);
 
         const second = polled(first, copyOfReading(), T2);
 
         expect(second).toBe(first);
-        expect(second.quota?.at).toBe(T1);
+        expect(second.quota?.revisedAt).toBe(T1);
     });
 
     it('refreshes when a window utilization moves', () => {
@@ -293,7 +305,7 @@ describe('reduceLedger quota dedupe', () => {
         const second = polled(first, { ...copyOfReading(), sevenDay: { utilization: 62 } }, T2);
 
         expect(second).not.toBe(first);
-        expect(second.quota).toMatchObject({ sevenDay: { utilization: 62 }, at: T2 });
+        expect(second.quota).toMatchObject({ sevenDay: { utilization: 62, observedAt: T2 }, revisedAt: T2 });
     });
 
     it('refreshes when only resetsAt moves — the window rolled over at the same utilization', () => {
@@ -302,7 +314,7 @@ describe('reduceLedger quota dedupe', () => {
         const second = polled(first, { ...copyOfReading(), fiveHour: { utilization: 42, resetsAt: SEVEN_DAY_RESET } }, T2);
 
         expect(second).not.toBe(first);
-        expect(second.quota?.fiveHour).toEqual({ utilization: 42, resetsAt: SEVEN_DAY_RESET });
+        expect(second.quota?.fiveHour).toEqual({ utilization: 42, resetsAt: SEVEN_DAY_RESET, source: 'poll', observedAt: T2 });
     });
 
     it('refreshes when a window loses its resetsAt while the utilization stands', () => {
@@ -311,16 +323,19 @@ describe('reduceLedger quota dedupe', () => {
         const second = polled(first, { fiveHour: { utilization: 42 } }, T2);
 
         expect(second).not.toBe(first);
-        expect(second.quota?.fiveHour).toEqual({ utilization: 42 });
+        expect(second.quota?.fiveHour).toEqual({ utilization: 42, source: 'poll', observedAt: T2 });
     });
 
-    it('refreshes when the same numbers arrive from the other source', () => {
+    it('refreshes when the same numbers arrive from the other source — source is part of the per-window dedupe key', () => {
         const first = polled(initialLedger('perch'), { fiveHour: { utilization: 2 } }, T1);
 
         const second = fold(first, rateLimitEvent({ unifiedWindows: { five_hour: { utilization: 0.02 } } }), T2);
 
         expect(second).not.toBe(first);
-        expect(second.quota).toEqual({ fiveHour: { utilization: 2 }, source: 'headers', at: T2 });
+        expect(second.quota).toEqual({
+            fiveHour:  { utilization: 2, source: 'headers', observedAt: T2 },
+            revisedAt: T2,
+        });
     });
 
     it('returns the ledger by reference for an identical reading that carries no perModel at all', () => {
@@ -331,7 +346,7 @@ describe('reduceLedger quota dedupe', () => {
         expect(second).toBe(first);
     });
 
-    it('refreshes when ONE of several perModel windows moves and the others stand', () => {
+    it('refreshes when ONE of several perModel windows moves and the others stand — by the SAME object reference', () => {
         const twoModels: QuotaWindows = {
             perModel: { seven_day_opus: { utilization: 40 }, seven_day_sonnet: { utilization: 10 } },
         };
@@ -340,7 +355,11 @@ describe('reduceLedger quota dedupe', () => {
         const second = polled(first, { perModel: { seven_day_opus: { utilization: 40 }, seven_day_sonnet: { utilization: 11 } } }, T2);
 
         expect(second).not.toBe(first);
-        expect(second.quota?.perModel).toEqual({ seven_day_opus: { utilization: 40 }, seven_day_sonnet: { utilization: 11 } });
+        expect(second.quota?.perModel).toEqual({
+            seven_day_opus:   { utilization: 40, source: 'poll', observedAt: T1 },
+            seven_day_sonnet: { utilization: 11, source: 'poll', observedAt: T2 },
+        });
+        expect(second.quota?.perModel?.seven_day_opus).toBe(first.quota?.perModel?.seven_day_opus);
     });
 
     it('refreshes when a perModel window moves', () => {
@@ -349,7 +368,9 @@ describe('reduceLedger quota dedupe', () => {
         const second = polled(first, { ...copyOfReading(), perModel: { seven_day_opus: { utilization: 41, resetsAt: SEVEN_DAY_RESET } } }, T2);
 
         expect(second).not.toBe(first);
-        expect(second.quota?.perModel).toEqual({ seven_day_opus: { utilization: 41, resetsAt: SEVEN_DAY_RESET } });
+        expect(second.quota?.perModel).toEqual({
+            seven_day_opus: { utilization: 41, resetsAt: SEVEN_DAY_RESET, source: 'poll', observedAt: T2 },
+        });
     });
 
     it('refreshes when a reading brings the first perModel window this ledger has ever seen', () => {
@@ -358,19 +379,26 @@ describe('reduceLedger quota dedupe', () => {
         const second = polled(first, { fiveHour: { utilization: 42 }, perModel: { seven_day_opus: { utilization: 40 } } }, T2);
 
         expect(second).not.toBe(first);
-        expect(second.quota?.perModel).toEqual({ seven_day_opus: { utilization: 40 } });
+        expect(second.quota?.perModel).toEqual({ seven_day_opus: { utilization: 40, source: 'poll', observedAt: T2 } });
     });
 
-    it('refreshes when a poll adds a perModel window the ledger did not know', () => {
+    it('leaves perModel undefined — not an allocated empty map — on a unified-only reading that has never seen a per-model window', () => {
+        const after = polled(initialLedger('perch'), { fiveHour: { utilization: 42 } }, T1);
+
+        expect(after.quota?.perModel).toBeUndefined();
+    });
+
+    it('refreshes when a poll adds a perModel window the ledger did not know, keeping the untouched model by the SAME object reference', () => {
         const first = polled(initialLedger('perch'), READING, T1);
 
         const second = polled(first, { ...copyOfReading(), perModel: { seven_day_sonnet: { utilization: 10 } } }, T2);
 
         expect(second).not.toBe(first);
         expect(second.quota?.perModel).toEqual({
-            seven_day_opus:   { utilization: 40, resetsAt: SEVEN_DAY_RESET },
-            seven_day_sonnet: { utilization: 10 },
+            seven_day_opus:   { utilization: 40, resetsAt: SEVEN_DAY_RESET, source: 'poll', observedAt: T1 },
+            seven_day_sonnet: { utilization: 10, source: 'poll', observedAt: T2 },
         });
+        expect(second.quota?.perModel?.seven_day_opus).toBe(first.quota?.perModel?.seven_day_opus);
     });
 
     it('still refreshes the FIRST reading a ledger ever sees', () => {
@@ -379,6 +407,6 @@ describe('reduceLedger quota dedupe', () => {
         const after = polled(before, READING, T1);
 
         expect(after).not.toBe(before);
-        expect(after.quota?.at).toBe(T1);
+        expect(after.quota?.revisedAt).toBe(T1);
     });
 });

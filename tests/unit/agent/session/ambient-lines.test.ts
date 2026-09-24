@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'bun:test';
 import { QUOTA_LINE_PREFIX, composeAmbientLines, withAmbientLines, type ComposeAmbientLinesParams } from '@/agent/session/ambient-lines';
-import { initialLedger, type Ledger, type LedgerQuota, type LedgerTask, type LedgerTurn } from '@/agent/session/ledger';
+import { initialLedger, type Ledger, type LedgerQuota, type LedgerTask, type LedgerTurn, type QuotaSource, type QuotaWindow } from '@/agent/session/ledger';
 import type { VendorSnapshot } from '@/agent/session/provider-snapshot';
 
 const TIMEZONE = 'America/Los_Angeles';
@@ -196,11 +196,36 @@ describe('composeAmbientLines: the other-session line', () => {
 });
 
 const QUOTA: LedgerQuota = {
-    fiveHour: { utilization: 42, resetsAt: TODAY_1500 },
-    sevenDay: { utilization: 61, resetsAt: THU_0900 },
-    source:   'headers',
-    at:       NOW,
+    fiveHour:  { utilization: 42, resetsAt: TODAY_1500, source: 'headers', observedAt: NOW },
+    sevenDay:  { utilization: 61, resetsAt: THU_0900, source: 'headers', observedAt: NOW },
+    revisedAt: NOW,
 };
+
+/** {@link QUOTA} with every window re-stamped `source: 'poll'` — for tests exercising a fully poll-sourced ledger. */
+function pollQuota(quota: LedgerQuota): LedgerQuota {
+    return {
+        fiveHour:  quota.fiveHour === undefined ? undefined : { ...quota.fiveHour, source: 'poll' },
+        sevenDay:  quota.sevenDay === undefined ? undefined : { ...quota.sevenDay, source: 'poll' },
+        perModel:  quota.perModel,
+        revisedAt: quota.revisedAt,
+    };
+}
+
+/** One-off `LedgerQuota` builder: every given window is stamped with the SAME `source`/`observedAt`, mirroring the old flat `{ ...windows, source, at }` shape now that each window carries its own provenance. */
+function quotaAt(
+    source: QuotaSource,
+    at: Date,
+    windows: { fiveHour?: QuotaWindow, sevenDay?: QuotaWindow, perModel?: Record<string, QuotaWindow> }
+): LedgerQuota {
+    return {
+        fiveHour: windows.fiveHour === undefined ? undefined : { ...windows.fiveHour, source, observedAt: at },
+        sevenDay: windows.sevenDay === undefined ? undefined : { ...windows.sevenDay, source, observedAt: at },
+        perModel: windows.perModel === undefined
+            ? undefined
+            : Object.fromEntries(Object.entries(windows.perModel).map(([key, window]) => [key, { ...window, source, observedAt: at }])),
+        revisedAt: at,
+    };
+}
 
 describe('composeAmbientLines: the quota line', () => {
     it('renders both windows with their reset stamps', () => {
@@ -222,24 +247,24 @@ describe('composeAmbientLines: the quota line', () => {
     });
 
     it('omits the quota line when only per-model windows are known', () => {
-        const self = ledger('conversation', { quota: { perModel: { seven_day_opus: { utilization: 12 } }, source: 'poll', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('poll', NOW, { perModel: { seven_day_opus: { utilization: 12 } } }) });
 
         expect(compose({ self })).toEqual([]);
     });
 
     it('renders a window with no reset stamp as a bare percentage', () => {
-        const self = ledger('conversation', { quota: { fiveHour: { utilization: 42 }, source: 'headers', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('headers', NOW, { fiveHour: { utilization: 42 } }) });
 
         expect(compose({ self })[0]).toContain('"used_percent": 42');
     });
 
     it('labels a fallback window expired instead of showing old headroom', () => {
-        const self = ledger('conversation', { quota: { fiveHour: { utilization: 99, resetsAt: new Date(NOW.getTime() - 1) }, source: 'headers', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('headers', NOW, { fiveHour: { utilization: 99, resetsAt: new Date(NOW.getTime() - 1) } }) });
         expect(compose({ self })[0]).toContain('"status": "expired"');
     });
 
     it('renders the weekly window alone when the five-hour window is unknown', () => {
-        const self = ledger('conversation', { quota: { sevenDay: { utilization: 61 }, source: 'headers', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('headers', NOW, { sevenDay: { utilization: 61 } }) });
 
         const line = compose({ self })[0] ?? '';
         expect(line).toContain('"window": "1w"');
@@ -247,7 +272,7 @@ describe('composeAmbientLines: the quota line', () => {
     });
 
     it('preserves fractional utilization', () => {
-        const self = ledger('conversation', { quota: { fiveHour: { utilization: 42.5 }, sevenDay: { utilization: 61.4 }, source: 'headers', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('headers', NOW, { fiveHour: { utilization: 42.5 }, sevenDay: { utilization: 61.4 } }) });
 
         const line = compose({ self })[0] ?? '';
         expect(line).toContain('"used_percent": 42.5');
@@ -256,7 +281,7 @@ describe('composeAmbientLines: the quota line', () => {
 
     it('labels poll-updated ledger values without calling them SDK observations', () => {
         const self = ledger('conversation', {
-            quota: { fiveHour: { utilization: 42 }, source: 'poll', at: NOW },
+            quota: quotaAt('poll', NOW, { fiveHour: { utilization: 42 } }),
         });
 
         expect(quotaJson(compose({ self })[0])).toEqual({
@@ -270,10 +295,10 @@ describe('composeAmbientLines: the quota line', () => {
 
     it('labels ledger fallback provenance mixed when selected windows came from different last updates', () => {
         const self = ledger('conversation', {
-            quota: { fiveHour: { utilization: 42 }, source: 'headers', at: NOW },
+            quota: quotaAt('headers', NOW, { fiveHour: { utilization: 42 } }),
         });
         const other = ledger('perch', {
-            quota: { sevenDay: { utilization: 61 }, source: 'poll', at: NOW },
+            quota: quotaAt('poll', NOW, { sevenDay: { utilization: 61 } }),
         });
 
         expect(quotaJson(compose({ self, other })[1])).toEqual({
@@ -298,7 +323,7 @@ describe('composeAmbientLines: the quota line', () => {
     });
 
     it('prefers this session\'s own reading of a window when the two ledgers are equally fresh', () => {
-        const self = ledger('conversation', { quota: { fiveHour: { utilization: 7 }, sevenDay: { utilization: 8 }, source: 'headers', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('headers', NOW, { fiveHour: { utilization: 7 }, sevenDay: { utilization: 8 } }) });
         const other = ledger('perch', { quota: QUOTA });
 
         const line = compose({ self, other })[1] ?? '';
@@ -309,8 +334,8 @@ describe('composeAmbientLines: the quota line', () => {
     it('takes the other session\'s reading of a window when it is the newer of the two', () => {
         // rate_limit_event frames fold only into the emitting role's ledger, so a quiet
         // conversation can hold an arbitrarily old reading while perch's is current.
-        const self = ledger('conversation', { quota: { fiveHour: { utilization: 20 }, source: 'headers', at: TODAY_1402 } });
-        const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, sevenDay: { utilization: 70 }, source: 'headers', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('headers', TODAY_1402, { fiveHour: { utilization: 20 } }) });
+        const other = ledger('perch', { quota: quotaAt('headers', NOW, { fiveHour: { utilization: 80 }, sevenDay: { utilization: 70 } }) });
 
         const line = compose({ self, other })[1] ?? '';
         expect(line).toContain('"used_percent": 80');
@@ -320,8 +345,8 @@ describe('composeAmbientLines: the quota line', () => {
     it('keeps this session\'s reading of a window the newer ledger does not carry at all', () => {
         // quotaWindowsFromFrame files only the window that tripped the emit when the frame
         // carries no unifiedWindows, so the newer ledger can legitimately know less.
-        const self = ledger('conversation', { quota: { sevenDay: { utilization: 61, resetsAt: THU_0900 }, source: 'headers', at: TODAY_1402 } });
-        const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, source: 'headers', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('headers', TODAY_1402, { sevenDay: { utilization: 61, resetsAt: THU_0900 } }) });
+        const other = ledger('perch', { quota: quotaAt('headers', NOW, { fiveHour: { utilization: 80 } }) });
 
         const line = compose({ self, other })[1] ?? '';
         expect(line).toContain('"used_percent": 80');
@@ -330,12 +355,33 @@ describe('composeAmbientLines: the quota line', () => {
     });
 
     it('keeps this session\'s reading of every window when it is the newer ledger', () => {
-        const self = ledger('conversation', { quota: { fiveHour: { utilization: 20 }, source: 'headers', at: NOW } });
-        const other = ledger('perch', { quota: { fiveHour: { utilization: 80 }, sevenDay: { utilization: 70 }, source: 'headers', at: TODAY_1402 } });
+        const self = ledger('conversation', { quota: quotaAt('headers', NOW, { fiveHour: { utilization: 20 } }) });
+        const other = ledger('perch', { quota: quotaAt('headers', TODAY_1402, { fiveHour: { utilization: 80 }, sevenDay: { utilization: 70 } }) });
 
         const line = compose({ self, other })[1] ?? '';
         expect(line).toContain('"used_percent": 20');
         expect(line).toContain('"used_percent": 70');
+    });
+
+    it('keeps a genuinely stale retained window from out-aging a fresher sibling in the same ledger — the AC-2 regression', () => {
+        // self folded BOTH windows from a poll at TODAY_1402, then a headers frame at NOW that
+        // named only fiveHour: sevenDay legitimately stays the T0 poll reading (it was never
+        // retouched), it must NOT inherit NOW just because fiveHour, its sibling, did.
+        const self = ledger('conversation', {
+            quota: {
+                fiveHour:  { utilization: 20, source: 'headers', observedAt: NOW },
+                sevenDay:  { utilization: 8, source: 'poll', observedAt: TODAY_1402 },
+                revisedAt: NOW,
+            },
+        });
+        // other genuinely refreshed sevenDay in between (TODAY_1402 < THU_0900... use TODAY_1500,
+        // which sits strictly between TODAY_1402 and NOW).
+        const other = ledger('perch', { quota: quotaAt('headers', TODAY_1500, { sevenDay: { utilization: 70 } }) });
+
+        const line = compose({ self, other })[1] ?? '';
+        expect(line).toContain('"used_percent": 20');
+        expect(line).toContain('"used_percent": 70');
+        expect(line).not.toContain('"used_percent": 8');
     });
 
     it('appends the shared-subscription note when asked for it', () => {
@@ -424,7 +470,7 @@ describe('composeAmbientLines: provider reports', () => {
         }
         snapshot.generatedAt = NOW;
         snapshot.anthropicFallback = { collectedAt: NOW, expiresAt: new Date(NOW.getTime() + 60_000), windows: { fiveHour: { utilization: 42 } } };
-        const self = ledger('conversation', { quota: { fiveHour: { utilization: 17 }, source: 'headers', at: NOW } });
+        const self = ledger('conversation', { quota: quotaAt('headers', NOW, { fiveHour: { utilization: 17 } }) });
         const line = compose({ self, providerSnapshot: snapshot })[0] ?? '';
         expect(line).toContain('"source": "direct_anthropic"');
         expect(line).toContain('"used_percent": 42');
@@ -498,12 +544,34 @@ describe('composeAmbientLines: provider reports', () => {
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quota:       undefined,
         }, ...snapshot.providers];
         const data = quotaJson(compose({
-            self:                 ledger('conversation', { quota: { ...QUOTA, source: 'poll' } }), providerSnapshot:     snapshot,
+            self:                 ledger('conversation', { quota: pollQuota(QUOTA) }), providerSnapshot:     snapshot,
             anthropicQuotaSource: 'sdk',
         })[0]);
 
         expect(data.anthropic).toEqual({
             quota_values: { status: 'unknown', reason: 'no_sdk_quota_reading' },
+        });
+    });
+
+    it('surfaces a headers-sourced window in SDK-only mode even when this SAME session\'s other window is poll-sourced — the AC-4 regression', () => {
+        // Before this issue's fix, a whole LedgerQuota shared one `source`, so a ledger with one
+        // poll-sourced window nulled the entire SDK-only render. Now each window is filtered on
+        // its OWN provenance: fiveHour (headers) must still render even though sevenDay (poll)
+        // does not.
+        const self = ledger('conversation', {
+            quota: {
+                fiveHour:  { utilization: 42, resetsAt: TODAY_1500, source: 'headers', observedAt: NOW },
+                sevenDay:  { utilization: 61, resetsAt: THU_0900, source: 'poll', observedAt: NOW },
+                revisedAt: NOW,
+            },
+        });
+        const data = quotaJson(compose({ self, anthropicQuotaSource: 'sdk' })[0]);
+
+        expect(data.anthropic).toEqual({
+            quota_values: { status: 'ok', source: 'session_ledger', last_update_source: 'sdk_rate_limit_event', age: 'unknown' },
+            quotas:       [
+                { id: 'five_hour', window: '5h', used_percent: 42, remaining_percent: 58, resets_at: '2026-09-09T23:00:00.000Z' },
+            ],
         });
     });
 
@@ -514,7 +582,7 @@ describe('composeAmbientLines: provider reports', () => {
             freshness:   { cached: false, stale: false, ageSeconds: 0 }, errors:      [], quota:       undefined,
         }, ...snapshot.providers];
         const self = ledger('conversation', {
-            quota: { fiveHour: { utilization: 99, resetsAt: NOW }, source: 'headers', at: NOW },
+            quota: quotaAt('headers', NOW, { fiveHour: { utilization: 99, resetsAt: NOW } }),
         });
         const data = quotaJson(compose({ self, providerSnapshot: snapshot, anthropicQuotaSource: 'sdk' })[0]);
 
@@ -541,7 +609,7 @@ describe('composeAmbientLines: provider reports', () => {
             self: ledger('conversation', { quota: QUOTA }), anthropicQuotaSource: 'sdk', sharedQuotaNote: true,
         })[0]);
         const missing = quotaJson(compose({
-            self: ledger('conversation', { quota: { ...QUOTA, source: 'poll' } }), anthropicQuotaSource: 'sdk',
+            self: ledger('conversation', { quota: pollQuota(QUOTA) }), anthropicQuotaSource: 'sdk',
         })[0]);
 
         expect(valid).toEqual({
@@ -564,7 +632,7 @@ describe('composeAmbientLines: provider reports', () => {
             other: ledger('perch', { quota: QUOTA }), anthropicQuotaSource: 'sdk',
         })[1]);
         const fromPoll = quotaJson(compose({
-            other: ledger('perch', { quota: { ...QUOTA, source: 'poll' } }), anthropicQuotaSource: 'sdk',
+            other: ledger('perch', { quota: pollQuota(QUOTA) }), anthropicQuotaSource: 'sdk',
         })[1]);
 
         expect(fromSdk.anthropic).toEqual({

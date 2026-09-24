@@ -196,11 +196,11 @@ export function createQuotaNotes(params: CreateQuotaNotesParams): QuotaNotes {
                 if(window === undefined) {
                     continue;
                 }
-                // Stryker disable next-line llm: the guard above narrows window to a defined QuotaWindow, so `?? undefined` is inert.
+                // Stryker disable next-line llm: the guard above narrows window to a defined QuotaWindowObservation, so `?? undefined` is inert.
                 const state = advance(name, window);
-                // Stryker disable next-line llm: LedgerQuota.at is a required Date, so the `?? 0` fallback is unreachable.
-                noteReset(name, state, quota.at);
-                noteThresholds(name, state, quota.at);
+                // Stryker disable next-line llm: QuotaWindowObservation.observedAt is a required Date, so the `?? 0` fallback is unreachable.
+                noteReset(name, state, window.observedAt);
+                noteThresholds(name, state, window.observedAt);
             }
         },
 

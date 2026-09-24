@@ -2329,8 +2329,10 @@ describe('createSessionAmbience', () => {
 
         await h.ambience.quotaPoller.poll();
 
-        expect(h.conversation.get().quota).toMatchObject({ fiveHour: { utilization: 42 }, sevenDay: { utilization: 61 }, source: 'poll' });
-        expect(h.perch.get().quota).toMatchObject({ fiveHour: { utilization: 42 }, source: 'poll' });
+        expect(h.conversation.get().quota).toMatchObject({
+            fiveHour: { utilization: 42, source: 'poll' }, sevenDay: { utilization: 61, source: 'poll' },
+        });
+        expect(h.perch.get().quota).toMatchObject({ fiveHour: { utilization: 42, source: 'poll' } });
     });
 
     it('requests a debounced follow-up poll only when a registered ledger sees a result frame', async () => {

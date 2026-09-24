@@ -3,7 +3,7 @@
  * (docs/plans/session-peers-and-quota.md, block 5).
  */
 import { describe, test, expect, beforeEach, mock, type Mock } from 'bun:test';
-import type { Ledger, LedgerQuota, QuotaWindow } from '@/agent/session/ledger';
+import type { Ledger, QuotaWindow, QuotaWindowObservation } from '@/agent/session/ledger';
 import type { NotifyFn, NotifyParams } from '@/agent/session/notification-bridge';
 import { createQuotaNotes, DEFAULT_QUOTA_NOTIFY_PERCENTS } from '@/agent/session/quota-notes';
 
@@ -13,9 +13,30 @@ const AT = new Date('2026-09-09T20:00:00Z');
 const RESET_A = new Date('2026-09-09T22:30:00Z');
 const RESET_B = new Date('2026-09-10T03:30:00Z');
 
-/** One ledger-shaped reading: only `quota` is ever read by the notes. */
-function reading(quota: Partial<LedgerQuota>): Pick<Ledger, 'quota'> {
-    return { quota: { source: 'headers', at: AT, ...quota } };
+/** Per-window overrides {@link reading} accepts: bare windows, stamped with `source`/`observedAt` as given. */
+interface QuotaOverrides {
+    fiveHour?: QuotaWindow
+    sevenDay?: QuotaWindow
+    perModel?: Record<string, QuotaWindow>
+}
+
+/** Stamps a bare window with `source: 'headers'` at {@link AT}, mirroring the module's default reading. */
+function stamped(window: QuotaWindow): QuotaWindowObservation {
+    return { ...window, source: 'headers', observedAt: AT };
+}
+
+/** One ledger-shaped reading: only `quota` is ever read by the notes. Each given window is independently stamped. */
+function reading(overrides: QuotaOverrides): Pick<Ledger, 'quota'> {
+    return {
+        quota: {
+            fiveHour: overrides.fiveHour === undefined ? undefined : stamped(overrides.fiveHour),
+            sevenDay: overrides.sevenDay === undefined ? undefined : stamped(overrides.sevenDay),
+            perModel: overrides.perModel === undefined
+                ? undefined
+                : Object.fromEntries(Object.entries(overrides.perModel).map(([key, window]) => [key, stamped(window)])),
+            revisedAt: AT,
+        },
+    };
 }
 
 /** A five-hour reading in window instance A unless another `resetsAt` is given; `null` reports none at all. */
@@ -264,6 +285,24 @@ describe('createQuotaNotes', () => {
         expect(notify).toHaveBeenCalledTimes(2);
         expect(notify.mock.calls[0][0].key).toBe('fiveHour:75:none');
         expect(notify.mock.calls[1][0].key).toBe('fiveHour:90:none');
+    });
+
+    test('a note is stamped with the TRIGGERING window\'s own observedAt, not a shared ledger stamp, when the two tracked windows were observed at different times', () => {
+        const notes = createQuotaNotes({ notify });
+        const FIVE_HOUR_OBSERVED = new Date('2026-09-09T19:00:00Z');
+        const SEVEN_DAY_OBSERVED = new Date('2026-09-09T20:30:00Z');
+
+        notes.record({
+            quota: {
+                fiveHour:  { utilization: 80, resetsAt: RESET_A, source: 'headers', observedAt: FIVE_HOUR_OBSERVED },
+                sevenDay:  { utilization: 76, resetsAt: RESET_B, source: 'headers', observedAt: SEVEN_DAY_OBSERVED },
+                revisedAt: SEVEN_DAY_OBSERVED,
+            },
+        });
+
+        expect(notify).toHaveBeenCalledTimes(2);
+        expect(notify.mock.calls[0][0].at).toBe(FIVE_HOUR_OBSERVED);
+        expect(notify.mock.calls[1][0].at).toBe(SEVEN_DAY_OBSERVED);
     });
 
     describe('isPaused (the perch quota ceiling)', () => {

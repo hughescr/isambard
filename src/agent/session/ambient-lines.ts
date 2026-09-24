@@ -12,8 +12,8 @@
  *    carry explicit lookup, observation, window, reset and balance fields. In SDK-only Anthropic
  *    mode, Anthropic instead comes solely from ledger updates whose last source is an SDK
  *    rate-limit event; a missing event is rendered explicitly as unknown. Ledger windows are
- *    merged PER WINDOW across both sessions by their `quota.at` stamps — see
- *    {@link freshestDatedWindow} — and their per-window age is labelled unknown.
+ *    merged PER WINDOW across both sessions by each window's own `observedAt` stamp — see
+ *    {@link freshestWindow} — and their per-window age is labelled unknown.
  *
  * Both functions here are PURE: no clock, no I/O, no state. `now` is passed in the same way every
  * envelope builder takes it, and the once-after-boot "shared with Craig's own sessions" note is a
@@ -27,7 +27,7 @@
  */
 import { DateTime } from 'luxon';
 import type { ActivityPhase } from './activity-phase';
-import type { Ledger, LedgerQuota, LedgerTask, QuotaWindow, QuotaWindows } from './ledger';
+import type { Ledger, LedgerQuota, LedgerTask, QuotaWindow, QuotaWindowObservation, QuotaWindows } from './ledger';
 import type {
     AnthropicQuotaSource,
     VendorBalance,
@@ -818,24 +818,9 @@ function providerLine(
 /** The two unified windows either session paces itself against; per-model windows are not rendered. */
 type UnifiedWindowName = 'fiveHour' | 'sevenDay';
 
-/** One ledger's reading of one window, carrying the `quota.at` stamp that dates it. */
-interface DatedWindow {
-    window: QuotaWindow
-    at:     Date
-    source: LedgerQuota['source']
-}
-
-/** `quota`'s reading of `name`, dated by `quota.at`, or undefined when that ledger knows no such window. */
-function datedWindow(quota: LedgerQuota | undefined, name: UnifiedWindowName): DatedWindow | undefined {
-    if(quota === undefined) {
-        return undefined;
-    }
-    const window = quota[name];
-    return window === undefined ? undefined : { window, at: quota.at, source: quota.source };
-}
-
 /**
- * The freshest known reading of ONE unified window across both ledgers.
+ * The freshest known reading of ONE unified window across both ledgers, by each window's own
+ * {@link QuotaWindowObservation.observedAt}.
  *
  * The subscription is one account, so either ledger describes the same windows — but they are
  * refreshed independently: a `rate_limit_event` frame folds only into the emitting role's ledger,
@@ -843,24 +828,41 @@ function datedWindow(quota: LedgerQuota | undefined, name: UnifiedWindowName): D
  * both at once) targets an endpoint whose shape is UNVERIFIED. So neither ledger is reliably the
  * fresher one, and a ledger can legitimately know a window the other does not (a frame with no
  * `unifiedWindows` files only the window that tripped the emit). Per window, then: the reading
- * stamped with the later `quota.at` wins, a ledger carrying no such window never wins, and a tie
- * goes to `self` — the session actually about to spend.
+ * with the later `observedAt` wins, a ledger carrying no such window never wins, and a tie goes
+ * to `self` — the session actually about to spend. Reading each window's OWN stamp (rather than a
+ * whole-ledger stamp) is what stops a retained-but-stale window from out-aging a genuinely
+ * fresher one just because a SIBLING window in the same ledger happened to refresh more recently.
  */
-/**
- * The quota line, or undefined when neither unified window is known — a `quota` carrying only
- * per-model weekly windows renders nothing, since those are not what either session is pacing
- * itself against.
- */
-function freshestDatedWindow(name: UnifiedWindowName, self: LedgerQuota | undefined, other: LedgerQuota | undefined): DatedWindow | undefined {
-    const mine = datedWindow(self, name);
-    const theirs = datedWindow(other, name);
+function freshestWindow(name: UnifiedWindowName, self: LedgerQuota | undefined, other: LedgerQuota | undefined): QuotaWindowObservation | undefined {
+    const mine = self?.[name];
+    const theirs = other?.[name];
     if(mine === undefined) {
         return theirs;
     }
     if(theirs === undefined) {
         return mine;
     }
-    return theirs.at.getTime() > mine.at.getTime() ? theirs : mine;
+    return theirs.observedAt.getTime() > mine.observedAt.getTime() ? theirs : mine;
+}
+
+/**
+ * `quota` with every window that is NOT headers-sourced dropped, window by window — used by
+ * {@link sdkLedgerFallbackData} so a ledger whose five-hour window came from `rate_limit_event`
+ * still renders that window in SDK-only mode even when the SAME ledger's seven-day window came
+ * from the poller, rather than nulling the whole ledger over one poll-sourced sibling. `perModel`
+ * is dropped outright rather than filtered: {@link ledgerFallbackData}'s unified-window path never
+ * reads it, so there is nothing to filter, and threading it through would invite a future caller
+ * to assume it had been.
+ */
+function headersOnly(quota: LedgerQuota | undefined): LedgerQuota | undefined {
+    if(quota === undefined) {
+        return undefined;
+    }
+    return {
+        fiveHour:  quota.fiveHour?.source === 'headers' ? quota.fiveHour : undefined,
+        sevenDay:  quota.sevenDay?.source === 'headers' ? quota.sevenDay : undefined,
+        revisedAt: quota.revisedAt,
+    };
 }
 
 function ledgerFallbackData(
@@ -871,11 +873,11 @@ function ledgerFallbackData(
     history?: VendorHistory,
     prices?: VendorReferencePrices
 ): Record<string, unknown> | undefined {
-    const fiveHour = freshestDatedWindow('fiveHour', self, other);
-    const sevenDay = freshestDatedWindow('sevenDay', self, other);
+    const fiveHour = freshestWindow('fiveHour', self, other);
+    const sevenDay = freshestWindow('sevenDay', self, other);
     const quotas = [
-        ...fiveHour === undefined ? [] : [windowData('five_hour', fiveHour.window, now, provider, history, prices)],
-        ...sevenDay === undefined ? [] : [windowData('seven_day', sevenDay.window, now, provider, history, prices)],
+        ...fiveHour === undefined ? [] : [windowData('five_hour', fiveHour, now, provider, history, prices)],
+        ...sevenDay === undefined ? [] : [windowData('seven_day', sevenDay, now, provider, history, prices)],
     ];
     if(quotas.length === 0) {
         return undefined;
@@ -901,8 +903,8 @@ function sdkLedgerFallbackData(
     prices?: VendorReferencePrices
 ): Record<string, unknown> | undefined {
     const fallback = ledgerFallbackData(
-        self?.source === 'headers' ? self : undefined,
-        other?.source === 'headers' ? other : undefined,
+        headersOnly(self),
+        headersOnly(other),
         now,
         'anthropic',
         history,
@@ -949,7 +951,7 @@ function quotaLine(
  */
 export function composeAmbientLines(params: ComposeAmbientLinesParams): string[] {
     const { self, other, now, timezone, sharedQuotaNote = false, providerSnapshot, anthropicQuotaSource = 'provider' } = params;
-    // Merged per window from both ledgers rather than taken from one of them — see freshestDatedWindow.
+    // Merged per window from both ledgers rather than taken from one of them — see freshestWindow.
     const quota = providerSnapshot === undefined
         ? quotaLine(self.quota, other?.quota, now, timezone, sharedQuotaNote, anthropicQuotaSource)
         : providerLine(providerSnapshot, self.quota, other?.quota, now, timezone, sharedQuotaNote, anthropicQuotaSource);

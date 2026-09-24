@@ -1003,10 +1003,9 @@ describe('rough token estimates', () => {
         const self = {
             ...initialLedger('conversation'),
             quota: {
-                fiveHour: { utilization: 20, resetsAt: ESTIMATE_RESET },
-                sevenDay: { utilization: 35, resetsAt: THU_0900 },
-                source:   'headers' as const,
-                at:       NOW,
+                fiveHour:  { utilization: 20, resetsAt: ESTIMATE_RESET, source: 'headers' as const, observedAt: NOW },
+                sevenDay:  { utilization: 35, resetsAt: THU_0900, source: 'headers' as const, observedAt: NOW },
+                revisedAt: NOW,
             },
         };
         const line = composeAmbientLines({
@@ -1029,9 +1028,8 @@ describe('rough token estimates', () => {
         const self = {
             ...initialLedger('conversation'),
             quota: {
-                fiveHour: { utilization: 20, resetsAt: ESTIMATE_RESET },
-                source:   'headers' as const,
-                at:       NOW,
+                fiveHour:  { utilization: 20, resetsAt: ESTIMATE_RESET, source: 'headers' as const, observedAt: NOW },
+                revisedAt: NOW,
             },
         };
         const line = composeAmbientLines({
@@ -1056,9 +1054,8 @@ describe('rough token estimates', () => {
         const self = {
             ...initialLedger('conversation'),
             quota: {
-                sevenDay: { utilization: 35, resetsAt: THU_0900 },
-                source:   'headers' as const,
-                at:       NOW,
+                sevenDay:  { utilization: 35, resetsAt: THU_0900, source: 'headers' as const, observedAt: NOW },
+                revisedAt: NOW,
             },
         };
         const anthropic = vendor({
@@ -1081,9 +1078,8 @@ describe('rough token estimates', () => {
         const self = {
             ...initialLedger('conversation'),
             quota: {
-                sevenDay: { utilization: 35, resetsAt: THU_0900 },
-                source:   'headers' as const,
-                at:       NOW,
+                sevenDay:  { utilization: 35, resetsAt: THU_0900, source: 'headers' as const, observedAt: NOW },
+                revisedAt: NOW,
             },
         };
         const anthropic = vendor({

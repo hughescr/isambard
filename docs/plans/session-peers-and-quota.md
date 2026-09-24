@@ -99,9 +99,14 @@ time header) and one data source (the session ledgers).
 
 ## Block 3: quota into the ledger
 
-- `Ledger.quota?: { fiveHour?: Window, sevenDay?: Window, perModel?: Record<string, Window>,
-  source: 'headers' | 'poll', at: Date }` with `Window = { utilization: number (0-100),
-  resetsAt?: Date }`.
+- `Ledger.quota?: { fiveHour?: WindowObservation, sevenDay?: WindowObservation, perModel?:
+  Record<string, WindowObservation>, revisedAt: Date }` with `Window = { utilization: number
+  (0-100), resetsAt?: Date }` and `WindowObservation = Window & { source: 'headers' | 'poll',
+  observedAt: Date }` — each window carries its OWN source and observation time, stamped
+  independently, rather than one `source`/`at` pair for the whole reading (a partial update — a
+  frame naming only the window that tripped it, or a poll reporting only one window — genuinely
+  ages the two windows independently, and a shared stamp let an untouched window silently inherit
+  a fresher sibling's provenance; fixed by issue #55).
 - `reduceSdkFrame`: a `rate_limit_event` frame updates the window named by `rateLimitType`
   (`five_hour` → `fiveHour`, `seven_day` → `sevenDay`; the `seven_day_*` per-model types go to
   `perModel`), `source: 'headers'`. Utilization in the event is whatever unit the probe
@@ -113,7 +118,7 @@ time header) and one data source (the session ledgers).
   returns the ledger by reference so subscribers are not woken twice every poll interval, and the
   poller does nothing once stopped.
 - New `LedgerEvent` `{ type: 'quota_polled', quota, at }` from a poller
-  `src/agent/session/quota-poller.ts`: fetches the usage endpoint every `pollIntervalMs`
+  `src/app/quota-poller.ts`: fetches the usage endpoint every `pollIntervalMs`
   (default 300 000) and once after every `result` frame (debounced to at most once per 30 s),
   dispatching to every ledger it is given. Injected `fetch` and clock; never throws; a failed
   poll logs at debug and keeps the last value.
@@ -143,8 +148,8 @@ time header) and one data source (the session ledgers).
     not subscription capacity calibration. The block is omitted when
     no quota is known; adds a `note` about quota sharing only the first time after boot.
     **Amended (review, 2026-09-09):** each window is taken from whichever of the two ledgers holds
-    the FRESHER reading of it (`LedgerQuota.at`; a tie goes to `self`), rather than preferring
-    `self.quota` wholesale. `rate_limit_event` frames fold only into the emitting role's ledger
+    the FRESHER reading of it (its own `observedAt`, via `freshestWindow`; a tie goes to `self`),
+    rather than preferring `self.quota` wholesale. `rate_limit_event` frames fold only into the emitting role's ledger
     and are change-driven, and nothing mirrors a reading across the stores, so `self` is not
     reliably the fresher one — and a frame with no `unifiedWindows` files only the window that
     tripped the emit, so one ledger can legitimately know a window the other does not.
