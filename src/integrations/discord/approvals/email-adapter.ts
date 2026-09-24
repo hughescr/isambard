@@ -1,5 +1,6 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
+import type { ApprovalCardEditGate } from './card-edit-gate';
 import { DiscordOutboundApprovalInteractionHandler } from './interaction-handler';
 import { EMAIL_ALLOWLIST_SELECT_PREFIX } from '@/config';
 import type { AllowlistApprovalStarter } from '@/integrations/discord/allowlist-interaction-handler';
@@ -7,8 +8,10 @@ import type { EmailOutboundApprovals } from '@/integrations/email';
 import { encodeCustomId, parseCustomId } from '@/utils';
 
 export interface EmailApprovalInteractionAdapterDeps {
-    approvals: EmailOutboundApprovals
-    allowlist: AllowlistApprovalStarter
+    approvals:  EmailOutboundApprovals
+    allowlist:  AllowlistApprovalStarter
+    /** Orders the pending-card edit before the outcome edit; the process-wide gate when omitted. */
+    cardEdits?: ApprovalCardEditGate
 }
 
 /**
@@ -36,7 +39,7 @@ export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInte
     private readonly allowlist: AllowlistApprovalStarter;
 
     constructor(deps: EmailApprovalInteractionAdapterDeps) {
-        super();
+        super(deps.cardEdits);
         this.approvals = deps.approvals;
         this.allowlist = deps.allowlist;
     }
@@ -133,7 +136,11 @@ export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInte
         await interaction.deferUpdate();
 
         try {
-            await this.approvals.approveSend(uid, 'allowlist');
+            // Record the approval, then show the pending card (see recordApprovalThenShowPending).
+            // A failed record lands in the catch below with nothing recorded.
+            await this.recordApprovalThenShowPending(interaction, 'Approved ✓ — sending…', async (card) => {
+                await this.approvals.approveSend(uid, 'allowlist', card);
+            });
 
             // Kick off the allowlist saga for each selected recipient address.
             // Uses followUp (not showModal) since deferUpdate was already called.
@@ -143,16 +150,8 @@ export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInte
                 await this.allowlist.startFromApproval(interaction, 'email', emailAddress);
             }
 
-            const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — sending shortly');
-
-            await interaction.editReply({
-                content:    null,
-                embeds:     [updatedEmbed],
-                components: [],
-            });
-
-            // Wake notification (Q7, plan amendment B2) — after editReply succeeds, exactly once
-            // per uid regardless of how many recipients were selected above.
+            // Non-waking note (Q7, plan amendment B2) — exactly once per uid regardless of how
+            // many recipients were selected above; Izzy is woken by the real send outcome.
             this.approvals.announceApproved(uid);
         } catch (err) {
             logger.error({ err, uid, msg: 'Failed to process allowlist select menu' });
@@ -173,23 +172,13 @@ export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInte
     // ---------------------------------------------------------------------------
 
     private async handleApprove(interaction: ButtonInteraction, uid: number): Promise<void> {
-        await this.approvals.approveSend(uid, 'direct');
+        // Record the approval, then show the pending card (see recordApprovalThenShowPending). A
+        // failed record throws to the base handler, which shows the retry error.
+        await this.recordApprovalThenShowPending(interaction, 'Approved ✓ — sending…', async (card) => {
+            await this.approvals.approveSend(uid, 'direct', card);
+        });
 
-        const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — sending shortly');
-
-        // The approved outbound action above is already persisted, so a failed Discord UI update must not
-        // suppress the wake notification below (mirrors performRejection's editReply guard).
-        try {
-            await interaction.editReply({
-                embeds:     [updatedEmbed],
-                components: [],
-            });
-        } catch (editError) {
-            logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email approval' });
-        }
-
-        // Wake notification (Q7, plan amendment B2) — after the Discord editReply attempt
-        // above, regardless of whether it succeeded.
+        // Non-waking note (Q7, plan amendment B2); Izzy is woken by the real send outcome.
         this.approvals.announceApproved(uid);
     }
 

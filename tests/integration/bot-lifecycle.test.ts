@@ -684,9 +684,21 @@ describe('Bot Lifecycle Integration', () => {
                 const owner = {
                     start:       mock(() => undefined),
                     stop:        mock(() => undefined),
+                    wake:        mock(() => undefined),
                     executeOnce: mock(async () => ({ executed: 0, failed: 0 })),
                 };
                 sagaOwners.push(owner);
+                return owner;
+            });
+            const reporterOwners: { start: ReturnType<typeof mock>, stop: ReturnType<typeof mock> }[] = [];
+            const createReporter = spyOn(servicesModule, 'createApprovedActionOutcomeReporter').mockImplementation(() => {
+                const owner = {
+                    start:      mock(() => undefined),
+                    stop:       mock(() => undefined),
+                    wake:       mock(() => undefined),
+                    reportOnce: mock(async () => ({ delivered: 0, pending: 0 })),
+                };
+                reporterOwners.push(owner);
                 return owner;
             });
             const setIntervalSpy = spyOn(globalThis, 'setInterval');
@@ -701,6 +713,7 @@ describe('Bot Lifecycle Integration', () => {
                 healthStop,
                 createOutbox,
                 createSaga,
+                createReporter,
                 setIntervalSpy,
                 clearIntervalSpy,
                 notifierSpy,
@@ -715,6 +728,8 @@ describe('Bot Lifecycle Integration', () => {
             const app = await createApp();
             await app.start();
             await app.stop();
+            expect(reporterOwners[0].start).toHaveBeenCalledTimes(1);
+            expect(reporterOwners[0].stop).toHaveBeenCalledTimes(1);
             const firstClientDestructions = clients.map(client => client.destroy.mock.calls.length);
             const firstClientCount = clients.length;
             expect(probeIntervals()).toHaveLength(1);
@@ -728,6 +743,7 @@ describe('Bot Lifecycle Integration', () => {
             expect(outboxOwners[1].stop).toHaveBeenCalledTimes(1);
             expect(sagaOwners[0].stop).toHaveBeenCalledTimes(1);
             expect(sagaOwners[1].stop).toHaveBeenCalledTimes(1);
+            expect(reporterOwners[1].stop).toHaveBeenCalledTimes(1);
             expect(probeIntervals()).toHaveLength(2);
             expect(clearIntervalSpy).toHaveBeenCalledWith(probeIntervals()[1]);
             expect(notifierSpy.mock.calls.filter(([value]) => value === undefined)).toHaveLength(firstNotifierClears + 1);
@@ -746,6 +762,7 @@ describe('Bot Lifecycle Integration', () => {
             expect(holderDestroy).toHaveBeenCalledTimes(3);
             expect(outboxOwners[2].stop).toHaveBeenCalledTimes(1);
             expect(sagaOwners[2].stop).toHaveBeenCalledTimes(1);
+            expect(reporterOwners[2].stop).toHaveBeenCalledTimes(1);
             expect(bots[0].stop).toHaveBeenCalledTimes(1);
             expect(bots[1].stop).toHaveBeenCalledTimes(1);
         });

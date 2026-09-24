@@ -12,9 +12,9 @@ import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { InvariantViolationError } from '@/errors';
 import { BlueskyClient, BskyHistoryProvider, atUriSchema, cidSchema, type BskyReplyInput } from '@/integrations/bsky';
 import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createApprovedActionOutcomeDelivery, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient } from '@/integrations/email';
-import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionRetryListener, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedOutboundActionExecutor } from '@/services';
+import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type ContactChangeRequest, type EmbedderLike } from '@/storage';
 import { resolveTimezone } from '@/utils';
 
@@ -330,6 +330,17 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     const outboxBackend                 = new OutboxBackend(storage.holder, storage.tableName);
     const approvedOutboundActionBackend = new ApprovedOutboundActionBackend(storage.holder, storage.tableName);
 
+    // Approval rows wake the executor as soon as they are durably written, so an approved send
+    // goes out within seconds rather than on the next (up to 5-minute) poll. The executor is
+    // built further down — its send functions close over emailSetup and bskyClient — so the wake
+    // is late-bound, like discordReconnectFn below. Until it is bound, and while the executor is
+    // not started, a wake is a no-op and the executor's first poll picks the row up; approval
+    // clicks only arrive after the bot has started, so neither case arises in practice.
+    let wakeApprovedActionExecutor: () => void = () => undefined;
+    const approvedActionWriter = createWakingActionWriter(approvedOutboundActionBackend, () => {
+        wakeApprovedActionExecutor();
+    });
+
     // Discord capability facade (wraps Discord sends with outbox fallback)
     const discordCapability = new DiscordCapabilityImpl({
         registry: healthRegistry,
@@ -495,7 +506,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     healthRegistry,
                     reconnectionLoop:      emailReconnectionLoop,
                     discordCapability,
-                    approvedActions:       approvedOutboundActionBackend,
+                    approvedActions:       approvedActionWriter,
                     personAllowlist,
                     allowlistInteractionHandler,
                     notify:                notificationBridge.notify,
@@ -601,7 +612,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     adminDiscordChannelId: config.adminDiscordChannelId,
                     activityLogger,
                     discordCapability,
-                    approvedActions:       approvedOutboundActionBackend,
+                    approvedActions:       approvedActionWriter,
                     personAllowlist,
                     allowlistInteractionHandler,
                     memoryBackend:         storage.memoryBackend,
@@ -682,10 +693,30 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
     const bskyDMParamsSchema = z.object({ text: z.string(), convoId: z.string() });
 
+    // Approved-action outcome reporter — tells the admin (on the approval card) and Izzy what
+    // really happened to each executed or failed action, from the row's durable outbox marker,
+    // so a restart or an unavailable Discord/conductor retries the report, never the send.
+    const approvedActionOutcomeReporter: ApprovedActionOutcomeReporter = createApprovedActionOutcomeReporter({
+        backend: approvedOutboundActionBackend,
+        deliver: createApprovedActionOutcomeDelivery({
+            // The raw client lookup, not discordCapability.fetchChannel: that one resolves null on
+            // ANY failure, which would make a transient REST error look like a deleted channel
+            // and give up on the card for good.
+            fetchChannel:   channelId => discordInfra.discordClient.channels.fetch(channelId),
+            isDiscordReady: () => discordCapability.isReady(),
+            notify:         notificationBridge.notify,
+        }),
+        logger,
+    });
+    registerCleanup({ name: 'approved action outcome reporter', run: () => approvedActionOutcomeReporter.stop() });
+
     // Approved-outbound-action executor — executes approved bsky/email actions, including after service recovery
     const approvedActionExecutor: ApprovedOutboundActionExecutor = createApprovedOutboundActionExecutor({
-        backend:   approvedOutboundActionBackend,
-        registry:  healthRegistry,
+        backend:           approvedOutboundActionBackend,
+        registry:          healthRegistry,
+        onOutcomeRecorded: () => {
+            approvedActionOutcomeReporter.wake();
+        },
         executors: {
             bsky_reply: async (params) => {
                 if(!bskyClient) {
@@ -716,6 +747,9 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         logger,
     });
     registerCleanup({ name: 'approved outbound action executor', run: () => approvedActionExecutor.stop() });
+    wakeApprovedActionExecutor = () => {
+        approvedActionExecutor.wake();
+    };
 
     function createHistoryCoordinator(): PersonHistoryCoordinator {
         // History providers
@@ -1150,8 +1184,20 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     const unsubscribeApprovedActionRetry = healthRegistry.subscribe(createApprovedActionRetryListener({
         backend: approvedOutboundActionBackend,
         logger,
+        wake:    () => {
+            approvedActionExecutor.wake();
+        },
     }));
     registerCleanup({ name: 'approved action retry subscription', run: unsubscribeApprovedActionRetry });
+
+    // Subscribe to health changes: report outcomes left pending while Discord was down as soon
+    // as it is back, rather than on the reporter's next (possibly backed-off) poll.
+    const unsubscribeOutcomeReportWake = healthRegistry.subscribe((change) => {
+        if(change.service === 'discord' && change.newState === 'online') {
+            approvedActionOutcomeReporter.wake();
+        }
+    });
+    registerCleanup({ name: 'approved action outcome report subscription', run: unsubscribeOutcomeReportWake });
 
     // Q6 / plan amendments B1-B2: health-outage notification source. Same unconditional
     // composition-root scope as unsubscribeOutboxDrain/unsubscribeApprovedActionRetry above — this wiring
@@ -1250,8 +1296,9 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 logger.info('Contact reconciliation scheduler started');
             }
 
-            // Start the approved-outbound-action executor polling loop
+            // Start the approved-outbound-action executor and outcome reporter polling loops
             approvedActionExecutor.start();
+            approvedActionOutcomeReporter.start();
 
             // Session-peers block 3/5: arm the shared subscription-usage poll. Independent of
             // Discord — quota is spent by Craig's own sessions whether or not Izzy is connected.
@@ -1284,10 +1331,12 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 { name: 'Bluesky DM poller', run: () => bskySetup?.dmPoller.stop(), onFailure: 'propagate' },
                 { name: 'outbox drainer', run: () => outboxDrainer.stop(), onFailure: 'propagate' },
                 { name: 'approved outbound action executor', run: () => approvedActionExecutor.stop(), onFailure: 'propagate' },
+                { name: 'approved action outcome reporter', run: () => approvedActionOutcomeReporter.stop(), onFailure: 'propagate' },
                 // Stop usage polling and health notifications before detaching the bridge.
                 { name: 'quota poller', run: () => ambience.quotaPoller.stop(), onFailure: 'propagate' },
                 { name: 'outbox subscription', run: unsubscribeOutboxDrain, onFailure: 'propagate' },
                 { name: 'approved action retry subscription', run: unsubscribeApprovedActionRetry, onFailure: 'propagate' },
+                { name: 'approved action outcome report subscription', run: unsubscribeOutcomeReportWake, onFailure: 'propagate' },
                 { name: 'health notification subscription', run: unsubscribeHealthNotifications, onFailure: 'propagate' },
                 { name: 'health outage coalescer', run: () => healthOutageCoalescer.stop(), onFailure: 'propagate' },
                 { name: 'notification bridge', run: () => notificationBridge.detach(), onFailure: 'propagate' },

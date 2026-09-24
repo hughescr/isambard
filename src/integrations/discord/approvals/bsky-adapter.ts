@@ -1,16 +1,17 @@
 import { logger } from '@hughescr/logger';
 import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder } from 'discord.js';
-import { DiscordOutboundApprovalInteractionHandler } from './interaction-handler';
+import type { ApprovalCardEditGate } from './card-edit-gate';
+import { APPROVAL_AMBER, DiscordOutboundApprovalInteractionHandler } from './interaction-handler';
 import { InvariantViolationError } from '@/errors';
 import { createAtUri, createCid, type BskyOutboundApprovals, type BskyRejectionItem, type BskyReplyInput } from '@/integrations/bsky';
 import type { AllowlistApprovalStarter } from '@/integrations/discord/allowlist-interaction-handler';
 import { encodeCustomId } from '@/utils';
 
-const AMBER = 0xFF_AA_00;
-
 export interface BskyApprovalInteractionAdapterDeps {
-    approvals: BskyOutboundApprovals
-    allowlist: AllowlistApprovalStarter
+    approvals:  BskyOutboundApprovals
+    allowlist:  AllowlistApprovalStarter
+    /** Orders the pending-card edit before the outcome edit; the process-wide gate when omitted. */
+    cardEdits?: ApprovalCardEditGate
 }
 
 /**
@@ -46,7 +47,7 @@ export class BskyApprovalInteractionAdapter extends DiscordOutboundApprovalInter
     ]);
 
     constructor(deps: BskyApprovalInteractionAdapterDeps) {
-        super();
+        super(deps.cardEdits);
         this.approvals = deps.approvals;
         this.allowlist = deps.allowlist;
     }
@@ -123,7 +124,7 @@ export class BskyApprovalInteractionAdapter extends DiscordOutboundApprovalInter
                 const errorEmbed = new EmbedBuilder()
                     .setTitle('Rejection failed — please retry')
                     .setDescription('Could not read approval embed data.')
-                    .setColor(AMBER);
+                    .setColor(APPROVAL_AMBER);
                 await interaction.editReply({
                     embeds:     [errorEmbed],
                     components: [],
@@ -261,13 +262,11 @@ export class BskyApprovalInteractionAdapter extends DiscordOutboundApprovalInter
         const rootUri = fields.find(f => f.name === 'Root URI')?.value;
         const rootCid = fields.find(f => f.name === 'Root CID')?.value;
 
-        await this.approvals.approveReply({ text, parentUri, parentCid, rootUri, rootCid });
-
-        const updatedEmbed = this.buildApprovedEmbed('Approved ✓ — posting shortly');
-
-        await interaction.editReply({
-            embeds:     [updatedEmbed],
-            components: [],
+        // Record the approval — the payload read from the embed above — before the pending edit
+        // replaces that embed (see recordApprovalThenShowPending). A failed record throws to the
+        // base handler, which shows the retry error.
+        await this.recordApprovalThenShowPending(interaction, 'Approved ✓ — posting…', async (card) => {
+            await this.approvals.approveReply({ text, parentUri, parentCid, rootUri, rootCid }, card);
         });
     }
 
@@ -314,13 +313,9 @@ export class BskyApprovalInteractionAdapter extends DiscordOutboundApprovalInter
             throw new InvariantViolationError('handleDMApprove', 'convoId missing despite embed present — upstream embed builder bug');
         }
 
-        await this.approvals.approveDm({ text, convoId });
-
-        const updatedEmbed = this.buildApprovedEmbed('DM Approved ✓ — sending shortly');
-
-        await interaction.editReply({
-            embeds:     [updatedEmbed],
-            components: [],
+        // Record the approval, then show the pending card (see handleApprove).
+        await this.recordApprovalThenShowPending(interaction, 'DM approved ✓ — sending…', async (card) => {
+            await this.approvals.approveDm({ text, convoId }, card);
         });
     }
 

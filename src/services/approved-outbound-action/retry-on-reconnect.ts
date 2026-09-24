@@ -39,15 +39,25 @@ export async function retryTransientFailures(deps: RetryDeps, service: ServiceNa
     }
 }
 
+interface RetryListenerDeps extends RetryDeps {
+    /** Wakes the executor, so reset rows — and approved rows skipped during the outage — go out at once. */
+    wake: () => void
+}
+
 /**
  * Health listener that retries transiently failed approved outbound actions when the service
- * they need comes back online.
+ * they need comes back online, then wakes the executor. The wake follows every reset pass —
+ * whether it reset rows, found none, or failed — because approved rows skipped while the service
+ * was down are waiting too. `retryTransientFailures` never rejects.
  */
-export function createApprovedActionRetryListener(deps: RetryDeps): HealthChangeListener {
+export function createApprovedActionRetryListener(deps: RetryListenerDeps): HealthChangeListener {
     return (change) => {
         if(change.newState !== 'online' || !SERVICES_WITH_ACTIONS.has(change.service)) {
             return;
         }
-        void retryTransientFailures(deps, change.service);
+        void (async () => {
+            await retryTransientFailures(deps, change.service);
+            deps.wake();
+        })();
     };
 }

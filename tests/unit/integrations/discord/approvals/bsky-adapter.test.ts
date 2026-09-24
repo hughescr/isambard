@@ -7,6 +7,7 @@ import { BskyOutboundApprovals } from '@/integrations/bsky/outbound-approvals';
 import type { BskyRejectionBackend } from '@/integrations/bsky/rejection-backend';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
 import { BskyApprovalInteractionAdapter } from '@/integrations/discord/approvals/bsky-adapter';
+import { ApprovalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
 import type { ApprovedOutboundActionBackend } from '@/services';
 
 /**
@@ -24,7 +25,7 @@ interface BskyOutboundApprovalHandlerDeps {
     notify?:                     NotifyFn
 }
 
-function makeAdapter(deps: BskyOutboundApprovalHandlerDeps): BskyApprovalInteractionAdapter {
+function makeAdapter(deps: BskyOutboundApprovalHandlerDeps, cardEdits?: ApprovalCardEditGate): BskyApprovalInteractionAdapter {
     return new BskyApprovalInteractionAdapter({
         approvals: new BskyOutboundApprovals({
             rejectionBackend: deps.rejectionBackend,
@@ -33,6 +34,7 @@ function makeAdapter(deps: BskyOutboundApprovalHandlerDeps): BskyApprovalInterac
             notify:           deps.notify,
         }),
         allowlist: deps.allowlistInteractionHandler,
+        cardEdits,
     });
 }
 
@@ -52,6 +54,9 @@ const DM_TEXT          = 'Hey, want to collaborate?';
 const DM_CONVO_ID      = 'convo-abc123';
 const DM_HANDLE_ALICE  = 'alice.bsky.social';
 const DM_HANDLE_BOB    = 'bob.bsky.social';
+const CARD_CHANNEL_ID  = 'admin-review-channel';
+const CARD_MESSAGE_ID  = 'approval-card-message';
+const CARD             = { channelId: CARD_CHANNEL_ID, messageId: CARD_MESSAGE_ID };
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -98,7 +103,9 @@ function makeButtonInteraction(customId: string, embedOpts: {
     const interaction = {
         customId,
         message: {
-            embeds: [{
+            id:        CARD_MESSAGE_ID,
+            channelId: CARD_CHANNEL_ID,
+            embeds:    [{
                 description: embedOpts.text ?? POST_TEXT,
                 fields:      makeEmbedFields(embedOpts),
             }],
@@ -161,7 +168,9 @@ function makeDMButtonInteraction(customId: string, opts: {
     const interaction = {
         customId,
         message: {
-            embeds: [{
+            id:        CARD_MESSAGE_ID,
+            channelId: CARD_CHANNEL_ID,
+            embeds:    [{
                 description: opts.text ?? DM_TEXT,
                 fields,
             }],
@@ -374,7 +383,7 @@ describe('BskyApprovalInteractionAdapter', () => {
             }
         });
 
-        test('does not acknowledge a DM approval before its saga is persisted', async () => {
+        test('does not show the pending DM card until the approval row has been written', async () => {
             const gate = makeDeferred();
             const started = makeDeferred();
             const create = mock(async () => {
@@ -901,7 +910,7 @@ describe('BskyApprovalInteractionAdapter', () => {
         });
 
         describe('error handling', () => {
-            test('should call editReply with error message when sagaBackend.create fails', async () => {
+            test('shows only the retry error, never the pending card, when sagaBackend.create fails', async () => {
                 const deps = makeDeps();
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB error'));
                 const handler = makeAdapter(deps);
@@ -910,7 +919,81 @@ describe('BskyApprovalInteractionAdapter', () => {
                 await handler.handleButton(interaction);
 
                 expect(editReply).toHaveBeenCalledTimes(1);
+                expect(editReply.mock.calls[0]?.[0]).toEqual({
+                    content:    'An error occurred processing your request. Please try again.',
+                    embeds:     [],
+                    components: [],
+                });
                 expect(mockLogger.error).toHaveBeenCalled();
+            });
+
+            test('a failed pending reply edit after the approval is recorded is logged and offers no retry', async () => {
+                const deps = makeDeps();
+                const handler = makeAdapter(deps);
+                const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
+                const editError = new Error('Discord timeout');
+                editReply.mockRejectedValueOnce(editError);
+
+                await handler.handleButton(interaction);
+
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(editReply).toHaveBeenCalledTimes(1);
+                expect(mockLogger.error).not.toHaveBeenCalled();
+                expect(mockLogger.warn).toHaveBeenCalledWith({
+                    err:       editError,
+                    channelId: CARD_CHANNEL_ID,
+                    messageId: CARD_MESSAGE_ID,
+                    msg:       'Failed to show the pending approval card — the send outcome will replace it',
+                });
+            });
+
+            test('a failed pending DM edit after the approval is recorded offers no retry', async () => {
+                const deps = makeDeps();
+                const handler = makeAdapter(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+                editReply.mockRejectedValueOnce(new Error('Discord timeout'));
+
+                await handler.handleButton(interaction);
+
+                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(editReply).toHaveBeenCalledTimes(1);
+                expect(mockLogger.error).not.toHaveBeenCalled();
+            });
+
+            test('a reply approve holds the card on the edit gate while recording and showing pending, then releases it', async () => {
+                const cardEdits = new ApprovalCardEditGate();
+                const heldDuring: string[] = [];
+                const create = mock(async () => {
+                    heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'create:free' : 'create:held');
+                });
+                const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
+                const handler = makeAdapter(deps, cardEdits);
+                const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
+                editReply.mockImplementation(async () => {
+                    heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'editReply:free' : 'editReply:held');
+                    return {};
+                });
+
+                await handler.handleButton(interaction);
+
+                expect(heldDuring).toEqual(['create:held', 'editReply:held']);
+                expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
+            });
+
+            test('a DM approve holds the card on the edit gate while recording, then releases it', async () => {
+                const cardEdits = new ApprovalCardEditGate();
+                const heldDuring: string[] = [];
+                const create = mock(async () => {
+                    heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'create:free' : 'create:held');
+                });
+                const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
+                const handler = makeAdapter(deps, cardEdits);
+                const { interaction } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                expect(heldDuring).toEqual(['create:held']);
+                expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
             });
 
             test('should call editReply with embeds and components cleared on error', async () => {
@@ -1683,7 +1766,7 @@ describe('BskyApprovalInteractionAdapter', () => {
                 expect(createArg.params.text).toBe(DM_TEXT);
             });
 
-            test('should show "DM Approved ✓" in embed title', async () => {
+            test('should show "DM approved ✓" in the pending embed title', async () => {
                 const deps    = makeDeps();
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
@@ -1691,7 +1774,19 @@ describe('BskyApprovalInteractionAdapter', () => {
                 await handler.handleButton(interaction);
 
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
-                expect(replyArg.embeds[0]?.data?.title).toContain('DM Approved');
+                expect(replyArg.embeds[0]?.data?.title).toContain('DM approved');
+            });
+
+            test('DM approve records the approval with the card ref before editing the card to pending', async () => {
+                const deps    = makeDeps();
+                const handler = makeAdapter(deps);
+                const { interaction, editReply } = makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                const create = deps.sagaBackend.create as ReturnType<typeof mock>;
+                expect(create.mock.invocationCallOrder[0]).toBeLessThan(editReply.mock.invocationCallOrder[0]);
+                expect((create.mock.calls[0]?.[0] as { approvalCard: unknown }).approvalCard).toEqual(CARD);
             });
 
             test('should clear buttons in success editReply', async () => {
@@ -1798,7 +1893,7 @@ describe('BskyApprovalInteractionAdapter', () => {
                 expect(editReply).toHaveBeenCalledTimes(1);
             });
 
-            test('should show "DM Approved" in embed title', async () => {
+            test('should show "DM approved" in the pending embed title', async () => {
                 const deps    = makeDeps();
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeDMButtonInteraction(
@@ -1809,7 +1904,7 @@ describe('BskyApprovalInteractionAdapter', () => {
                 await handler.handleButton(interaction);
 
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
-                expect(replyArg.embeds[0]?.data?.title).toContain('Approved');
+                expect(replyArg.embeds[0]?.data?.title).toBe('DM approved ✓ — sending…');
             });
 
             test('should create saga with exact convoId from embed field', async () => {
@@ -2151,7 +2246,7 @@ describe('BskyApprovalInteractionAdapter', () => {
                 expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
                 const { editReply } = interaction as unknown as { editReply: ReturnType<typeof mock> };
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
-                expect(replyArg.embeds[0]?.data?.title).toContain('Approved');
+                expect(replyArg.embeds[0]?.data?.title).toBe('DM approved ✓ — sending…');
             });
 
             test('should still create saga when Recipients field is absent from embed', async () => {
@@ -2181,7 +2276,7 @@ describe('BskyApprovalInteractionAdapter', () => {
                 expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
                 const { editReply } = interaction as unknown as { editReply: ReturnType<typeof mock> };
                 const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
-                expect(replyArg.embeds[0]?.data?.title).toContain('Approved');
+                expect(replyArg.embeds[0]?.data?.title).toBe('DM approved ✓ — sending…');
             });
         });
 
@@ -2225,15 +2320,28 @@ describe('BskyApprovalInteractionAdapter', () => {
                 expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
             });
 
-            test('shows the complete reply approval status', async () => {
+            test('shows the complete pending reply approval status in blurple with no buttons', async () => {
                 const deps = makeDeps();
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
 
                 await handler.handleButton(interaction);
 
-                const reply = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
-                expect(reply.embeds[0]?.data.title).toBe('Approved ✓ — posting shortly');
+                const reply = editReply.mock.calls[0]?.[0] as { embeds: { toJSON: () => unknown }[], components: unknown[] };
+                expect(reply.embeds.map(embed => embed.toJSON())).toEqual([{ title: 'Approved ✓ — posting…', color: 0x58_65_F2 }]);
+                expect(reply.components).toEqual([]);
+            });
+
+            test('reply approve records the approval with the card ref before editing the card to pending', async () => {
+                const deps = makeDeps();
+                const handler = makeAdapter(deps);
+                const { interaction, editReply } = makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`);
+
+                await handler.handleButton(interaction);
+
+                const create = deps.sagaBackend.create as ReturnType<typeof mock>;
+                expect(create.mock.invocationCallOrder[0]).toBeLessThan(editReply.mock.invocationCallOrder[0]);
+                expect((create.mock.calls[0]?.[0] as { approvalCard: unknown }).approvalCard).toEqual(CARD);
             });
 
             test('hands the reply target value to the allowlist saga', async () => {
@@ -2277,8 +2385,8 @@ describe('BskyApprovalInteractionAdapter', () => {
 
                 await handler.handleButton(interaction);
 
-                const reply = editReply.mock.calls[0]?.[0] as { embeds: { data: { title?: string } }[] };
-                expect(reply.embeds[0]?.data.title).toBe('DM Approved ✓ — sending shortly');
+                const reply = editReply.mock.calls[0]?.[0] as { embeds: { toJSON: () => unknown }[] };
+                expect(reply.embeds.map(embed => embed.toJSON())).toEqual([{ title: 'DM approved ✓ — sending…', color: 0x58_65_F2 }]);
             });
 
             test('uses the first DM approval embed when a message contains several embeds', async () => {
@@ -2355,13 +2463,13 @@ describe('BskyApprovalInteractionAdapter over mocked operations', () => {
         return parts;
     }
 
-    test('a reply approve button acknowledges, then approves the reply parsed from the embed', async () => {
+    test('a reply approve button acknowledges, approves the reply parsed from the embed, then shows the pending card', async () => {
         const { adapter, events, approvals } = makeOpsAdapter();
         const { interaction } = track(makeButtonInteraction(`bsky-send-approve:${TEST_UUID}`, { rootUri: ROOT_URI, rootCid: ROOT_CID }), events);
 
         await adapter.handleButton(interaction);
 
-        expect(approvals.approveReply).toHaveBeenCalledWith({ text: POST_TEXT, parentUri: PARENT_URI, parentCid: PARENT_CID, rootUri: ROOT_URI, rootCid: ROOT_CID });
+        expect(approvals.approveReply).toHaveBeenCalledWith({ text: POST_TEXT, parentUri: PARENT_URI, parentCid: PARENT_CID, rootUri: ROOT_URI, rootCid: ROOT_CID }, CARD);
         expect(events).toEqual(['deferUpdate', 'approveReply', 'editReply']);
     });
 
@@ -2374,13 +2482,13 @@ describe('BskyApprovalInteractionAdapter over mocked operations', () => {
         expect(events).toEqual(['deferUpdate', 'approveReply', 'editReply', `startFromApproval:bsky:${TEST_HANDLE}`]);
     });
 
-    test('a DM approve button approves the text and convoId parsed from the embed', async () => {
+    test('a DM approve button approves the text and convoId parsed from the embed, then shows the pending card', async () => {
         const { adapter, events, approvals } = makeOpsAdapter();
         const { interaction } = track(makeDMButtonInteraction(`bsky-dm-approve:${TEST_UUID}`), events);
 
         await adapter.handleButton(interaction);
 
-        expect(approvals.approveDm).toHaveBeenCalledWith({ text: DM_TEXT, convoId: DM_CONVO_ID });
+        expect(approvals.approveDm).toHaveBeenCalledWith({ text: DM_TEXT, convoId: DM_CONVO_ID }, CARD);
         expect(events).toEqual(['deferUpdate', 'approveDm', 'editReply']);
     });
 

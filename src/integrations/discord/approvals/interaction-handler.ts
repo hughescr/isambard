@@ -1,11 +1,18 @@
 import { LabelBuilder, ModalBuilder, TextInputBuilder } from '@discordjs/builders';
 import { logger } from '@hughescr/logger';
-import { type ButtonInteraction, type ModalSubmitInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
+import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, EmbedBuilder, TextInputStyle } from 'discord.js';
+import { approvalCardEditGate, type ApprovalCardEditGate } from './card-edit-gate';
+import type { ApprovalCardRef } from '@/services';
 import { parseCustomId } from '@/utils';
 
-const GREEN = 0x00_AA_00;
-const RED   = 0xFF_00_00;
-const AMBER = 0xFF_AA_00;
+/** Approval-card palette, shared by the adapters and the outcome reporter. Sent. */
+export const APPROVAL_GREEN   = 0x00_AA_00;
+/** Rejected, or failed for good. */
+export const APPROVAL_RED     = 0xFF_00_00;
+/** Needs attention: a retryable error, or a failed send that will be retried. */
+export const APPROVAL_AMBER   = 0xFF_AA_00;
+/** Approved and waiting for the real send outcome (Discord blurple). */
+export const APPROVAL_PENDING = 0x58_65_F2;
 
 /**
  * Base class for the Discord adapters that turn admin button/modal interactions on outbound
@@ -23,6 +30,9 @@ const AMBER = 0xFF_AA_00;
  * - `handleMissingEmbed(interaction, id)` — what to do when a modal submit has no embed
  */
 export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
+    /** @param cardEdits orders the pending-card edit before the outcome edit; the process-wide gate by default. */
+    constructor(private readonly cardEdits: ApprovalCardEditGate = approvalCardEditGate) {}
+
     // ---------------------------------------------------------------------------
     // Abstract hooks — subclasses implement platform-specific behaviour
     // ---------------------------------------------------------------------------
@@ -171,7 +181,7 @@ export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
             const errorEmbed = new EmbedBuilder()
                 .setTitle(title)
                 .setDescription('Could not read approval embed data.')
-                .setColor(AMBER);
+                .setColor(APPROVAL_AMBER);
             await interaction.editReply({
                 embeds:     [errorEmbed],
                 components: [],
@@ -203,12 +213,52 @@ export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
     }
 
     /**
-     * Build a success "Approved" embed in green.
+     * Build the "approved, sending…" embed shown between the click and the real send outcome,
+     * which the outcome reporter later writes over the same card.
      */
-    protected buildApprovedEmbed(title: string): EmbedBuilder {
+    protected buildPendingEmbed(title: string): EmbedBuilder {
         return new EmbedBuilder()
             .setTitle(title)
-            .setColor(GREEN);
+            .setColor(APPROVAL_PENDING);
+    }
+
+    /** Where the clicked approval card lives, so its row can carry it to the outcome reporter. */
+    protected approvalCardRef(interaction: ButtonInteraction | StringSelectMenuInteraction): ApprovalCardRef {
+        return { channelId: interaction.message.channelId, messageId: interaction.message.id };
+    }
+
+    /**
+     * Record the approval durably, THEN replace the card with the pending embed. Recording first
+     * means a crash can never leave a card whose controls (and, for Bluesky, the payload in its
+     * embed) are gone with no row to execute or report: before the row exists the card is
+     * untouched and the admin can click again; after it, the executor sends and the outcome
+     * reporter writes the result over the card. The card is held on the {@link ApprovalCardEditGate}
+     * for the whole record + edit, so a fast outcome waits for this pending edit and is never
+     * overwritten by it. A failed record throws (nothing recorded, the caller shows the retry
+     * error); a failed pending edit is only logged — the approval stands, so offering a retry
+     * would invite a duplicate send, and the outcome will replace the card anyway.
+     */
+    protected async recordApprovalThenShowPending(
+        interaction:  ButtonInteraction | StringSelectMenuInteraction,
+        pendingTitle: string,
+        record:       (card: ApprovalCardRef) => Promise<void>
+    ): Promise<void> {
+        const card = this.approvalCardRef(interaction);
+        const release = this.cardEdits.hold(card.messageId);
+        try {
+            await record(card);
+            try {
+                await interaction.editReply({
+                    content:    null,
+                    embeds:     [this.buildPendingEmbed(pendingTitle)],
+                    components: [],
+                });
+            } catch (err: unknown) {
+                logger.warn({ err, ...card, msg: 'Failed to show the pending approval card — the send outcome will replace it' });
+            }
+        } finally {
+            release();
+        }
     }
 
     /**
@@ -218,7 +268,7 @@ export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
         return new EmbedBuilder()
             .setTitle('Rejected')
             .setDescription(reason)
-            .setColor(RED);
+            .setColor(APPROVAL_RED);
     }
 
     /**
@@ -231,7 +281,7 @@ export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
             const errorEmbed = new EmbedBuilder()
                 .setTitle('Rejection failed — please retry')
                 .setDescription('Could not save rejection to backend.')
-                .setColor(AMBER);
+                .setColor(APPROVAL_AMBER);
             // Stryker disable next-line llm: interaction.message is Message | null, but Message#embeds is a non-nullable Embed[] that its constructor always populates
             const firstEmbed = interaction.message?.embeds[0];
             await interaction.editReply({

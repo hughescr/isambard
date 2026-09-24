@@ -2,6 +2,7 @@ import { ZodError } from 'zod';
 import type { ServiceHealthRegistry } from '../health-registry';
 import type { ServiceLogger, ServiceName } from '../types';
 import type { ApprovedOutboundActionBackend } from './backend';
+import { DEFAULT_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS, createSingleFlightLoop } from './single-flight-loop';
 import type { ApprovedOutboundActionType, FailureKind } from './types';
 import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError } from '@/errors';
 
@@ -9,11 +10,17 @@ import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError } fro
 export type ApprovedOutboundActionExecutorLogger = ServiceLogger;
 
 interface ApprovedOutboundActionExecutorDeps {
-    backend:         ApprovedOutboundActionBackend
-    registry:        ServiceHealthRegistry
-    executors:       Record<ApprovedOutboundActionType, (params: Record<string, unknown>) => Promise<void>>
-    logger:          ServiceLogger
-    pollIntervalMs?: number
+    backend:           ApprovedOutboundActionBackend
+    registry:          ServiceHealthRegistry
+    executors:         Record<ApprovedOutboundActionType, (params: Record<string, unknown>) => Promise<void>>
+    logger:            ServiceLogger
+    /**
+     * Called after each durable terminal write (`executed` or `failed`), so the outcome
+     * reporter can report it straight away. The write itself carries the report's outbox marker
+     * (`outcomeReportPending`), so a lost signal only delays the report until its next poll.
+     */
+    onOutcomeRecorded: () => void
+    pollIntervalMs?:   number
 }
 
 interface ExecuteOnceResult {
@@ -24,13 +31,13 @@ interface ExecuteOnceResult {
 export interface ApprovedOutboundActionExecutor {
     start(): void
     stop(): void
+    /**
+     * Run as soon as possible instead of waiting for the next poll — called when an approved
+     * row is created or its service comes back online. Never starts a second concurrent run.
+     */
+    wake(): void
     executeOnce(): Promise<ExecuteOnceResult>
 }
-
-const DEFAULT_POLL_INTERVAL_MS = 30_000;
-
-/** Maximum poll interval after repeated empty results (5 minutes). */
-const MAX_POLL_INTERVAL_MS = 5 * 60_000;
 
 /** The service that must be available before an action of this type can execute. */
 export function requiredServiceFor(type: ApprovedOutboundActionType): ServiceName {
@@ -69,23 +76,22 @@ export function classifyFailure(err: unknown): FailureKind {
     return 'transient';
 }
 
+/**
+ * Build the executor. Every run — poll timer, {@link ApprovedOutboundActionExecutor.wake} or
+ * `executeOnce()` — goes through one {@link createSingleFlightLoop}, so two runs never overlap:
+ * an overlapping run would list the same approved row and call its external send twice, and the
+ * conditional state write only notices after the send.
+ */
 export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActionExecutorDeps): ApprovedOutboundActionExecutor {
     const {
         backend,
         registry,
         executors,
         logger,
+        onOutcomeRecorded,
     } = deps;
 
-    const baseIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
-
-    // Stryker disable next-line BooleanLiteral: initial value is always overwritten by start() which sets stopped = false; mutation has no observable effect
-    let stopped          = false;
-    let generation: object = {};
-    let currentIntervalMs = baseIntervalMs;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    async function executeOnce(): Promise<ExecuteOnceResult> {
+    async function executeActions(): Promise<ExecuteOnceResult> {
         const result: ExecuteOnceResult = { executed: 0, failed: 0 };
 
         const approved = await backend.listByState('approved');
@@ -108,6 +114,7 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
                 await backend.updateState(action.id, 'failed', { lastError: message, failureKind });
                 result.failed++;
                 logger.error({ actionId: action.id, type: action.type, error: message, failureKind }, 'Approved outbound action execution failed');
+                onOutcomeRecorded();
                 continue;
             }
 
@@ -115,63 +122,25 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
             await backend.updateState(action.id, 'executed');
             result.executed++;
             logger.info({ actionId: action.id, type: action.type }, 'Approved outbound action executed successfully');
+            onOutcomeRecorded();
         }
 
         return result;
     }
 
-    function scheduleNextTick(): void {
-        if(stopped) {
-            return;
-        }
-        const scheduledGeneration = generation;
-        timeoutId = setTimeout(() => {
-            void (async () => {
-                try {
-                    const result = await executeOnce();
-                    if(result.executed > 0 || result.failed > 0) {
-                        if(currentIntervalMs !== baseIntervalMs) {
-                            logger.debug({ intervalMs: baseIntervalMs }, 'Approved outbound action poll interval reset to base');
-                        }
-                        currentIntervalMs = baseIntervalMs;
-                    } else {
-                        const next = Math.min(currentIntervalMs * 2, MAX_POLL_INTERVAL_MS);
-                        if(next !== currentIntervalMs) {
-                            logger.debug({ intervalMs: next }, 'Approved outbound action poll interval extended');
-                        }
-                        currentIntervalMs = next;
-                    }
-                } catch (err: unknown) {
-                    const message = err instanceof Error ? err.message : String(err);
-                    logger.debug({ error: message }, 'Approved outbound action poll tick threw unexpectedly; rescheduling');
-                }
-                // Only reschedule if this tick's generation still matches the current generation.
-                // If stop()+start() ran while this tick was mid-flight, generation was replaced and
-                // start() already scheduled a new timer — skip to prevent a leaked duplicate timer.
-                if(generation === scheduledGeneration) {
-                    scheduleNextTick();
-                }
-            })();
-        }, currentIntervalMs);
-    }
+    const loop = createSingleFlightLoop({
+        run:            executeActions,
+        madeProgress:   result => result.executed > 0 || result.failed > 0,
+        baseIntervalMs: deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+        maxIntervalMs:  MAX_POLL_INTERVAL_MS,
+        logger,
+        label:          'Approved outbound action',
+    });
 
     return {
-        start(): void {
-            if(timeoutId !== undefined) {
-                return;
-            }
-            stopped = false; // Allow restart after stop()
-            generation = {}; // Invalidate any mid-flight tick's trailing reschedule
-            currentIntervalMs = baseIntervalMs;
-            scheduleNextTick();
-        },
-
-        stop(): void {
-            stopped = true;
-            clearTimeout(timeoutId);
-            timeoutId = undefined;
-        },
-
-        executeOnce,
+        start:       loop.start,
+        stop:        loop.stop,
+        wake:        loop.wake,
+        executeOnce: loop.runOnce,
     };
 }

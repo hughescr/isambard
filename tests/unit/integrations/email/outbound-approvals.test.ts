@@ -7,6 +7,7 @@ import type { ApprovedOutboundAction } from '@/services';
 
 const UID = 42;
 const NOW = '2026-09-23T12:00:00.000Z';
+const CARD = { channelId: 'admin-ch', messageId: 'card-msg' };
 
 interface Harness {
     ops:            EmailOutboundApprovals
@@ -65,20 +66,21 @@ describe('EmailOutboundApprovals', () => {
     });
 
     describe('approveSend', () => {
-        test('writes an approved email_send action for the uid', async () => {
+        test('writes an approved email_send action for the uid with its approval card', async () => {
             const h = makeHarness();
 
-            await h.ops.approveSend(UID, 'direct');
+            await h.ops.approveSend(UID, 'direct', CARD);
 
             expect(h.create).toHaveBeenCalledTimes(1);
             const action = h.create.mock.calls[0][0];
             expect(action).toEqual({
-                id:        expect.any(String),
-                state:     'approved',
-                type:      'email_send',
-                params:    { uid: UID },
-                createdAt: NOW,
-                updatedAt: NOW,
+                id:           expect.any(String),
+                state:        'approved',
+                type:         'email_send',
+                params:       { uid: UID },
+                approvalCard: { channelId: 'admin-ch', messageId: 'card-msg' },
+                createdAt:    NOW,
+                updatedAt:    NOW,
             });
             expect(action.id).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/);
         });
@@ -86,7 +88,7 @@ describe('EmailOutboundApprovals', () => {
         test('logs the email-sent activity after the write', async () => {
             const h = makeHarness();
 
-            await h.ops.approveSend(UID, 'direct');
+            await h.ops.approveSend(UID, 'direct', CARD);
 
             expect(h.activityLog.mock.calls).toEqual([[{ type: 'email-sent', summary: 'Email approved for sending' }]]);
             expect(h.events).toEqual(['create', 'activity']);
@@ -99,7 +101,7 @@ describe('EmailOutboundApprovals', () => {
                 throw failure;
             });
 
-            await h.ops.approveSend(UID, 'direct');
+            await h.ops.approveSend(UID, 'direct', CARD);
             await Promise.resolve();
 
             expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, msg: 'Activity log failed for email send (direct path)' });
@@ -112,7 +114,7 @@ describe('EmailOutboundApprovals', () => {
                 throw failure;
             });
 
-            await h.ops.approveSend(UID, 'allowlist');
+            await h.ops.approveSend(UID, 'allowlist', CARD);
             await Promise.resolve();
 
             expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, msg: 'Activity log failed for email send (allowlist path)' });
@@ -121,7 +123,7 @@ describe('EmailOutboundApprovals', () => {
         test('works without an activity logger', async () => {
             const h = makeHarness({ activityLogger: undefined });
 
-            await h.ops.approveSend(UID, 'direct');
+            await h.ops.approveSend(UID, 'direct', CARD);
 
             expect(h.create).toHaveBeenCalledTimes(1);
         });
@@ -132,7 +134,7 @@ describe('EmailOutboundApprovals', () => {
                 throw new Error('dynamo down');
             });
 
-            await expect(h.ops.approveSend(UID, 'direct')).rejects.toThrow('dynamo down');
+            await expect(h.ops.approveSend(UID, 'direct', CARD)).rejects.toThrow('dynamo down');
             expect(h.activityLog).not.toHaveBeenCalled();
         });
     });
@@ -214,16 +216,16 @@ describe('EmailOutboundApprovals', () => {
     });
 
     describe('announceApproved', () => {
-        test('wakes the conductor with the approval key and text', () => {
+        test('notes the approval for Izzy without waking, promising the real outcome later', () => {
             const h = makeHarness();
 
             h.ops.announceApproved(UID);
 
             expect(h.notify.mock.calls).toEqual([[{
                 source: 'email-approval',
-                wake:   true,
+                wake:   false,
                 key:    '42:approved',
-                text:   'Outbound email (uid 42) approved for sending',
+                text:   'Outbound email (uid 42) approved by admin; sending now. You will be notified when it has been sent or has failed.',
             }]]);
         });
 

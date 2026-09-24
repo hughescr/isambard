@@ -1,7 +1,7 @@
 import { logger } from '@hughescr/logger';
 import type { BskyRejectionBackend, BskyRejectionItem } from './rejection-backend';
 import type { NotifyFn } from '@/agent';
-import type { ApprovedOutboundActionWriter } from '@/services';
+import type { ApprovalCardRef, ApprovedOutboundActionWriter } from '@/services';
 import type { ActivityLogger } from '@/storage';
 
 /**
@@ -37,16 +37,20 @@ export interface BskyOutboundApprovalsDeps {
 export class BskyOutboundApprovals {
     constructor(private readonly deps: BskyOutboundApprovalsDeps) {}
 
-    /** Record an approved reply for the executor, then log the activity (fire-and-forget). */
-    async approveReply(reply: BskyApprovedReply): Promise<void> {
+    /**
+     * Record an approved reply for the executor, carrying the approval card so the real outcome
+     * can be shown on it, then log the activity (fire-and-forget).
+     */
+    async approveReply(reply: BskyApprovedReply, card: ApprovalCardRef): Promise<void> {
         const now = new Date().toISOString();
         await this.deps.actionWriter.create({
-            id:        crypto.randomUUID(),
-            state:     'approved',
-            type:      'bsky_reply',
-            params:    { text: reply.text, parentUri: reply.parentUri, parentCid: reply.parentCid, rootUri: reply.rootUri, rootCid: reply.rootCid },
-            createdAt: now,
-            updatedAt: now,
+            id:           crypto.randomUUID(),
+            state:        'approved',
+            type:         'bsky_reply',
+            params:       { text: reply.text, parentUri: reply.parentUri, parentCid: reply.parentCid, rootUri: reply.rootUri, rootCid: reply.rootCid },
+            approvalCard: card,
+            createdAt:    now,
+            updatedAt:    now,
         });
 
         void this.deps.activityLogger?.log({ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }).catch((err: unknown) => {
@@ -54,16 +58,17 @@ export class BskyOutboundApprovals {
         });
     }
 
-    /** Record an approved DM for the executor, then log the activity (fire-and-forget). */
-    async approveDm(dm: BskyApprovedDm): Promise<void> {
+    /** Record an approved DM for the executor with its approval card, then log the activity (fire-and-forget). */
+    async approveDm(dm: BskyApprovedDm, card: ApprovalCardRef): Promise<void> {
         const now = new Date().toISOString();
         await this.deps.actionWriter.create({
-            id:        crypto.randomUUID(),
-            state:     'approved',
-            type:      'bsky_dm',
-            params:    { text: dm.text, convoId: dm.convoId },
-            createdAt: now,
-            updatedAt: now,
+            id:           crypto.randomUUID(),
+            state:        'approved',
+            type:         'bsky_dm',
+            params:       { text: dm.text, convoId: dm.convoId },
+            approvalCard: card,
+            createdAt:    now,
+            updatedAt:    now,
         });
 
         void this.deps.activityLogger?.log({ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }).catch((err: unknown) => {

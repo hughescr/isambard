@@ -74,6 +74,32 @@ describe('approvedOutboundActionSchema', () => {
         expect(approvedOutboundActionSchema.safeParse({ ...ROW, state: 'failed', failureKind: 'maybe' }).success).toBe(false);
     });
 
+    test('accepts a row without an approvalCard (written before the card ref existed)', () => {
+        expect(approvedOutboundActionSchema.parse(ROW)).toEqual(ROW);
+    });
+
+    test('accepts and keeps an approvalCard reference', () => {
+        const row = { ...ROW, approvalCard: { channelId: 'ch-1', messageId: 'msg-1' } };
+        expect(approvedOutboundActionSchema.parse(row)).toEqual(row);
+    });
+
+    test('rejects an approvalCard with an empty channelId', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, approvalCard: { channelId: '', messageId: 'msg-1' } }).success).toBe(false);
+    });
+
+    test('rejects an approvalCard with an empty messageId', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, approvalCard: { channelId: 'ch-1', messageId: '' } }).success).toBe(false);
+    });
+
+    test('accepts and keeps an outcomeReportPending marker', () => {
+        const row = { ...ROW, state: 'executed' as const, outcomeReportPending: true };
+        expect(approvedOutboundActionSchema.parse(row)).toEqual(row);
+    });
+
+    test('rejects a non-boolean outcomeReportPending marker', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, outcomeReportPending: 'yes' }).success).toBe(false);
+    });
+
     test('strips the four retired review-only fields when parsing', () => {
         const parsed = approvedOutboundActionSchema.parse({
             ...ROW,

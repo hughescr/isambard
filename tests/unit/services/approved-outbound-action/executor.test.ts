@@ -13,6 +13,14 @@ import type { ServiceHealthRegistry } from '@/services/health-registry';
 
 const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 
+/** Enough microtask turns for a settled run to reach the loop's trailing reschedule. */
+async function flush(): Promise<void> {
+    for(let turn = 0; turn < 10; turn++) {
+        // eslint-disable-next-line no-await-in-loop -- each turn drains one microtask hop of the run's promise chain.
+        await Promise.resolve();
+    }
+}
+
 function makeSaga(overrides: Partial<ApprovedOutboundAction> = {}): ApprovedOutboundAction {
     return {
         id:        SAGA_UUID,
@@ -30,9 +38,11 @@ describe('createApprovedOutboundActionExecutor', () => {
     let registry: ServiceHealthRegistry;
     let executors: Record<ApprovedOutboundActionType, (params: Record<string, unknown>) => Promise<void>>;
     let logger: ApprovedOutboundActionExecutorLogger;
+    let onOutcomeRecorded: ReturnType<typeof mock<() => void>>;
 
     beforeEach(() => {
         jest.useFakeTimers();
+        onOutcomeRecorded = mock((): void => undefined);
 
         backend = {
             listByState: mock(async (): Promise<ApprovedOutboundAction[]> => []),
@@ -73,7 +83,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<ApprovedOutboundAction[]> => []
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 0, failed: 0 });
@@ -85,7 +95,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 1, failed: 0 });
@@ -102,7 +112,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 (_service: string): boolean => false
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 0, failed: 0 });
@@ -123,7 +133,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<void> => { throw new Error('network failure'); }
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 0, failed: 1 });
@@ -144,7 +154,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 throw new BskyValidationError('Post exceeds 300 graphemes (301)');
             });
 
-            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger }).executeOnce();
+            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
 
             expect(backend.updateState).toHaveBeenCalledWith(
                 SAGA_UUID,
@@ -173,7 +183,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 }
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
 
             await expect(executor.executeOnce()).rejects.toThrow('persist failed-state write failed');
         });
@@ -187,7 +197,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<void> => { throw 'string error'; }
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             await executor.executeOnce();
 
             expect(backend.updateState).toHaveBeenCalledWith(
@@ -217,7 +227,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<void> => undefined
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             const result = await executor.executeOnce();
 
             expect(result).toEqual({ executed: 2, failed: 1 });
@@ -235,7 +245,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 events.push(`persist:${id}`);
             });
 
-            const result = await createApprovedOutboundActionExecutor({ backend, registry, executors, logger }).executeOnce();
+            const result = await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
             expect(result).toEqual({ executed: 2, failed: 0 });
             expect(events).toEqual([
                 'execute:first', `persist:${first.id}`,
@@ -252,7 +262,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                     throw new Error('state write failed');
                 }
             });
-            await expect(createApprovedOutboundActionExecutor({ backend, registry, executors, logger }).executeOnce()).rejects.toThrow('state write failed');
+            await expect(createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce()).rejects.toThrow('state write failed');
             expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
             expect(executors.email_send).not.toHaveBeenCalled();
             expect(backend.updateState).toHaveBeenCalledTimes(1);
@@ -266,7 +276,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             await executor.executeOnce();
 
             expect(logger.info).toHaveBeenCalledWith(
@@ -276,10 +286,112 @@ describe('createApprovedOutboundActionExecutor', () => {
         });
 
         test('calls listByState with "approved" state specifically', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             await executor.executeOnce();
 
             expect(backend.listByState).toHaveBeenCalledWith('approved');
+        });
+
+        test('signals a recorded outcome after the executed-state write', async () => {
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga()]);
+
+            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
+
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+            expect(onOutcomeRecorded.mock.calls[0]).toEqual([]);
+            const writeOrder = (backend.updateState as ReturnType<typeof mock>).mock.invocationCallOrder[0];
+            expect(onOutcomeRecorded.mock.invocationCallOrder[0]).toBeGreaterThan(writeOrder);
+        });
+
+        test('signals a recorded outcome after the failed-state write', async () => {
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga()]);
+            (executors.bsky_reply as ReturnType<typeof mock>).mockImplementation(async (): Promise<void> => {
+                throw new Error('network failure');
+            });
+
+            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
+
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+            const writeOrder = (backend.updateState as ReturnType<typeof mock>).mock.invocationCallOrder[0];
+            expect(onOutcomeRecorded.mock.invocationCallOrder[0]).toBeGreaterThan(writeOrder);
+        });
+
+        test('signals no outcome when the executed-state write rejects', async () => {
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga()]);
+            (backend.updateState as ReturnType<typeof mock>).mockImplementation(async () => {
+                throw new Error('state write failed');
+            });
+
+            await expect(createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce()).rejects.toThrow('state write failed');
+            expect(onOutcomeRecorded).not.toHaveBeenCalled();
+        });
+
+        test('signals no outcome for an action skipped because its service is unavailable', async () => {
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => [makeSaga()]);
+            (registry.isAvailable as ReturnType<typeof mock>).mockImplementation((): boolean => false);
+
+            await createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded }).executeOnce();
+
+            expect(onOutcomeRecorded).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('wake', () => {
+        test('wake() before start() arms no timer and lists nothing', async () => {
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 30_000 });
+
+            executor.wake();
+            jest.advanceTimersByTime(30_000);
+            await flush();
+
+            expect(jest.getTimerCount()).toBe(0);
+            expect(backend.listByState).not.toHaveBeenCalled();
+        });
+
+        test('wake() while idle runs the executor on a zero-delay timer', async () => {
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 30_000 });
+            executor.start();
+
+            executor.wake();
+            jest.advanceTimersByTime(0);
+            await flush();
+
+            expect(backend.listByState).toHaveBeenCalledTimes(1);
+            executor.stop();
+        });
+
+        test('an approved email is submitted exactly once when wake() lands mid-send, through the coalesced rerun', async () => {
+            const email = makeSaga({ type: 'email_send', params: { uid: 42 } });
+            // The strongly consistent listing sees the row as approved until its executed write lands.
+            let executedWritten = false;
+            (backend.listByState as ReturnType<typeof mock>).mockImplementation(async () => (executedWritten ? [] : [email]));
+            (backend.updateState as ReturnType<typeof mock>).mockImplementation(async () => {
+                executedWritten = true;
+            });
+            const send = Promise.withResolvers<undefined>();
+            (executors.email_send as ReturnType<typeof mock>).mockImplementation(() => send.promise);
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+            executor.start();
+
+            jest.advanceTimersByTime(1000);
+            await flush();
+            executor.wake();
+            jest.advanceTimersByTime(0);
+            await flush();
+            expect(executors.email_send).toHaveBeenCalledTimes(1);
+            expect(backend.listByState).toHaveBeenCalledTimes(1);
+
+            send.resolve(undefined);
+            await flush();
+            expect(backend.updateState).toHaveBeenCalledTimes(1);
+            expect(backend.updateState).toHaveBeenCalledWith(SAGA_UUID, 'executed');
+
+            jest.advanceTimersByTime(0);
+            await flush();
+            expect(backend.listByState).toHaveBeenCalledTimes(2);
+            expect(executors.email_send).toHaveBeenCalledTimes(1);
+            expect(executors.email_send).toHaveBeenCalledWith({ uid: 42 });
+            executor.stop();
         });
     });
 
@@ -310,7 +422,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 }
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             await executor.executeOnce();
 
             expect(serviceChecked).toContain(expectedService);
@@ -324,7 +436,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             jest.advanceTimersByTime(1000);
@@ -336,7 +448,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         });
 
         test('double-start guard: second start does not create a second timer', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
             executor.start();
 
@@ -350,12 +462,9 @@ describe('createApprovedOutboundActionExecutor', () => {
         });
 
         test('redundant start() while mid-flight tick does not kill the poll loop', async () => {
-            // Regression test: generation identity must NOT be replaced when start() is a no-op.
-            // If generation is replaced before the idempotency guard, the in-flight tick's trailing
-            // scheduleNextTick() sees the captured identity is stale and silently drops the loop.
-            //
-            // Uses a deferred listByState to hold T1's IIFE suspended while we inject a redundant
-            // start(). After resolving, T1 must still reschedule (T2), proving the loop is alive.
+            // A redundant start() while a run is in flight must not disturb that run's trailing
+            // reschedule. A deferred listByState holds run T1 in flight while we inject the
+            // redundant start(); after resolving, T1 must still arm T2, proving the loop is alive.
             let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
             const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
                 resolveListByState = resolve;
@@ -364,28 +473,23 @@ describe('createApprovedOutboundActionExecutor', () => {
                 (): Promise<ApprovedOutboundAction[]> => deferredListByState
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
-            // Fire T1 — IIFE starts, suspends at listByState. timeoutId still holds T1's value.
+            // Fire T1 — the run starts and suspends at listByState.
             jest.advanceTimersByTime(1000);
             expect(backend.listByState).toHaveBeenCalledTimes(1);
             // No new timer while suspended (T1 fired, nothing rescheduled yet)
             expect(jest.getTimerCount()).toBe(0);
 
-            // Inject redundant start() while T1 is mid-flight:
-            // timeoutId (T1) !== undefined → idempotency guard must fire BEFORE generation replacement.
-            // Buggy code: generation replaced first → T1's trailing scheduleNextTick() suppressed.
-            // Fixed code: guard fires first → generation unchanged → T1 reschedules normally.
+            // Inject a redundant start() while T1 is mid-flight: the loop is already started, so
+            // it must be a no-op.
             executor.start();
 
-            // Resolve the deferred — let T1's IIFE complete
+            // Resolve the deferred — let T1 complete and arm T2.
             resolveListByState([]);
-            await Promise.resolve(); // listByState resolves
-            await Promise.resolve(); // executeOnce returns
-            await Promise.resolve(); // generation check + scheduleNextTick (T2) runs
+            await flush();
 
-            // With fix: T2 is scheduled (loop alive). Without fix: generation mismatch → 0 timers.
             expect(jest.getTimerCount()).toBe(1);
 
             executor.stop();
@@ -393,7 +497,7 @@ describe('createApprovedOutboundActionExecutor', () => {
 
         test('redundant start() while running leaves exactly one pending timer', async () => {
             // After a no-op start(), timer count must remain 1 (the already-scheduled next tick).
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
             expect(jest.getTimerCount()).toBe(1);
 
@@ -405,7 +509,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         });
 
         test('stop clears timer so executeOnce is no longer called', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
@@ -416,7 +520,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         });
 
         test('restart after stop works: stopped flag is reset', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
@@ -431,7 +535,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         });
 
         test('stop is idempotent when not started', () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             // Should not throw
             expect(() => {
                 executor.stop();
@@ -441,12 +545,10 @@ describe('createApprovedOutboundActionExecutor', () => {
         test('stop then start during mid-flight tick leaves exactly one pending timer (no leak)', async () => {
             // Regression test for stop/start race: Bun's advanceTimersByTime drains microtasks
             // synchronously, so the race window must be opened by using a deferred (manually
-            // resolved) promise for listByState — this keeps the async IIFE suspended while we
-            // call stop()+start(), then we resolve to let the IIFE complete.
+            // resolved) promise for listByState — this keeps run T1 suspended while we call
+            // stop()+start(), then we resolve to let T1 complete.
             //
-            // Without generation invalidation, the in-flight IIFE's trailing scheduleNextTick
-            // runs after start() has already scheduled T2, producing two pending timers (T2+T3).
-            // With the fix, the IIFE detects its generation is stale and skips rescheduling.
+            // start() already armed T2, so T1's trailing reschedule must not add a second timer.
             let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
             const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
                 resolveListByState = resolve;
@@ -455,73 +557,65 @@ describe('createApprovedOutboundActionExecutor', () => {
                 (): Promise<ApprovedOutboundAction[]> => deferredListByState
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
-            // Fire T1 — async IIFE begins, suspends at await backend.listByState()
+            // Fire T1 — the run begins and suspends at await backend.listByState()
             jest.advanceTimersByTime(1000);
-            // T1 fired; IIFE is now truly suspended (timerCount=0 — no new timer scheduled yet)
+            // T1 fired; the run is suspended (timerCount=0 — no new timer scheduled yet)
             expect(jest.getTimerCount()).toBe(0);
 
-            // Race: stop+start while T1's IIFE is mid-flight
-            executor.stop();   // stopped=true, clears timeoutId (T1 already fired, no-op)
-            executor.start();  // stopped=false, replaces generation, schedules T2 → timerCount=1
+            // Race: stop+start while T1 is mid-flight
+            executor.stop();   // stopped, clears the timer (T1 already fired, no-op)
+            executor.start();  // started again, arms T2 → timerCount=1
             expect(jest.getTimerCount()).toBe(1);
 
-            // Now resolve listByState → T1's IIFE can complete
+            // Now resolve listByState → T1 can complete
             resolveListByState([]);
-            await Promise.resolve(); // listByState resolves inside executeOnce
-            await Promise.resolve(); // executeOnce returns; IIFE runs backoff branch
-            await Promise.resolve(); // trailing scheduleNextTick() — must be suppressed by generation check
+            await flush();
 
-            // With the fix: only T2 (from start()) pending, T1's trailing reschedule was suppressed
+            // Only T2 (from start()) is pending: T1 found a timer already armed
             expect(jest.getTimerCount()).toBe(1);
 
             executor.stop();
         });
 
-        test('successive stop/start cycles discard every overlapping stale tick', async () => {
+        test('timer firing during a run left over from stop/start defers to a rerun instead of overlapping', async () => {
+            // A second concurrent listByState here would be the double-send bug: both runs would
+            // list and send the same approved row. The stale run's timer successor must only ask
+            // for a rerun, and exactly one timer may be pending throughout.
             const first = Promise.withResolvers<ApprovedOutboundAction[]>();
-            const second = Promise.withResolvers<ApprovedOutboundAction[]>();
             let callCount = 0;
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(() => {
                 callCount++;
-                if(callCount === 1) {
-                    return first.promise;
-                }
-                if(callCount === 2) {
-                    return second.promise;
-                }
-                return Promise.resolve([]);
+                return callCount === 1 ? first.promise : Promise.resolve([]);
             });
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
 
             try {
                 executor.start();
-                jest.advanceTimersByTime(1000); // first tick remains in flight
+                jest.advanceTimersByTime(1000); // first run remains in flight
                 executor.stop();
                 executor.start();
-                jest.advanceTimersByTime(1000); // second tick remains in flight
+                expect(jest.getTimerCount()).toBe(1);
+                jest.advanceTimersByTime(1000); // timer fires while the first run is still in flight
+                expect(backend.listByState).toHaveBeenCalledTimes(1);
+                expect(jest.getTimerCount()).toBe(0);
                 executor.stop();
-                executor.start();               // only the third generation owns a timer
+                executor.start();
                 expect(jest.getTimerCount()).toBe(1);
 
                 first.resolve([]);
-                second.resolve([]);
-                await Promise.resolve();
-                await Promise.resolve();
-                await Promise.resolve();
+                await flush();
+                expect(backend.listByState).toHaveBeenCalledTimes(1);
                 expect(jest.getTimerCount()).toBe(1);
 
-                jest.advanceTimersByTime(1000);
-                await Promise.resolve();
-                await Promise.resolve();
-                expect(backend.listByState).toHaveBeenCalledTimes(3);
+                jest.advanceTimersByTime(0); // the coalesced rerun
+                await flush();
+                expect(backend.listByState).toHaveBeenCalledTimes(2);
                 expect(jest.getTimerCount()).toBe(1);
             } finally {
                 first.resolve([]);
-                second.resolve([]);
-                await Promise.resolve();
                 await Promise.resolve();
                 executor.stop();
             }
@@ -529,7 +623,7 @@ describe('createApprovedOutboundActionExecutor', () => {
 
         test('stop alone (no restart) leaves zero pending timers after mid-flight tick', async () => {
             // Verify that stop() without a subsequent start() leaves 0 timers, even when stop()
-            // races with a mid-flight tick (deferred listByState keeps the IIFE suspended).
+            // races with a mid-flight tick (deferred listByState keeps the run suspended).
             let resolveListByState!: (value: ApprovedOutboundAction[]) => void;
             const deferredListByState = new Promise<ApprovedOutboundAction[]>((resolve) => {
                 resolveListByState = resolve;
@@ -538,40 +632,36 @@ describe('createApprovedOutboundActionExecutor', () => {
                 (): Promise<ApprovedOutboundAction[]> => deferredListByState
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
-            // Fire T1 — IIFE starts, suspends at listByState
+            // Fire T1 — the run starts and suspends at listByState
             jest.advanceTimersByTime(1000);
-            expect(jest.getTimerCount()).toBe(0); // T1 fired, IIFE suspended, no new timer yet
+            expect(jest.getTimerCount()).toBe(0); // T1 fired, run suspended, no new timer yet
 
             // Stop only — no subsequent start()
             executor.stop();
 
-            // Resolve the deferred so IIFE can complete
+            // Resolve the deferred so the run can complete
             resolveListByState([]);
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
+            await flush();
 
-            // stopped=true → scheduleNextTick must bail out → 0 timers
+            // Stopped → the finishing run must arm nothing → 0 timers
             expect(jest.getTimerCount()).toBe(0);
         });
 
-        test('stopped flag starts as false: timer callback fires executeOnce on first tick', async () => {
-            // If stopped started as true, timer callback would skip executeOnce
+        test('the first poll after start() runs the executor', async () => {
             const saga = makeSaga();
             (backend.listByState as ReturnType<typeof mock>).mockImplementation(
                 async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
-            executor.start(); // stopped must be false for timer to execute
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
+            executor.start();
 
             jest.advanceTimersByTime(1000);
             await Promise.resolve();
 
-            // If stopped started as true, listByState would NOT be called
             expect(backend.listByState).toHaveBeenCalledTimes(1);
 
             executor.stop();
@@ -580,7 +670,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         test('clearTimeout is called when stop() is called after start()', async () => {
             const clearTimeoutSpy = jest.spyOn(globalThis, 'clearTimeout');
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
             executor.stop();
 
@@ -596,7 +686,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         });
 
         test('start() after stop() resumes at base interval', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
 
             // Start, let it run two empty ticks (interval should have doubled to 2000)
             executor.start();
@@ -634,7 +724,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded });
             executor.start();
 
             // Should not trigger at 29 seconds
@@ -656,7 +746,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<ApprovedOutboundAction[]> => [saga]
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 5000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 5000 });
             executor.start();
 
             // Should not trigger at 4999 ms
@@ -676,7 +766,7 @@ describe('createApprovedOutboundActionExecutor', () => {
     describe('poll backoff', () => {
         test('empty result doubles the next tick interval', async () => {
             // baseInterval = 1000, empty result → next tick at 2000
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick fires at 1000ms, returns empty
@@ -704,7 +794,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             // tick 1 at 1000ms → empty → next at 2000ms
             // tick 2 at 3000ms → empty → next at 4000ms
             // tick 3 at 7000ms
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms
@@ -735,7 +825,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             // Use a large base so we reach the cap quickly without many doublings
             // base = 200_000ms → doubled = 400_000ms > MAX (300_000ms) → capped at 300_000ms
             const base = 200_000;
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: base });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: base });
             executor.start();
 
             // First tick at 200_000ms — empty result
@@ -784,7 +874,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 }
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms — empty → interval doubles to 2000
@@ -817,7 +907,7 @@ describe('createApprovedOutboundActionExecutor', () => {
 
         test('non-empty first tick does not emit a redundant base-reset log', async () => {
             (backend.listByState as ReturnType<typeof mock>).mockResolvedValue([makeSaga()]);
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             jest.advanceTimersByTime(1000);
@@ -842,7 +932,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 }
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             // Tick 1 at 1000ms
@@ -873,7 +963,7 @@ describe('createApprovedOutboundActionExecutor', () => {
         });
 
         test('stop() mid-backoff cancels the scheduled timer', async () => {
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms — empty → next scheduled at 2000ms
@@ -905,7 +995,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 async (): Promise<void> => { throw new Error('oops'); }
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms — empty → interval doubles to 2000
@@ -945,7 +1035,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 }
             );
 
-            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, pollIntervalMs: 1000 });
+            const executor = createApprovedOutboundActionExecutor({ backend, registry, executors, logger, onOutcomeRecorded, pollIntervalMs: 1000 });
             executor.start();
 
             // First tick at 1000ms — throws, catch block logs at debug level, reschedules at base interval

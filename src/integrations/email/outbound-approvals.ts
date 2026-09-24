@@ -4,7 +4,7 @@ import { markDraftReviewState } from './draft-review-state';
 import type { WildDuckClient } from './wildduck-client';
 import type { NotifyFn } from '@/agent';
 import { EmailFolder } from '@/config';
-import type { ApprovedOutboundActionWriter } from '@/services';
+import type { ApprovalCardRef, ApprovedOutboundActionWriter } from '@/services';
 import type { ActivityLogger } from '@/storage';
 
 /** Which admin control approved the send; only the activity-log failure text differs. */
@@ -14,7 +14,7 @@ export interface EmailOutboundApprovalsDeps {
     wildDuckClient:  Pick<WildDuckClient, 'getMessage' | 'updateMessageMetadata' | 'updateMessageFlags'>
     actionWriter:    ApprovedOutboundActionWriter
     activityLogger?: ActivityLogger
-    /** Shared notification bridge (Q7, plan amendment B2) — every admin approval outcome wakes a notification. */
+    /** Shared notification bridge (Q7, plan amendment B2) — approvals leave a note, rejections wake Izzy. */
     notify:          NotifyFn
 }
 
@@ -27,19 +27,21 @@ export class EmailOutboundApprovals {
     constructor(private readonly deps: EmailOutboundApprovalsDeps) {}
 
     /**
-     * Record the approved send as a durable ApprovedOutboundAction for the executor, then log
-     * the activity (fire-and-forget). The rate limiter is intentionally not charged here: the
-     * admin's manual approval is itself the rate control for non-allowlisted sends.
+     * Record the approved send as a durable ApprovedOutboundAction for the executor, carrying
+     * the approval card so the real outcome can be shown on it, then log the activity
+     * (fire-and-forget). The rate limiter is intentionally not charged here: the admin's manual
+     * approval is itself the rate control for non-allowlisted sends.
      */
-    async approveSend(uid: number, via: EmailApprovalRoute): Promise<void> {
+    async approveSend(uid: number, via: EmailApprovalRoute, card: ApprovalCardRef): Promise<void> {
         const now = new Date().toISOString();
         await this.deps.actionWriter.create({
-            id:        crypto.randomUUID(),
-            state:     'approved',
-            type:      'email_send',
-            params:    { uid },
-            createdAt: now,
-            updatedAt: now,
+            id:           crypto.randomUUID(),
+            state:        'approved',
+            type:         'email_send',
+            params:       { uid },
+            approvalCard: card,
+            createdAt:    now,
+            updatedAt:    now,
         });
 
         void this.deps.activityLogger?.log({ type: 'email-sent', summary: 'Email approved for sending' }).catch((err: unknown) => {
@@ -83,14 +85,18 @@ export class EmailOutboundApprovals {
         return [...new Set([...toAddresses, ...ccAddresses])];
     }
 
-    /** Wake the conductor about an approved send. A thrown or false-returning notify never fails the approval. */
+    /**
+     * Note an approved send for Izzy without opening a turn: the send has not happened yet, and
+     * the outcome reporter tells Izzy (waking her) once it has succeeded or failed. A thrown or
+     * false-returning notify never fails the approval.
+     */
     announceApproved(uid: number): void {
         try {
             this.deps.notify({
                 source: 'email-approval',
-                wake:   true,
+                wake:   false,
                 key:    `${uid}:approved`,
-                text:   `Outbound email (uid ${uid}) approved for sending`,
+                text:   `Outbound email (uid ${uid}) approved by admin; sending now. You will be notified when it has been sent or has failed.`,
             });
         } catch (err) {
             logger.warn({ err, uid, msg: 'Notify failed for email approval' });

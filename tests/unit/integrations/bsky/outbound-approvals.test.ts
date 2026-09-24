@@ -7,6 +7,7 @@ import { createAtUri, createCid } from '@/integrations/bsky/types';
 import type { ApprovedOutboundAction } from '@/services';
 
 const NOW  = '2026-09-23T12:00:00.000Z';
+const CARD = { channelId: 'admin-ch', messageId: 'card-msg' };
 const UUID = 'a1b2c3d4-e5f6-4890-abcd-ef1234567890';
 
 const REPLY_REJECTION: BskyRejectionItem = {
@@ -78,16 +79,17 @@ describe('BskyOutboundApprovals', () => {
         test('writes an approved bsky_reply action with the flat reply params', async () => {
             const h = makeHarness();
 
-            await h.ops.approveReply({ text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp', rootUri: 'at://r', rootCid: 'bafyr' });
+            await h.ops.approveReply({ text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp', rootUri: 'at://r', rootCid: 'bafyr' }, CARD);
 
             const action = h.create.mock.calls[0][0];
             expect(action).toEqual({
-                id:        expect.any(String),
-                state:     'approved',
-                type:      'bsky_reply',
-                params:    { text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp', rootUri: 'at://r', rootCid: 'bafyr' },
-                createdAt: NOW,
-                updatedAt: NOW,
+                id:           expect.any(String),
+                state:        'approved',
+                type:         'bsky_reply',
+                params:       { text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp', rootUri: 'at://r', rootCid: 'bafyr' },
+                approvalCard: { channelId: 'admin-ch', messageId: 'card-msg' },
+                createdAt:    NOW,
+                updatedAt:    NOW,
             });
             expect(action.id).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/);
             expect(h.activityLog.mock.calls).toEqual([[{ type: 'bsky-post-sent', summary: 'Bluesky reply approved for posting' }]]);
@@ -97,7 +99,7 @@ describe('BskyOutboundApprovals', () => {
         test('keeps absent root fields as undefined keys in the params', async () => {
             const h = makeHarness();
 
-            await h.ops.approveReply({ text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp' });
+            await h.ops.approveReply({ text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp' }, CARD);
 
             const params = h.create.mock.calls[0][0].params;
             expect(Object.keys(params)).toEqual(['text', 'parentUri', 'parentCid', 'rootUri', 'rootCid']);
@@ -111,7 +113,7 @@ describe('BskyOutboundApprovals', () => {
                 throw failure;
             });
 
-            await h.ops.approveReply({ text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp' });
+            await h.ops.approveReply({ text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp' }, CARD);
             await Promise.resolve();
 
             expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, msg: 'Activity log failed for Bluesky post approval' });
@@ -123,7 +125,7 @@ describe('BskyOutboundApprovals', () => {
                 throw new Error('dynamo down');
             });
 
-            await expect(h.ops.approveReply({ text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp' })).rejects.toThrow('dynamo down');
+            await expect(h.ops.approveReply({ text: 'Hi', parentUri: 'at://p', parentCid: 'bafyp' }, CARD)).rejects.toThrow('dynamo down');
             expect(h.activityLog).not.toHaveBeenCalled();
         });
     });
@@ -132,15 +134,16 @@ describe('BskyOutboundApprovals', () => {
         test('writes an approved bsky_dm action with text and convoId', async () => {
             const h = makeHarness();
 
-            await h.ops.approveDm({ text: 'Hey', convoId: 'convo-1' });
+            await h.ops.approveDm({ text: 'Hey', convoId: 'convo-1' }, CARD);
 
             expect(h.create.mock.calls[0][0]).toEqual({
-                id:        expect.any(String),
-                state:     'approved',
-                type:      'bsky_dm',
-                params:    { text: 'Hey', convoId: 'convo-1' },
-                createdAt: NOW,
-                updatedAt: NOW,
+                id:           expect.any(String),
+                state:        'approved',
+                type:         'bsky_dm',
+                params:       { text: 'Hey', convoId: 'convo-1' },
+                approvalCard: { channelId: 'admin-ch', messageId: 'card-msg' },
+                createdAt:    NOW,
+                updatedAt:    NOW,
             });
             expect(h.activityLog.mock.calls).toEqual([[{ type: 'bsky-dm-sent', summary: 'Bluesky DM approved for sending' }]]);
         });
@@ -152,7 +155,7 @@ describe('BskyOutboundApprovals', () => {
                 throw failure;
             });
 
-            await h.ops.approveDm({ text: 'Hey', convoId: 'convo-1' });
+            await h.ops.approveDm({ text: 'Hey', convoId: 'convo-1' }, CARD);
             await Promise.resolve();
 
             expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, msg: 'Activity log failed for Bluesky DM approval' });
@@ -161,7 +164,7 @@ describe('BskyOutboundApprovals', () => {
         test('works without an activity logger', async () => {
             const h = makeHarness({ activityLogger: undefined });
 
-            await h.ops.approveDm({ text: 'Hey', convoId: 'convo-1' });
+            await h.ops.approveDm({ text: 'Hey', convoId: 'convo-1' }, CARD);
 
             expect(h.create).toHaveBeenCalledTimes(1);
         });

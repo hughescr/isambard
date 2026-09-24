@@ -3,6 +3,7 @@ import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInterac
 import { mockLogger } from '../../../../setup';
 import type { NotifyFn, NotifyParams } from '@/agent';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
+import { ApprovalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
 import { EmailApprovalInteractionAdapter } from '@/integrations/discord/approvals/email-adapter';
 import { DiscordOutboundApprovalInteractionHandler } from '@/integrations/discord/approvals/interaction-handler';
 import { DRAFT_STATE_FLAG } from '@/integrations/email/draft-review-state';
@@ -23,7 +24,7 @@ interface EmailOutboundApprovalHandlerDeps {
     notify:                      NotifyFn
 }
 
-function makeAdapter(deps: EmailOutboundApprovalHandlerDeps): EmailApprovalInteractionAdapter {
+function makeAdapter(deps: EmailOutboundApprovalHandlerDeps, cardEdits?: ApprovalCardEditGate): EmailApprovalInteractionAdapter {
     return new EmailApprovalInteractionAdapter({
         approvals: new EmailOutboundApprovals({
             wildDuckClient: deps.wildDuckClient,
@@ -32,10 +33,15 @@ function makeAdapter(deps: EmailOutboundApprovalHandlerDeps): EmailApprovalInter
             notify:         deps.notify,
         }),
         allowlist: deps.allowlistInteractionHandler,
+        cardEdits,
     });
 }
 
 const ADMIN_USER_ID = '222222222222222222';
+const CARD_CHANNEL_ID = 'admin-review-channel';
+const CARD_MESSAGE_ID = 'approval-card-message';
+/** The pending card every approve path shows before recording the approval. */
+const PENDING_EMBED = { title: 'Approved ✓ — sending…', color: 0x58_65_F2 };
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -54,7 +60,8 @@ function makeButtonInteraction(customId: string, userId: string = ADMIN_USER_ID)
     const showModal   = mock(async () => ({}));
     const interaction = {
         customId,
-        user: { id: userId },
+        user:    { id: userId },
+        message: { id: CARD_MESSAGE_ID, channelId: CARD_CHANNEL_ID },
         deferUpdate,
         editReply,
         reply,
@@ -97,7 +104,8 @@ function makeSelectMenuInteraction(customId: string, selectedValues: string[] = 
     const editReply   = mock(async () => ({}));
     const interaction = {
         customId,
-        values: selectedValues,
+        values:  selectedValues,
+        message: { id: CARD_MESSAGE_ID, channelId: CARD_CHANNEL_ID },
         deferUpdate,
         editReply,
     } as unknown as StringSelectMenuInteraction;
@@ -461,28 +469,29 @@ describe('EmailApprovalInteractionAdapter', () => {
                 expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
             });
 
-            test('should show "Approved ✓" embed in green after successful approve', async () => {
+            test('approve edits the card to the blurple sending embed with no buttons', async () => {
                 const deps    = makeDeps();
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
 
-                const replyArg = editReply.mock.calls[0]?.[0] as {
-                    embeds:     unknown[]
-                    components: unknown[]
-                };
-                expect(replyArg.embeds).toHaveLength(1);
-                expect(replyArg.components).toHaveLength(0);
+                expect(editReply).toHaveBeenCalledTimes(1);
+                const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { toJSON: () => unknown }[], components: unknown[] };
+                expect(replyArg.embeds.map(embed => embed.toJSON())).toEqual([PENDING_EMBED]);
+                expect(replyArg.components).toEqual([]);
             });
 
-            test('should notify wake:true with key <uid>:approved after editReply', async () => {
+            test('approve records the approval before editing the card to pending, then notes it for Izzy without waking', async () => {
                 const order: string[] = [];
                 const notify = mock((_params: NotifyParams) => {
                     order.push('notify');
                     return true;
                 });
-                const deps    = makeDeps({ notify });
+                const create = mock(async () => {
+                    order.push('create');
+                });
+                const deps    = makeDeps({ notify, sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
                 editReply.mockImplementation(async () => {
@@ -492,13 +501,56 @@ describe('EmailApprovalInteractionAdapter', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(order).toEqual(['editReply', 'notify']);
-                expect(notify).toHaveBeenCalledTimes(1);
-                const call = notify.mock.calls[0]?.[0];
-                expect(call.source).toBe('email-approval');
-                expect(call.wake).toBe(true);
-                expect(call.key).toBe('42:approved');
-                expect(call.text).toBe('Outbound email (uid 42) approved for sending');
+                expect(order).toEqual(['create', 'editReply', 'notify']);
+                expect(notify.mock.calls).toEqual([[{
+                    source: 'email-approval',
+                    wake:   false,
+                    key:    '42:approved',
+                    text:   'Outbound email (uid 42) approved by admin; sending now. You will be notified when it has been sent or has failed.',
+                }]]);
+            });
+
+            test('approve holds the card on the edit gate while recording and showing pending, then releases it', async () => {
+                const cardEdits = new ApprovalCardEditGate();
+                const heldDuring: string[] = [];
+                const create = mock(async () => {
+                    heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'create:free' : 'create:held');
+                });
+                const deps    = makeDeps({ sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
+                const handler = makeAdapter(deps, cardEdits);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
+                editReply.mockImplementation(async () => {
+                    heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'editReply:free' : 'editReply:held');
+                    return {};
+                });
+
+                await handler.handleButton(interaction);
+
+                expect(heldDuring).toEqual(['create:held', 'editReply:held']);
+                expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
+            });
+
+            test('approve releases the card on the edit gate when recording the approval fails', async () => {
+                const cardEdits = new ApprovalCardEditGate();
+                const deps    = makeDeps();
+                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB write failed'));
+                const handler = makeAdapter(deps, cardEdits);
+                const { interaction } = makeButtonInteraction('email-send-approve:42');
+
+                await handler.handleButton(interaction);
+
+                expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
+            });
+
+            test('approve passes the card ref from interaction.message', async () => {
+                const deps    = makeDeps();
+                const handler = makeAdapter(deps);
+                const { interaction } = makeButtonInteraction('email-send-approve:42');
+
+                await handler.handleButton(interaction);
+
+                const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as { approvalCard: unknown };
+                expect(createArg.approvalCard).toEqual({ channelId: CARD_CHANNEL_ID, messageId: CARD_MESSAGE_ID });
             });
 
             test('should still resolve and leave editReply outcome intact when notify throws', async () => {
@@ -518,26 +570,26 @@ describe('EmailApprovalInteractionAdapter', () => {
                 }));
             });
 
-            test('should still notify wake:true when the Discord editReply fails (approval is already persisted)', async () => {
+            test('a failed pending edit after the approval is recorded is logged, offers no retry, and still notes the approval', async () => {
                 const notify = mock((_params: NotifyParams) => true);
                 const deps    = makeDeps({ notify });
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
-                editReply.mockRejectedValue(new Error('Discord timeout'));
+                const editError = new Error('Discord timeout');
+                editReply.mockRejectedValueOnce(editError);
 
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
 
                 expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
                 expect(notify).toHaveBeenCalledTimes(1);
-                const call = notify.mock.calls[0]?.[0];
-                expect(call.source).toBe('email-approval');
-                expect(call.wake).toBe(true);
-                expect(call.key).toBe('42:approved');
-                expect(call.text).toBe('Outbound email (uid 42) approved for sending');
-                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                    uid: 42,
-                    msg: 'Failed to update Discord embed after email approval',
-                }));
+                expect(editReply).toHaveBeenCalledTimes(1);
+                expect(mockLogger.error).not.toHaveBeenCalled();
+                expect(mockLogger.warn).toHaveBeenCalledWith({
+                    err:       editError,
+                    channelId: CARD_CHANNEL_ID,
+                    messageId: CARD_MESSAGE_ID,
+                    msg:       'Failed to show the pending approval card — the send outcome will replace it',
+                });
             });
         });
 
@@ -780,7 +832,7 @@ describe('EmailApprovalInteractionAdapter', () => {
         });
 
         describe('error handling', () => {
-            test('should call editReply with error message when sagaBackend.create fails', async () => {
+            test('shows only the retry error, never the pending card, when sagaBackend.create fails', async () => {
                 const deps = makeDeps();
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB write failed'));
                 const handler = makeAdapter(deps);
@@ -789,6 +841,7 @@ describe('EmailApprovalInteractionAdapter', () => {
                 await handler.handleButton(interaction);
 
                 expect(editReply).toHaveBeenCalledTimes(1);
+                expect((editReply.mock.calls[0]?.[0] as { content: string }).content).toBe('An error occurred processing your request. Please try again.');
                 expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
                     prefix: 'email-send-approve',
                     msg:    'Outbound approval button handler failed',
@@ -1282,6 +1335,52 @@ describe('EmailApprovalInteractionAdapter', () => {
             expect(replyArg.content).toContain('error occurred');
         });
 
+        test('a failed pending edit on the select menu after the approval is recorded still allowlists and notes the approval', async () => {
+            const deps = makeDeps();
+            const handler = makeAdapter(deps);
+            const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com']);
+            editReply.mockRejectedValueOnce(new Error('Discord timeout'));
+
+            await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
+
+            expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+            expect(deps.allowlistInteractionHandler.startFromApproval).toHaveBeenCalledTimes(1);
+            expect(deps.notify).toHaveBeenCalledTimes(1);
+            expect(editReply).toHaveBeenCalledTimes(1);
+            expect(mockLogger.error).not.toHaveBeenCalled();
+        });
+
+        test('select menu holds the card on the edit gate while recording and showing pending, then releases it', async () => {
+            const cardEdits = new ApprovalCardEditGate();
+            const heldDuring: string[] = [];
+            const create = mock(async () => {
+                heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'create:free' : 'create:held');
+            });
+            const deps    = makeDeps({ sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
+            const handler = makeAdapter(deps, cardEdits);
+            const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
+            editReply.mockImplementation(async () => {
+                heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'editReply:free' : 'editReply:held');
+                return {};
+            });
+
+            await handler.handleSelectMenu(interaction);
+
+            expect(heldDuring).toEqual(['create:held', 'editReply:held']);
+            expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
+        });
+
+        test('select menu approve passes the card ref from interaction.message', async () => {
+            const deps    = makeDeps();
+            const handler = makeAdapter(deps);
+            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:42', []);
+
+            await handler.handleSelectMenu(interaction);
+
+            const createArg = (deps.sagaBackend.create as ReturnType<typeof mock>).mock.calls[0]?.[0] as { approvalCard: unknown };
+            expect(createArg.approvalCard).toEqual({ channelId: CARD_CHANNEL_ID, messageId: CARD_MESSAGE_ID });
+        });
+
         test('should log error when editReply fails after sagaBackend.create error', async () => {
             const deps = makeDeps();
             (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
@@ -1297,26 +1396,37 @@ describe('EmailApprovalInteractionAdapter', () => {
             });
         });
 
-        test('should show Sent embed with no components on success', async () => {
+        test('should show the pending sending embed, no components and no content on success', async () => {
             const deps    = makeDeps();
             const handler = makeAdapter(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
             await handler.handleSelectMenu(interaction);
 
-            const replyArg = editReply.mock.calls[0]?.[0];
-            expect(replyArg.embeds).toHaveLength(1);
-            expect(replyArg.components).toHaveLength(0);
+            const replyArg = editReply.mock.calls[0]?.[0] as { content: unknown, embeds: { toJSON: () => unknown }[], components: unknown[] };
+            expect(replyArg.embeds.map(embed => embed.toJSON())).toEqual([PENDING_EMBED]);
+            expect(replyArg.components).toEqual([]);
             expect(replyArg.content).toBeNull();
         });
 
-        test('should notify wake:true with key <uid>:approved exactly once after editReply, even with multiple recipients', async () => {
+        test('select menu records the approval, then edits the card to pending, then allowlists, and notes it once without waking', async () => {
             const order: string[] = [];
             const notify = mock((_params: NotifyParams) => {
                 order.push('notify');
                 return true;
             });
-            const deps    = makeDeps({ notify });
+            const create = mock(async () => {
+                order.push('create');
+            });
+            const startFromApproval = mock(async () => {
+                order.push('allowlist');
+                return { allowlistSuffix: '' };
+            });
+            const deps    = makeDeps({
+                notify,
+                sagaBackend:                 { create } as unknown as ApprovedOutboundActionBackend,
+                allowlistInteractionHandler: { startFromApproval } as unknown as AllowlistInteractionHandler,
+            });
             const handler = makeAdapter(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com', 'b@example.com']);
             editReply.mockImplementation(async () => {
@@ -1326,13 +1436,13 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             await handler.handleSelectMenu(interaction);
 
-            expect(order).toEqual(['editReply', 'notify']);
-            expect(notify).toHaveBeenCalledTimes(1);
-            const call = notify.mock.calls[0]?.[0];
-            expect(call.source).toBe('email-approval');
-            expect(call.wake).toBe(true);
-            expect(call.key).toBe('42:approved');
-            expect(call.text).toBe('Outbound email (uid 42) approved for sending');
+            expect(order).toEqual(['create', 'editReply', 'allowlist', 'allowlist', 'notify']);
+            expect(notify.mock.calls).toEqual([[{
+                source: 'email-approval',
+                wake:   false,
+                key:    '42:approved',
+                text:   'Outbound email (uid 42) approved by admin; sending now. You will be notified when it has been sent or has failed.',
+            }]]);
         });
 
         test('should still resolve and leave editReply outcome intact when notify throws', async () => {
@@ -1399,7 +1509,7 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
         return parts;
     }
 
-    test('an approve button acknowledges, then approves the parsed uid directly, then updates the card, then announces', async () => {
+    test('an approve button acknowledges, then approves the parsed uid directly, then shows the pending card, then announces', async () => {
         const { adapter, events } = makeOpsAdapter(['a@example.com']);
         const { interaction } = trackInteraction(makeButtonInteraction('email-send-approve:42'), events);
 
@@ -1445,9 +1555,9 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
         expect(events).toEqual([
             'deferUpdate',
             'approveSend:42:allowlist',
+            'editReply',
             'startFromApproval:email:a@example.com',
             'startFromApproval:email:b@example.com',
-            'editReply',
             'announceApproved:42',
         ]);
     });

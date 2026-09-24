@@ -1,7 +1,13 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { EmbedBuilder, type ButtonInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { mockLogger } from '../../../../setup';
-import { DiscordOutboundApprovalInteractionHandler } from '@/integrations/discord/approvals/interaction-handler';
+import {
+    APPROVAL_AMBER,
+    APPROVAL_GREEN,
+    APPROVAL_PENDING,
+    APPROVAL_RED,
+    DiscordOutboundApprovalInteractionHandler
+} from '@/integrations/discord/approvals/interaction-handler';
 
 // ---------------------------------------------------------------------------
 // Minimal concrete subclass — exercises the shared base-class behaviour
@@ -61,8 +67,12 @@ class TestOutboundApprovalHandler extends DiscordOutboundApprovalInteractionHand
     }
 
     // Test-only exposure of protected shared helpers.
-    exposedBuildApprovedEmbed(title: string) {
-        return this.buildApprovedEmbed(title);
+    exposedBuildPendingEmbed(title: string) {
+        return this.buildPendingEmbed(title);
+    }
+
+    exposedApprovalCardRef(interaction: ButtonInteraction) {
+        return this.approvalCardRef(interaction);
     }
 
     exposedBuildRejectedEmbed(reason: string) {
@@ -116,17 +126,26 @@ describe('DiscordOutboundApprovalInteractionHandler', () => {
     });
 
     // -----------------------------------------------------------------------
-    // Embed colour constants (GREEN / RED / AMBER) are a pure display-only
-    // constant table: they don't drive any branching logic, so one pinning
-    // test per constant (exact-value equality) is enough to kill every
+    // Embed colour constants (GREEN / RED / AMBER / PENDING) are a pure
+    // display-only constant table: they don't drive any branching logic, so one
+    // pinning test per constant (exact-value equality) is enough to kill every
     // NumberLiteralValue mutant on these literals. Change detector: an editor
-    // changing GREEN/RED/AMBER must consciously update this test too.
+    // changing the palette must consciously update this test too.
     // -----------------------------------------------------------------------
-    describe('embed colour constants (change detector — see src/services/outbound-approval-handler-base.ts GREEN/RED/AMBER)', () => {
-        test('buildApprovedEmbed uses GREEN (0x00AA00)', () => {
+    describe('embed colour constants (change detector — see src/integrations/discord/approvals/interaction-handler.ts palette)', () => {
+        test('the shared approval-card palette has the pinned values', () => {
+            expect({ APPROVAL_GREEN, APPROVAL_RED, APPROVAL_AMBER, APPROVAL_PENDING }).toEqual({
+                APPROVAL_GREEN:   0x00_AA_00,
+                APPROVAL_RED:     0xFF_00_00,
+                APPROVAL_AMBER:   0xFF_AA_00,
+                APPROVAL_PENDING: 0x58_65_F2,
+            });
+        });
+
+        test('buildPendingEmbed has the given title and the PENDING colour', () => {
             const handler = makeHandler();
-            const embed   = handler.exposedBuildApprovedEmbed('Approved');
-            expect(embed.data.color).toBe(0x00_AA_00);
+            const embed   = handler.exposedBuildPendingEmbed('Approved ✓ — sending…');
+            expect(embed.toJSON()).toEqual({ title: 'Approved ✓ — sending…', color: 0x58_65_F2 });
         });
 
         test('buildRejectedEmbed uses RED (0xFF0000)', () => {
@@ -144,6 +163,14 @@ describe('DiscordOutboundApprovalInteractionHandler', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
             const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { data: { color?: number } }[] };
             expect(replyArg.embeds[0]?.data.color).toBe(0xFF_AA_00);
+        });
+    });
+
+    describe('approvalCardRef', () => {
+        test('approvalCardRef returns the clicked message channel and id', () => {
+            const interaction = { message: { channelId: 'ch-1', id: 'msg-1' } } as unknown as ButtonInteraction;
+
+            expect(makeHandler().exposedApprovalCardRef(interaction)).toEqual({ channelId: 'ch-1', messageId: 'msg-1' });
         });
     });
 

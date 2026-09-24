@@ -1,4 +1,4 @@
-import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import {
     approvedOutboundActionSchema,
@@ -111,10 +111,14 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
         assertTransition(prior, to);
 
         // failureKind describes only the current failure; a reset or completion drops it.
-        const { failureKind: _priorFailureKind, ...rest } = prior;
+        // outcomeReportPending is the outcome-report outbox: every terminal write records an
+        // outcome still to be reported, in the same put as the state; a retry reset drops an
+        // unreported failure, because the new attempt's own outcome supersedes it.
+        const { failureKind: _priorFailureKind, outcomeReportPending: _priorReportPending, ...rest } = prior;
         const next: ApprovedOutboundAction = {
             ...rest,
             ...failure,
+            ...(to === 'approved' ? {} : { outcomeReportPending: true }),
             state:     to,
             updatedAt: new Date().toISOString(),
         };
@@ -132,17 +136,67 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     }
 
     /**
-     * List all actions that are in the given state.
+     * List all actions that are in the given state, with a strongly consistent query: the
+     * executor sends whatever this returns, so it must never see a row as `approved` after its
+     * `executed` write succeeded (that would send it twice), and a wake right after a create
+     * must see the new row.
      */
     async listByState(state: ApprovedOutboundActionState): Promise<ApprovedOutboundAction[]> {
-        const items = await this.query({
-            KeyConditionExpression:    '#pk = :pk',
+        return this.listWhere('listByState', {
             FilterExpression:          '#state = :state',
             ExpressionAttributeNames:  { '#pk': 'PK', '#state': 'state' },
-            ExpressionAttributeValues: {
-                ':pk':    ACTION_PK,
-                ':state': state,
-            },
+            ExpressionAttributeValues: { ':pk': ACTION_PK, ':state': state },
+        });
+    }
+
+    /**
+     * List the terminal actions whose outcome has not yet been reported (see
+     * `outcomeReportPending` on the schema), with a strongly consistent query so a report never
+     * shows an outcome older than the latest one already written.
+     */
+    async listPendingOutcomeReports(): Promise<ApprovedOutboundAction[]> {
+        return this.listWhere('listPendingOutcomeReports', {
+            FilterExpression:          '#pending = :pending',
+            ExpressionAttributeNames:  { '#pk': 'PK', '#pending': 'outcomeReportPending' },
+            ExpressionAttributeValues: { ':pk': ACTION_PK, ':pending': true },
+        });
+    }
+
+    /**
+     * Clear the outcome-report marker for exactly the outcome that was reported: the update is
+     * conditioned on the state and `updatedAt` revision that was read. Returns false (and
+     * changes nothing) when the row has moved on since — a retry reset or a newer outcome, whose
+     * own report is still to come. Any other failure propagates. `updatedAt` is left unchanged,
+     * so a concurrent retry reset's own conditional put still succeeds.
+     */
+    async markOutcomeReported(action: ApprovedOutboundAction): Promise<boolean> {
+        try {
+            await this.docClient.send(new UpdateCommand({
+                TableName:                 this.tableName,
+                Key:                       { PK: ACTION_PK, SK: actionSK(action.id) },
+                UpdateExpression:          'REMOVE #pending',
+                ConditionExpression:       '#state = :state AND #updatedAt = :revision AND #pending = :pending',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending' },
+                ExpressionAttributeValues: { ':state': action.state, ':revision': action.updatedAt, ':pending': true },
+            }));
+        } catch (err: unknown) {
+            if(err instanceof Error && err.name === 'ConditionalCheckFailedException') {
+                return false;
+            }
+            throw err;
+        }
+        return true;
+    }
+
+    private async listWhere(operation: string, filter: {
+        FilterExpression:          string
+        ExpressionAttributeNames:  Record<string, string>
+        ExpressionAttributeValues: Record<string, unknown>
+    }): Promise<ApprovedOutboundAction[]> {
+        const items = await this.query({
+            KeyConditionExpression: '#pk = :pk',
+            ...filter,
+            ConsistentRead:         true,
         });
 
         const results: ApprovedOutboundAction[] = [];
@@ -152,7 +206,7 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
                 results.push(parsed.data);
             } else {
                 // Stryker disable next-line llm: zod's ZodError.toString() is defined as () => this.message, so both spellings log the identical string.
-                logger.warn({ item, error: parsed.error.message }, 'ApprovedOutboundActionBackend.listByState: failed to parse action');
+                logger.warn({ item, error: parsed.error.message }, `ApprovedOutboundActionBackend.${operation}: failed to parse action`);
             }
         }
         return results;

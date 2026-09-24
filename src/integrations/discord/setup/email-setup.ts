@@ -22,7 +22,7 @@ import {
     EmailOutboundApprovals,
     type ProcessEmailCallbacks
 } from '@/integrations/email';
-import { TokenBucketRateLimiter, type ApprovedOutboundActionBackend, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
+import { TokenBucketRateLimiter, type ApprovedOutboundActionWriter, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import type { DynamoDBClientHolder, PersonAllowlist } from '@/storage';
 import { encodeCustomId, retryAsync } from '@/utils';
 
@@ -73,8 +73,8 @@ export interface EmailSetupOptions {
      * when Discord is offline) instead of calling channel.send() directly.
      */
     discordCapability?:          DiscordCapability
-    /** Durable record of admin-approved outbound actions, executed by the services executor */
-    approvedActions:             ApprovedOutboundActionBackend
+    /** Records admin-approved outbound actions for the services executor (and wakes it) */
+    approvedActions:             ApprovedOutboundActionWriter
     /** Pre-loaded PersonAllowlist for gating outbound email recipients */
     personAllowlist:             PersonAllowlist
     /** Allowlist interaction handler for the saga-based allowlist flow */

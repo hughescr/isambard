@@ -151,11 +151,20 @@ describe('createApprovedActionRetryListener', () => {
     let updateState: ReturnType<typeof mock<(id: string, to: string) => Promise<void>>>;
     let backend: Backend;
     let logger: ServiceLogger;
+    let wake: ReturnType<typeof mock<() => void>>;
+
+    async function flush(): Promise<void> {
+        for(let turn = 0; turn < 10; turn++) {
+            // eslint-disable-next-line no-await-in-loop -- each turn drains one microtask hop of the reset pass.
+            await Promise.resolve();
+        }
+    }
 
     beforeEach(() => {
         listByState = mock(async (_state: string): Promise<ApprovedOutboundAction[]> => []);
         updateState = mock(async (_id: string, _to: string): Promise<void> => undefined);
         backend = { listByState, updateState };
+        wake = mock((): void => undefined);
         logger = {
             debug: mock((): void => undefined),
             info:  mock((): void => undefined),
@@ -171,30 +180,68 @@ describe('createApprovedActionRetryListener', () => {
             written.resolve();
         });
 
-        createApprovedActionRetryListener({ backend, logger })(change('bsky'));
+        createApprovedActionRetryListener({ backend, logger, wake })(change('bsky'));
         await written.promise;
 
         expect(updateState.mock.calls).toEqual([['00000000-0000-4000-8000-000000000001', 'approved']]);
     });
 
     test('an online event for email lists failed actions', () => {
-        createApprovedActionRetryListener({ backend, logger })(change('email'));
+        createApprovedActionRetryListener({ backend, logger, wake })(change('email'));
 
         expect(listByState.mock.calls).toEqual([['failed']]);
     });
 
-    test('ignores an event that is not online', () => {
-        createApprovedActionRetryListener({ backend, logger })(change('bsky', 'offline'));
+    test('ignores an event that is not online', async () => {
+        createApprovedActionRetryListener({ backend, logger, wake })(change('bsky', 'offline'));
+        await flush();
 
         expect(listByState).not.toHaveBeenCalled();
+        expect(wake).not.toHaveBeenCalled();
     });
 
-    test('ignores an online event for a service with no action types', () => {
-        const listener = createApprovedActionRetryListener({ backend, logger });
+    test('ignores an online event for a service with no action types', async () => {
+        const listener = createApprovedActionRetryListener({ backend, logger, wake });
         listener(change('discord'));
         listener(change('caldav'));
         listener(change('dynamodb'));
+        await flush();
 
         expect(listByState).not.toHaveBeenCalled();
+        expect(wake).not.toHaveBeenCalled();
+    });
+
+    test('wakes the executor after the reset pass completes', async () => {
+        listByState.mockImplementation(async () => [failedAction('00000000-0000-4000-8000-000000000001', 'email_send', 'transient')]);
+        const release = Promise.withResolvers<undefined>();
+        updateState.mockImplementation(() => release.promise);
+
+        createApprovedActionRetryListener({ backend, logger, wake })(change('email'));
+        await flush();
+        expect(updateState).toHaveBeenCalledTimes(1);
+        expect(wake).not.toHaveBeenCalled();
+
+        release.resolve(undefined);
+        await flush();
+        expect(wake).toHaveBeenCalledTimes(1);
+    });
+
+    test('wakes the executor on reconnect even with no failed actions', async () => {
+        createApprovedActionRetryListener({ backend, logger, wake })(change('bsky'));
+        await flush();
+
+        expect(wake).toHaveBeenCalledTimes(1);
+    });
+
+    test('wakes the executor after a failed reset pass', async () => {
+        listByState.mockImplementation(async () => {
+            throw new Error('dynamo unavailable');
+        });
+
+        createApprovedActionRetryListener({ backend, logger, wake })(change('email'));
+        await flush();
+
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(wake).toHaveBeenCalledTimes(1);
     });
 });

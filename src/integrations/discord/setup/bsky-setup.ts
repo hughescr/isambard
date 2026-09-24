@@ -16,7 +16,7 @@ import { BskyApprovalInteractionAdapter } from '@/integrations/discord/approvals
 import { buildBskyApprovalEmbed } from '@/integrations/discord/approvals/bsky-embeds';
 import type { DiscordCapability } from '@/integrations/discord/capability';
 import { createBskyDmPoller, DEFAULT_DM_POLL_INTERVAL_MS, type BskyDmPoller } from '@/integrations/discord/setup/bsky-dm-poller';
-import { TokenBucketRateLimiter, type ApprovedOutboundActionBackend, type ServiceHealthRegistry } from '@/services';
+import { TokenBucketRateLimiter, type ApprovedOutboundActionWriter, type ServiceHealthRegistry } from '@/services';
 import type { DynamoDBClientHolder, MemoryToolBackend, PersonAllowlist } from '@/storage';
 import { retryAsync } from '@/utils';
 
@@ -37,8 +37,8 @@ export interface BskySetupOptions {
     client:                      Client
     /** The admin review channel (top-level `config.adminDiscordChannelId`) for approval embeds */
     adminDiscordChannelId:       ChannelId
-    /** Durable record of admin-approved outbound actions, executed by the services executor */
-    approvedActions:             ApprovedOutboundActionBackend
+    /** Records admin-approved outbound actions for the services executor (and wakes it) */
+    approvedActions:             ApprovedOutboundActionWriter
     /** Optional activity logger for recording approval events */
     activityLogger?:             ActivityLogger
     /**

@@ -20,6 +20,11 @@ export { createOutboxDrainer } from './outbox';
 
 // Approved outbound actions
 export type {
+    ApprovalCardRef,
+    ApprovedActionOutcomeDelivery,
+    ApprovedActionOutcomeReport,
+    ApprovedActionOutcomeReporter,
+    ApprovedActionOutcomeTone,
     ApprovedOutboundAction,
     ApprovedOutboundActionState,
     ApprovedOutboundActionType,
@@ -27,7 +32,14 @@ export type {
     ApprovedOutboundActionExecutor,
     FailureKind
 } from './approved-outbound-action';
-export { ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionRetryListener } from './approved-outbound-action';
+export {
+    ApprovedOutboundActionBackend,
+    createApprovedActionOutcomeReporter,
+    createApprovedOutboundActionExecutor,
+    createApprovedActionRetryListener,
+    createWakingActionWriter,
+    describeApprovedActionOutcome
+} from './approved-outbound-action';
 
 // Allowlist saga
 export type { SagaStepResult, SagaInteractionResult } from './allowlist-saga';
