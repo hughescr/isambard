@@ -2,21 +2,10 @@ import { createMemoryPath, createContentType, type MemoryToolBackend } from './m
 import { DynamoTableAccess } from './repositories/base';
 
 /**
- * All activity types that can be logged automatically by the system.
- */
-export type ActivityType
-    = | 'email-sent' | 'email-rejected'
-      | 'bsky-post-sent' | 'bsky-post-rejected'
-      | 'bsky-dm-sent' | 'bsky-dm-rejected'
-      | 'discord-exchange'
-      | 'perch-start' | 'perch-end'
-      | 'catchup-start' | 'catchup-complete';
-
-/**
  * An entry to be logged in the activity log.
  */
-export interface ActivityLogEntry {
-    type:      ActivityType
+export interface ActivityLogEntry<TType extends string> {
+    type:      TType
     summary:   string
     details?:  string
     tags?:     string[]
@@ -26,8 +15,8 @@ export interface ActivityLogEntry {
 /**
  * Lightweight activity logger that persists entries to the memory tool backend.
  */
-export interface ActivityLogger {
-    log(entry: ActivityLogEntry): Promise<void>
+export interface ActivityLogger<TType extends string> {
+    log(entry: ActivityLogEntry<TType>): Promise<void>
 }
 
 /**
@@ -40,9 +29,9 @@ export interface ActivityLogger {
 // Auto-logged activity entries expire after 30 days. Manual logEvent entries do not get a TTL.
 const ACTIVITY_TTL_DAYS = 30;
 
-export function createActivityLogger(backend: MemoryToolBackend): ActivityLogger {
+export function createActivityLogger<TType extends string>(backend: MemoryToolBackend): ActivityLogger<TType> {
     return {
-        async log(entry: ActivityLogEntry): Promise<void> {
+        async log(entry: ActivityLogEntry<TType>): Promise<void> {
             const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
             const path = createMemoryPath(`/events/activity/${entry.type}/${timestamp}`);
             const content = entry.details

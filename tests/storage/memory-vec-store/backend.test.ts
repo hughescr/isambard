@@ -8,7 +8,7 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { VectorIndexClosedError, VectorIndexError } from '@/errors';
-import { createLayerName } from '@/storage/memory-tool/types';
+import { createLayerName, createMemoryPath } from '@/storage/memory-tool/types';
 import { VectorIndex } from '@/storage/memory-vec-store/backend';
 
 /** Create a deterministic 128-byte test vector with all bits set to given pattern byte */
@@ -133,11 +133,12 @@ describe('VectorIndex', () => {
         });
 
         it('removed entry no longer appears in query results', () => {
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
-            index.upsert({ pk: 'pk2', sk: 'sk2', layer: 'identity', contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
-            index.delete('pk1', 'sk1');
-            const results = index.query(makeVector(0xFF), 10);
-            expect(results.every(r => r.pk !== 'pk1')).toBe(true);
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#one', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#two', layer: 'identity', contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
+            index.delete('DIR#/identity', 'FILE#one');
+            expect(index.query(makeVector(0xFF), 10)).toEqual([
+                { path: createMemoryPath('/identity/two'), layer: 'identity', distance: 0 },
+            ]);
         });
 
         it('removes the row from vec_memory too (re-query returns empty)', () => {
@@ -169,66 +170,65 @@ describe('VectorIndex', () => {
             // 0xFF vector: all 1024 bits set → Hamming distance to query 0xFF = 0
             // 0x00 vector: all bits cleared → Hamming distance to query 0xFF = 1024
             // 0xAA vector: alternating bits (half set) → distance = 512
-            index.upsert({ pk: 'farthest',  sk: 'sk', layer: 'identity', contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
-            index.upsert({ pk: 'nearest',   sk: 'sk', layer: 'identity', contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
-            index.upsert({ pk: 'midpoint',  sk: 'sk', layer: 'identity', contentHash: 'h3', vector: makeVector(0xAA), updatedAt: 3000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#farthest', layer: 'identity', contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#nearest', layer: 'identity', contentHash: 'h2', vector: makeVector(0xFF), updatedAt: 2000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#midpoint', layer: 'identity', contentHash: 'h3', vector: makeVector(0xAA), updatedAt: 3000 });
 
             const results = index.query(makeVector(0xFF), 10);
             expect(results).toHaveLength(3);
             // First result must be nearest (distance 0)
-            expect(results[0].pk).toBe('nearest');
+            expect(results[0].path).toBe(createMemoryPath('/identity/nearest'));
             expect(results[0].distance).toBe(0);
             // Middle result is midpoint (distance 512)
-            expect(results[1].pk).toBe('midpoint');
+            expect(results[1].path).toBe(createMemoryPath('/identity/midpoint'));
             expect(results[1].distance).toBe(512);
             // Last result is farthest (distance 1024)
-            expect(results[2].pk).toBe('farthest');
+            expect(results[2].path).toBe(createMemoryPath('/identity/farthest'));
             expect(results[2].distance).toBe(1024);
         });
 
         it('returns at most limit results', () => {
             for(let i = 0; i < 10; i++) {
-                index.upsert({ pk: `pk${i}`, sk: 'sk', layer: 'identity', contentHash: `h${i}`, vector: makeVector(i), updatedAt: i });
+                index.upsert({ pk: 'DIR#/identity', sk: `FILE#item${i}`, layer: 'identity', contentHash: `h${i}`, vector: makeVector(i), updatedAt: i });
             }
             const results = index.query(makeVector(0xFF), 3);
             expect(results).toHaveLength(3);
         });
 
-        it('returns pk, sk, layer, distance fields in each result', () => {
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
-            const results = index.query(makeVector(0xFF), 10);
-            expect(results).toHaveLength(1);
-            const r = results[0];
-            expect(r.pk).toBe('pk1');
-            expect(r.sk).toBe('sk1');
-            expect(r.layer).toBe('identity');
-            expect(typeof r.distance).toBe('number');
+        it('returns the memory path and layer from physical keys', () => {
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#core', layer: 'identity', contentHash: 'h1', vector: makeVector(0xFF), updatedAt: 1000 });
+            expect(index.query(makeVector(0xFF), 10)).toEqual([
+                { path: createMemoryPath('/identity/core'), layer: 'identity', distance: 0 },
+            ]);
         });
 
         it('layer filter returns only matching layer', () => {
-            index.upsert({ pk: 'identity-item', sk: 'sk', layer: 'identity', contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
-            index.upsert({ pk: 'state-item',    sk: 'sk', layer: 'state',    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#item', layer: 'identity', contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/state',    sk: 'FILE#item', layer: 'state',    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
             const results = index.query(makeVector(0xAA), 10, createLayerName('identity'));
             expect(results).toHaveLength(1);
-            expect(results[0].pk).toBe('identity-item');
+            expect(results[0]).toEqual({ path: createMemoryPath('/identity/item'), layer: 'identity', distance: 0 });
         });
 
         it('returns all layers when no layer filter specified', () => {
-            index.upsert({ pk: 'identity-item', sk: 'sk', layer: 'identity', contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
-            index.upsert({ pk: 'state-item',    sk: 'sk', layer: 'state',    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#item', layer: 'identity', contentHash: 'h1', vector: makeVector(0xAA), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/state',    sk: 'FILE#item', layer: 'state',    contentHash: 'h2', vector: makeVector(0xAA), updatedAt: 2000 });
             const results = index.query(makeVector(0xAA), 10);
-            expect(results).toHaveLength(2);
+            expect(results).toEqual(expect.arrayContaining([
+                { path: createMemoryPath('/identity/item'), layer: 'identity', distance: 0 },
+                { path: createMemoryPath('/state/item'), layer: 'state', distance: 0 },
+            ]));
         });
 
         it('returns distance of 0 for identical vector', () => {
             const vec = makeVector(0xAB);
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: vec, updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#same', layer: 'identity', contentHash: 'h1', vector: vec, updatedAt: 1000 });
             const results = index.query(vec, 10);
             expect(results[0].distance).toBe(0);
         });
 
         it('returns distance 1024 for fully inverted vector (all bits differ)', () => {
-            index.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
+            index.upsert({ pk: 'DIR#/identity', sk: 'FILE#inverted', layer: 'identity', contentHash: 'h1', vector: makeVector(0x00), updatedAt: 1000 });
             const results = index.query(makeVector(0xFF), 10);
             expect(results[0].distance).toBe(1024);
         });
@@ -290,11 +290,14 @@ describe('VectorIndex', () => {
             try {
                 expect(vi.isClosed).toBe(false);
                 // Verify both tables exist via the public API (upsert + query)
-                vi.upsert({ pk: 'pk1', sk: 'sk1', layer: 'identity', contentHash: 'h', vector: makeVector(0xAA), updatedAt: 1 });
-                expect(vi.getHash('pk1', 'sk1')).toBe('h');
-                const results = vi.query(makeVector(0xAA), 5);
-                expect(results).toHaveLength(1);
-                expect(results[0].distance).toBe(0);
+                vi.upsert({ pk: 'DIR#/identity', sk: 'FILE#reopened', layer: 'identity', contentHash: 'h', vector: makeVector(0xAA), updatedAt: 1 });
+                expect(vi.getHash('DIR#/identity', 'FILE#reopened')).toBe('h');
+                vi.close();
+                const reopened = await VectorIndex.open(tmpPath);
+                expect(reopened.query(makeVector(0xAA), 5)).toEqual([
+                    { path: createMemoryPath('/identity/reopened'), layer: 'identity', distance: 0 },
+                ]);
+                reopened.close();
             } finally {
                 vi.close();
                 await Bun.file(tmpPath).delete().catch(() => undefined);

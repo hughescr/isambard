@@ -1,8 +1,7 @@
 import { logger } from '@hughescr/logger';
 import type { BskyRejectionBackend, BskyRejectionItem } from './rejection-backend';
-import type { NotifyFn } from '@/agent';
+import type { ActivityLogger, NotifyFn } from '@/agent';
 import type { ApprovalCardRef, ApprovedOutboundActionWriter } from '@/services';
-import type { ActivityLogger } from '@/storage';
 
 /**
  * An approved Bluesky reply, in the flat wire shape the executor's params schema parses

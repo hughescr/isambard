@@ -1,6 +1,7 @@
 /**
  * Types for the memory-vec-store SQLite vector index module.
  */
+import type { MemoryPath } from '../memory-tool/types.js';
 
 /**
  * Represents a single row in the vector index.
@@ -25,11 +26,9 @@ export interface VectorIndexEntry {
  */
 export interface IndexerUpsertJob {
     kind:    'upsert'
-    pk:      string
-    sk:      string
     layer:   string
-    /** Memory path, used as part of the text fed to the embedder */
-    path:    string
+    /** Sole identity, also used as part of the text fed to the embedder */
+    path:    MemoryPath
     /** Memory content, combined with path as `${path}\n${content}` */
     content: string
 }
@@ -39,8 +38,7 @@ export interface IndexerUpsertJob {
  */
 export interface IndexerDeleteJob {
     kind: 'delete'
-    pk:   string
-    sk:   string
+    path: MemoryPath
 }
 
 /**
@@ -52,8 +50,7 @@ export type IndexerJob = IndexerUpsertJob | IndexerDeleteJob;
  * KNN query result from the vector index.
  */
 export interface VectorQueryResult {
-    pk:       string
-    sk:       string
+    path:     MemoryPath
     layer:    string
     distance: number
 }

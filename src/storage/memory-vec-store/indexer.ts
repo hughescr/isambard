@@ -11,6 +11,7 @@
  * Don't crash the worker. Don't retry.
  */
 
+import { MemoryToolKeyGenerator } from '../memory-tool/key-generator.js';
 import { sha256Hex } from './hash.js';
 import type { EmbedderLike, VectorIndexEntry, IndexerJob } from './types.js';
 
@@ -90,10 +91,9 @@ export class AsyncIndexer {
         const queueLen = this.#pending;
         if(queueLen > AsyncIndexer.QUEUE_WARN_THRESHOLD && queueLen % AsyncIndexer.QUEUE_WARN_THROTTLE === 0) {
             this.#logger.warn({
-                msg: 'AsyncIndexer queue is growing large — embedder may be falling behind writes',
+                msg:  'AsyncIndexer queue is growing large — embedder may be falling behind writes',
                 queueLen,
-                pk:  job.pk,
-                sk:  job.sk,
+                path: job.path,
             });
         }
     }
@@ -129,15 +129,16 @@ export class AsyncIndexer {
      */
     async #processJob(job: IndexerJob): Promise<void> {
         try {
+            const keys = MemoryToolKeyGenerator.createKeys(job.path);
             if(job.kind === 'delete') {
-                this.#vectorIndex.delete(job.pk, job.sk);
+                this.#vectorIndex.delete(keys.PK, keys.SK);
             } else {
                 // kind === 'upsert'
                 const text = `${job.path}\n${job.content}`;
                 const contentHash = await sha256Hex(text);
 
                 // Hash-check: skip embed if content unchanged
-                const existingHash = this.#vectorIndex.getHash(job.pk, job.sk);
+                const existingHash = this.#vectorIndex.getHash(keys.PK, keys.SK);
                 if(existingHash !== contentHash) {
                     // Embed the text — returns EmbedResult with 128-byte packed binary in `data`
                     // vectorBytes is always 128; slice defensively in case encode() returns a larger buffer
@@ -147,8 +148,8 @@ export class AsyncIndexer {
                     const vector = embedResult.data.slice(0, vectorBytes);
 
                     this.#vectorIndex.upsert({
-                        pk:        job.pk,
-                        sk:        job.sk,
+                        pk:        keys.PK,
+                        sk:        keys.SK,
                         layer:     job.layer,
                         contentHash,
                         vector,
@@ -160,9 +161,8 @@ export class AsyncIndexer {
             // Log and drop — next write will re-enqueue; do not crash the worker
             const warnPayload = {
                 error,
-                pk:  job.pk,
-                sk:  job.sk,
-                msg: 'AsyncIndexer job failed: dropping and continuing',
+                path: job.path,
+                msg:  'AsyncIndexer job failed: dropping and continuing',
             };
             this.#logger.warn(warnPayload);
         }

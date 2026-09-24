@@ -6,7 +6,7 @@
  * - Unavailable when embedder not configured
  * - Successful KNN lookup and item hydration
  * - Empty query results
- * - All looked-up items deleted (pk/sk exist in vector index but not DynamoDB)
+ * - All looked-up items deleted (paths exist in vector index but not DynamoDB)
  * - Layer filter forwarded to vectorIndex.query
  * - Limit parameter used correctly
  * - Error handling (embed failure, vectorIndex.query failure, backend.get failure)
@@ -57,8 +57,8 @@ function makeItem(overrides: Partial<MemoryToolItemData> = {}): MemoryToolItemDa
 }
 
 /** Make a mock VectorQueryResult */
-function makeQueryResult(pk: string, sk: string, distance: number, layer = 'identity'): VectorQueryResult {
-    return { pk, sk, layer, distance };
+function makeQueryResult(path: string, distance: number, layer = 'identity'): VectorQueryResult {
+    return { path: createMemoryPath(path), layer, distance };
 }
 
 describe('semantic_search MCP tool', () => {
@@ -153,7 +153,7 @@ describe('semantic_search MCP tool', () => {
 
         test('returns "No semantically similar memories found" when all hydrated items are undefined (deleted)', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/identity', 'FILE#item1', 10),
+                makeQueryResult('/identity/item1', 10),
             ]);
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(undefined);
 
@@ -210,7 +210,7 @@ describe('semantic_search MCP tool', () => {
 
         test('returns formatted results with path, distance, layer, and content preview', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/identity', 'FILE#core-values', 42, 'identity'),
+                makeQueryResult('/identity/core-values', 42, 'identity'),
             ]);
             const item = makeItem({
                 path:    '/identity/core-values' as MemoryPath,
@@ -231,7 +231,7 @@ describe('semantic_search MCP tool', () => {
 
         test('truncates content preview to 200 chars and appends ellipsis', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/state', 'FILE#long-item', 10, 'state'),
+                makeQueryResult('/state/long-item', 10, 'state'),
             ]);
             const longContent = 'x'.repeat(300);
             const item = makeItem({ path: '/state/long-item' as MemoryPath, content: longContent });
@@ -250,7 +250,7 @@ describe('semantic_search MCP tool', () => {
 
         test('preview is exactly 200 chars when content exceeds 200 — not the full content', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/state', 'FILE#long-item', 10, 'state'),
+                makeQueryResult('/state/long-item', 10, 'state'),
             ]);
             // Use distinguishable characters: first 200 = 'a', rest = 'b'
             const longContent = 'a'.repeat(200) + 'b'.repeat(100);
@@ -270,7 +270,7 @@ describe('semantic_search MCP tool', () => {
 
         test('ellipsis is exactly "..." (three dots, not another string)', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/state', 'FILE#long-item', 10, 'state'),
+                makeQueryResult('/state/long-item', 10, 'state'),
             ]);
             const item = makeItem({ path: '/state/long-item' as MemoryPath, content: 'z'.repeat(300) });
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(item);
@@ -286,7 +286,7 @@ describe('semantic_search MCP tool', () => {
 
         test('does not append ellipsis when content is 200 chars or fewer', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/state', 'FILE#short-item', 5, 'state'),
+                makeQueryResult('/state/short-item', 5, 'state'),
             ]);
             const shortContent = 'y'.repeat(200);
             const item = makeItem({ path: '/state/short-item' as MemoryPath, content: shortContent });
@@ -305,7 +305,7 @@ describe('semantic_search MCP tool', () => {
 
         test('shows an empty layer verbatim rather than falling back to "unknown"', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/identity', 'FILE#item1', 7, ''),
+                makeQueryResult('/identity/item1', 7, ''),
             ]);
             const item = makeItem({ path: '/identity/item1' as MemoryPath, content: 'some content' });
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(item);
@@ -323,7 +323,7 @@ describe('semantic_search MCP tool', () => {
 
         test('an item whose content is missing at runtime surfaces as an error rather than an empty preview', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/identity', 'FILE#item1', 7, 'identity'),
+                makeQueryResult('/identity/item1', 7, 'identity'),
             ]);
             // Bypass the MemoryToolItemData['content'] string type to simulate a backend
             // that returns an item without content at runtime.
@@ -342,8 +342,8 @@ describe('semantic_search MCP tool', () => {
 
         test('multiple results are separated by a blank line', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/identity', 'FILE#item-a', 5, 'identity'),
-                makeQueryResult('DIR#/state', 'FILE#item-b', 10, 'state'),
+                makeQueryResult('/identity/item-a', 5, 'identity'),
+                makeQueryResult('/state/item-b', 10, 'state'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>)
                 .mockResolvedValueOnce(makeItem({ path: '/identity/item-a' as MemoryPath, content: 'FIRST_ITEM' }))
@@ -362,9 +362,9 @@ describe('semantic_search MCP tool', () => {
             expect(parts[1]).toContain('SECOND_ITEM');
         });
 
-        test('resolves paths from DynamoDB pk/sk via MemoryToolKeyGenerator.parsePath', async () => {
+        test('passes the returned memory path directly to backend.get', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/events/conversation', 'FILE#2025-01-01T00-00-00-000Z', 20, 'events'),
+                makeQueryResult('/events/conversation/2025-01-01T00-00-00-000Z', 20, 'events'),
             ]);
             const item = makeItem({ path: '/events/conversation/2025-01-01T00-00-00-000Z' as MemoryPath });
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(item);
@@ -380,8 +380,8 @@ describe('semantic_search MCP tool', () => {
 
         test('returns results for multiple query hits in parallel', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/identity', 'FILE#item-a', 5, 'identity'),
-                makeQueryResult('DIR#/state', 'FILE#item-b', 10, 'state'),
+                makeQueryResult('/identity/item-a', 5, 'identity'),
+                makeQueryResult('/state/item-b', 10, 'state'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>)
                 .mockResolvedValueOnce(makeItem({ path: '/identity/item-a' as MemoryPath, content: 'content A' }))
@@ -423,7 +423,7 @@ describe('semantic_search MCP tool', () => {
 
         test('returns isError=true when backend.get throws', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/identity', 'FILE#item1', 10, 'identity'),
+                makeQueryResult('/identity/item1', 10, 'identity'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB error'));
             const server = createMemoryMCPServer(mockBackend, { vectorIndex: mockVectorIndex, embedder: mockEmbedder });
@@ -459,8 +459,8 @@ describe('semantic_search MCP tool', () => {
     describe('recordAccess for /state/ results', () => {
         test('calls recordAccess with /state/ paths when results include state items', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/state', 'FILE#current-mood', 5, 'state'),
-                makeQueryResult('DIR#/identity', 'FILE#core-values', 10, 'identity'),
+                makeQueryResult('/state/current-mood', 5, 'state'),
+                makeQueryResult('/identity/core-values', 10, 'identity'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>)
                 .mockResolvedValueOnce(makeItem({ path: '/state/current-mood' as MemoryPath, content: 'feeling good' }))
@@ -481,7 +481,7 @@ describe('semantic_search MCP tool', () => {
 
         test('does NOT call recordAccess when results contain no /state/ items', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/identity', 'FILE#core-values', 10, 'identity'),
+                makeQueryResult('/identity/core-values', 10, 'identity'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(
                 makeItem({ path: '/identity/core-values' as MemoryPath, content: 'be kind' })
@@ -499,7 +499,7 @@ describe('semantic_search MCP tool', () => {
 
         test('does NOT record paths whose first segment merely starts with state', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/stateful', 'FILE#note', 10, 'identity'),
+                makeQueryResult('/stateful/note', 10, 'identity'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(
                 makeItem({ path: '/stateful/note' as MemoryPath, content: 'not state-layer data' })
@@ -529,7 +529,7 @@ describe('semantic_search MCP tool', () => {
 
         test('does NOT call recordAccess when option is absent', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/state', 'FILE#current-mood', 5, 'state'),
+                makeQueryResult('/state/current-mood', 5, 'state'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(
                 makeItem({ path: '/state/current-mood' as MemoryPath, content: 'feeling good' })
@@ -544,7 +544,7 @@ describe('semantic_search MCP tool', () => {
 
         test('logs a warning when recordAccess rejects', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/state', 'FILE#current-mood', 5, 'state'),
+                makeQueryResult('/state/current-mood', 5, 'state'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>).mockResolvedValue(
                 makeItem({ path: '/state/current-mood' as MemoryPath, content: 'feeling good' })
@@ -570,8 +570,8 @@ describe('semantic_search MCP tool', () => {
 
         test('calls recordAccess only with /state/ paths — multiple state items', async () => {
             (mockVectorIndex.query as ReturnType<typeof mock>).mockReturnValue([
-                makeQueryResult('DIR#/state', 'FILE#mood', 3, 'state'),
-                makeQueryResult('DIR#/state', 'FILE#goals', 7, 'state'),
+                makeQueryResult('/state/mood', 3, 'state'),
+                makeQueryResult('/state/goals', 7, 'state'),
             ]);
             (mockBackend.get as ReturnType<typeof mock>)
                 .mockResolvedValueOnce(makeItem({ path: '/state/mood' as MemoryPath, content: 'happy' }))

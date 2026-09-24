@@ -10,6 +10,8 @@ export {
     runTagIndexReconciliation
 } from './reconciler';
 
+export { createMemoryTagIndexReconciliationScheduler } from './factory';
+
 // Scheduler exports
 export {
     createTagIndexReconciliationScheduler,

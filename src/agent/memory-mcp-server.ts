@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { mcpTextResult } from './mcp-helpers';
-import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType, type VectorIndex, MemoryToolKeyGenerator, type EmbedderLike } from '@/storage';
+import { type MemoryToolBackend, type LayerName, type MemoryPath, createMemoryPath, createLayerName, createContentType, type VectorIndex, type EmbedderLike } from '@/storage';
 
 /**
  * Upserts a memory at the given path: updates if it exists, creates if it does not.
@@ -87,11 +87,9 @@ export function createMemoryMCPServer(
                         const layerFilter = args.layer ? createLayerName(args.layer) : undefined;
                         const queryResults = vectorIndex.query(queryVec, args.limit ?? 5, layerFilter);
 
-                        // Resolve paths from PK/SK and fetch full items in parallel
+                        // Fetch full items by their domain paths in parallel
                         const itemPromises = queryResults.map(async (r) => {
-                            const pathStr = MemoryToolKeyGenerator.parsePath(r.pk, r.sk);
-                            const memPath = createMemoryPath(pathStr);
-                            const item = await backend.get(memPath);
+                            const item = await backend.get(r.path);
                             return { r, item };
                         });
                         const resolvedItems = await Promise.all(itemPromises);

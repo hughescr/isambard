@@ -8,7 +8,7 @@ export {
     type LayerName
 } from './types';
 
-// Key generator (used by semantic search for pk/sk→path resolution)
+// Physical key generator retained for the vector backfill CLI.
 export {
     MemoryToolKeyGenerator
 } from './key-generator';
@@ -22,5 +22,6 @@ export {
 export {
     runTagIndexReconciliation,
     createTagIndexReconciliationScheduler,
+    createMemoryTagIndexReconciliationScheduler,
     type TagIndexReconciliationScheduler
 } from './reconciliation';

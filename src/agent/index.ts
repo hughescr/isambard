@@ -90,7 +90,7 @@ export { StreamTracker, type StreamProgress } from './stream-tracker';
 export { type ContinuationContext, buildContinuationNote } from './continuation-prompt-builder';
 
 // Activity Logger
-export { createActivityLogger, type ActivityLogger } from '@/storage';
+export { createActivityLogger, type ActivityLogger, type AppActivityLogger, type ActivityType } from './activity-types';
 
 // History Providers
 export type { HistoryEntry, HistoryFetchParams, KnownPlatform, PlatformHistoryProvider } from './history-providers';

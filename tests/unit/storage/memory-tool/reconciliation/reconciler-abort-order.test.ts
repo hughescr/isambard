@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import {
     runTagIndexReconciliation,
     type ReconcilerDeps,
@@ -94,7 +93,7 @@ function launchAbortScenario(
             deleteTagIndexItems:  unreachable,
             refreshTagIndexItems: unreachable,
             listTagCounts:        unreachable,
-        } as unknown as MemoryToolBackendTagIndex,
+        },
         getMemory:            async (_path: MemoryPath): Promise<MemoryToolItemData | undefined> => undefined,
         updateMemoryMetadata: unreachable,
     };

@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { createActivityLogger, type ActivityLogEntry, type ActivityType } from '../../../src/storage/activity-log';
+import type { ActivityType } from '../../../src/agent/activity-types';
+import { createActivityLogger, type ActivityLogEntry } from '../../../src/storage/activity-log';
 import type { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import type { MemoryPath, MemoryToolItemData } from '../../../src/storage/memory-tool/types';
 
@@ -30,15 +31,21 @@ describe.concurrent('createActivityLogger', () => {
     });
 
     test('should create logger with log method', () => {
-        const logger = createActivityLogger(mockBackend);
+        const logger = createActivityLogger<ActivityType>(mockBackend);
         expect(logger).toBeDefined();
         expect(typeof logger.log).toBe('function');
+    });
+
+    test('agent vocabulary rejects an unknown activity type at compile time', () => {
+        // @ts-expect-error -- consumers cannot log a string outside the agent vocabulary
+        const invalid: ActivityLogEntry<ActivityType> = { type: 'other', summary: 'unknown' };
+        expect(String(invalid.type)).toBe('other');
     });
 
     describe('path generation', () => {
         test('should call backend.create with path /events/activity/{type}/{timestamp}', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'email-sent', summary: 'Sent an email' };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'email-sent', summary: 'Sent an email' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -48,7 +55,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should include ISO timestamp with colons/dots replaced by dashes', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'bsky-post-sent', summary: 'Posted to Bluesky' };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'bsky-post-sent', summary: 'Posted to Bluesky' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -76,7 +83,7 @@ describe.concurrent('createActivityLogger', () => {
             'catchup-complete',
         ] satisfies ActivityType[])('should use activity type %s in path', async (activityType) => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: activityType, summary: 'Test' };
+            const entry: ActivityLogEntry<ActivityType> = { type: activityType, summary: 'Test' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -88,7 +95,7 @@ describe.concurrent('createActivityLogger', () => {
     describe('content formatting', () => {
         test('should format content as "[auto] summary" when no details', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'email-sent', summary: 'Sent an email' };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'email-sent', summary: 'Sent an email' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -98,7 +105,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test(String.raw`should format content as "[auto] summary\n\ndetails" when details provided`, async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = {
+            const entry: ActivityLogEntry<ActivityType> = {
                 type:    'discord-exchange',
                 summary: 'Chatted with Craig',
                 details: 'Discussed project roadmap',
@@ -112,7 +119,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should use text/plain contentType', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'perch-start', summary: 'Perch slot started' };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'perch-start', summary: 'Perch slot started' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -124,7 +131,7 @@ describe.concurrent('createActivityLogger', () => {
     describe('tags', () => {
         test('should always include auto-logged and activity type tags', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'bsky-dm-sent', summary: 'Sent a DM' };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'bsky-dm-sent', summary: 'Sent a DM' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -136,7 +143,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should include extra tags from entry.tags', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = {
+            const entry: ActivityLogEntry<ActivityType> = {
                 type:    'email-sent',
                 summary: 'Sent to Alice',
                 tags:    ['alice', 'important'],
@@ -153,7 +160,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should not duplicate auto-logged tag if already in entry.tags', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = {
+            const entry: ActivityLogEntry<ActivityType> = {
                 type:    'perch-end',
                 summary: 'Perch ended',
                 tags:    ['auto-logged'],
@@ -169,7 +176,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should not duplicate type tag if already in entry.tags', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = {
+            const entry: ActivityLogEntry<ActivityType> = {
                 type:    'catchup-complete',
                 summary: 'Catchup done',
                 tags:    ['catchup-complete'],
@@ -184,7 +191,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should produce exactly {auto-logged, type} tags when entry.tags is undefined', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'perch-end', summary: 'Perch slot completed' };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'perch-end', summary: 'Perch slot completed' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -195,7 +202,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should produce exactly {auto-logged, type} tags when entry.tags is empty array', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'perch-start', summary: 'Perch slot started', tags: [] };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'perch-start', summary: 'Perch slot started', tags: [] };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];
@@ -232,7 +239,7 @@ describe.concurrent('createActivityLogger', () => {
                 throw error;
             });
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'email-sent', summary: 'Test' };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'email-sent', summary: 'Test' };
 
             await expect(logger.log(entry)).rejects.toThrow('DynamoDB failure');
         });
@@ -241,7 +248,7 @@ describe.concurrent('createActivityLogger', () => {
     describe('metadata passthrough', () => {
         test('should pass metadata from entry to backend.create()', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = {
+            const entry: ActivityLogEntry<ActivityType> = {
                 type:     'email-rejected',
                 summary:  'Email rejected',
                 metadata: { reason: 'spam', recipientCount: 3 },
@@ -255,7 +262,7 @@ describe.concurrent('createActivityLogger', () => {
 
         test('should omit metadata key when entry.metadata is undefined', async () => {
             const logger = createActivityLogger(mockBackend);
-            const entry: ActivityLogEntry = { type: 'catchup-start', summary: 'Started catchup' };
+            const entry: ActivityLogEntry<ActivityType> = { type: 'catchup-start', summary: 'Started catchup' };
             await logger.log(entry);
 
             const createCall = (mockBackend.create as ReturnType<typeof mock>).mock.calls[0];

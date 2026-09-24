@@ -1,11 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest, type Mock } from 'bun:test';
 import type { Logger } from '@hughescr/logger';
 import { FakeClock } from '../../../helpers/fake-clock';
+import type { ActivityLogger } from '@/agent/activity-types';
 import { createPerchDriver, type PerchDriverDeps, type PerchSlotHooks } from '@/agent/perch/perch-driver';
 import type { PerchConfig } from '@/agent/perch/types';
 import type { Conductor, ConductorStatus, Envelope, SubmitOptions, TurnResult } from '@/agent/session';
 import { createChannelId } from '@/agent/types';
-import type { ActivityLogger } from '@/storage';
 
 /** Flushes enough microtask ticks for a promise chain (e.g. an awaited contextBuilder call) to settle. */
 async function flush(): Promise<void> {

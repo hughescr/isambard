@@ -169,7 +169,7 @@ Follow the patterns in `src/agent/bsky-mcp-server.ts` or `src/agent/email-mcp-se
 
 When your platform client performs an action (send, reject, etc.), log it via the activity logger.
 
-First, add `ActivityType` values for your platform in `src/storage/activity-log.ts`:
+First, add `ActivityType` values for your platform in `src/agent/activity-types.ts` (storage's activity logger is generic; the agent owns the action vocabulary):
 
 ```typescript
 export type ActivityType
@@ -255,7 +255,7 @@ Export only what other modules need. Run `bun dead-code` (knip) to verify no unu
 - [ ] `src/integrations/{platform}/index.ts` — barrel exports (public API only)
 - [ ] `src/storage/contacts/types.ts` — add platform to `platformTypeSchema`
 - [ ] `src/agent/{platform}-mcp-server.ts` — MCP tools (if platform supports interactive ops)
-- [ ] `src/storage/activity-log.ts` — add `ActivityType` values for platform actions
+- [ ] `src/agent/activity-types.ts` — add `ActivityType` values for platform actions
 - [ ] Activity logger calls wired at action sites (fire-and-forget)
 - [ ] `src/app/mcp-servers.ts` — register MCP server
 - [ ] `src/index.ts` / `src/app/*.ts` — instantiate client, register history provider

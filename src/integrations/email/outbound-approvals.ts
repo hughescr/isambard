@@ -2,10 +2,9 @@ import { logger } from '@hughescr/logger';
 import { chain } from 'lodash-es';
 import { markDraftReviewState } from './draft-review-state';
 import type { WildDuckClient } from './wildduck-client';
-import type { NotifyFn } from '@/agent';
+import type { ActivityLogger, NotifyFn } from '@/agent';
 import { EmailFolder } from '@/config';
 import type { ApprovalCardRef, ApprovedOutboundActionWriter } from '@/services';
-import type { ActivityLogger } from '@/storage';
 
 /** Which admin control approved the send; only the activity-log failure text differs. */
 export type EmailApprovalRoute = 'direct' | 'allowlist';

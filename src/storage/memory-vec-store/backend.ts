@@ -25,7 +25,8 @@
 import { Database } from 'bun:sqlite';
 import { existsSync } from 'node:fs';
 import * as sqliteVec from 'sqlite-vec';
-import type { LayerName } from '../memory-tool/types.js';
+import { MemoryToolKeyGenerator } from '../memory-tool/key-generator.js';
+import { createMemoryPath, type LayerName } from '../memory-tool/types.js';
 import { runSchemaMigration } from './schema.js';
 import type { VectorIndexEntry, VectorQueryResult } from './types.js';
 import { VectorIndexClosedError, VectorIndexError, VectorIndexUnavailableError } from '@/errors';
@@ -383,7 +384,7 @@ export class VectorIndex {
             );
         }
 
-        return layer === undefined
+        const rows = layer === undefined
             ? this.#db
                 .query<KnnRow, [Uint8Array, number]>(
                     `SELECT m.pk, m.sk, m.layer, v.distance
@@ -403,6 +404,11 @@ export class VectorIndex {
                      ORDER BY v.distance`
                 )
                 .all(queryVector, limit, layer);
+        return rows.map(row => ({
+            path:     createMemoryPath(MemoryToolKeyGenerator.parsePath(row.pk, row.sk)),
+            layer:    row.layer,
+            distance: row.distance,
+        }));
     }
 
     /**

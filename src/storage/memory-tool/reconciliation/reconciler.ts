@@ -10,7 +10,6 @@
 import { type DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
-import type { MemoryToolBackendTagIndex } from '../backend-tag-index';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
 import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexReadItem, createMemoryPath, extractLayerFromPath, type LayerName, layerNameSchema  } from '../types';
 import type { PhaseAProgress, PhaseBProgress, PhaseCProgress, ReconciliationResult } from './types';
@@ -19,13 +18,21 @@ import type { PhaseAProgress, PhaseBProgress, PhaseCProgress, ReconciliationResu
 // Dependencies & Options
 // ============================================================================
 
+/** Operations reconciliation needs, independent of the concrete tag-index backend. */
+export interface TagIndexReconciliationOps {
+    createTagIndexItems:  (path: MemoryPath, tags: Set<string>, updatedAt: string, contentPreview: string, layer: string) => Promise<void>
+    refreshTagIndexItems: (path: MemoryPath, tags: Set<string>, updatedAt: string, contentPreview: string, layer: string) => Promise<void>
+    deleteTagIndexItems:  (path: MemoryPath, tags: Set<string>) => Promise<void>
+    listTagCounts:        () => Promise<{ tag: string, count: number }[]>
+}
+
 /**
  * Dependencies interface for testability
  */
 export interface ReconcilerDeps {
     docClient:            DynamoDBDocumentClient | DynamoDBClientHolder
     tableName:            string
-    tagIndex:             MemoryToolBackendTagIndex
+    tagIndex:             TagIndexReconciliationOps
     getMemory:            (path: MemoryPath) => Promise<MemoryToolItemData | undefined>
     updateMemoryMetadata: (path: MemoryPath, input: { metadata: Record<string, unknown> }) => Promise<MemoryToolItemData>
 }

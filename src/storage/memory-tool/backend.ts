@@ -6,7 +6,8 @@ import { DynamoTableAccess } from '../repositories/base';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
 import { MemoryToolBackendQuery, type ListOptions, type ListResult, type ScoredMemoryItem } from './backend-query';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
-import { MemoryToolKeyGenerator, normalizeTags, generateContentPreview } from './key-generator';
+import { normalizeTags, generateContentPreview } from './key-generator';
+import type { TagIndexReconciliationOps } from './reconciliation/reconciler';
 import {
     type MemoryPath,
     type MemoryToolItemData,
@@ -14,6 +15,9 @@ import {
     type TagIndexReadItem,
     extractLayerFromPath
 } from './types';
+
+/** Module-only key for binding reconciliation without exposing named facade methods. */
+export const reconciliationAccess = Symbol('memory-tool-reconciliation-access');
 
 /**
  * Minimal interface for the async indexer dependency.
@@ -105,11 +109,10 @@ export class MemoryToolBackend extends DynamoTableAccess {
         }
 
         // Enqueue vector index upsert job (fire-and-forget)
-        const keys = MemoryToolKeyGenerator.createKeys(result.path);
         const indexLayer = extractLayerFromPath(result.path);
         const indexLayerStr = indexLayer ?? 'unknown';
         // Stryker disable next-line llm: coreOps.create returns memoryToolItemSchema.parse(input), and memoryPathSchema only refines (no transform), so result.path === input.path and layerStr === indexLayerStr
-        this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: indexLayerStr, path: result.path, content: result.content });
+        this.enqueueIndex({ kind: 'upsert', layer: indexLayerStr, path: result.path, content: result.content });
 
         // Stryker disable next-line llm: coreOps.create returns memoryToolItemSchema.parse(input), and memoryPathSchema only refines (no transform), so result.path === input.path and layerStr === indexLayerStr
         if(indexLayerStr === 'identity') {
@@ -156,8 +159,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
             }
 
             // Enqueue vector index upsert job (fire-and-forget)
-            const keys = MemoryToolKeyGenerator.createKeys(path);
-            this.enqueueIndex({ kind: 'upsert', pk: keys.PK, sk: keys.SK, layer: layerStr, path, content: result.content });
+            this.enqueueIndex({ kind: 'upsert', layer: layerStr, path, content: result.content });
 
             // Metadata-only updates (content === undefined && tags === undefined) intentionally
             // skip this callback because metadata fields are not part of the rendered identity
@@ -187,8 +189,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
         }
 
         // Enqueue vector index delete job (fire-and-forget)
-        const keys = MemoryToolKeyGenerator.createKeys(path);
-        this.enqueueIndex({ kind: 'delete', pk: keys.PK, sk: keys.SK });
+        this.enqueueIndex({ kind: 'delete', path });
 
         // Stryker disable next-line llm: extractLayerFromPath returns a LayerName string or null; string.toString() is the same primitive and null?.toString() is undefined, so both compare identically to 'identity'
         if(extractLayerFromPath(path)?.toString() === 'identity') {
@@ -245,6 +246,16 @@ export class MemoryToolBackend extends DynamoTableAccess {
         options?: { maxItems?: number, now?: Date }
     ): Promise<ScoredMemoryItem[]> {
         return this.queryOps.getStateItemsScored(options);
+    }
+
+    [reconciliationAccess](): {
+        tagIndex:             TagIndexReconciliationOps
+        updateMemoryMetadata: (path: MemoryPath, input: { metadata: Record<string, unknown> }) => Promise<MemoryToolItemData>
+    } {
+        return {
+            tagIndex:             this.tagIndexOps,
+            updateMemoryMetadata: (path, input) => this.coreOps.update(path, { ...input, preserveUpdatedAt: true }),
+        };
     }
 
     /**

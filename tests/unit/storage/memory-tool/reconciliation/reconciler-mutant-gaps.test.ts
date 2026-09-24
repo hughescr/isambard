@@ -1,6 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { type DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import type { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { runTagIndexReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryPath, MemoryToolItem, MemoryToolItemData } from '@/storage/memory-tool/types';
 
@@ -44,7 +43,7 @@ function makeDeps(
             refreshTagIndexItems: empty,
             deleteTagIndexItems:  empty,
             listTagCounts:        mock(async () => []),
-        } as unknown as MemoryToolBackendTagIndex,
+        },
         getMemory:            mock(async (_path: MemoryPath): Promise<MemoryToolItemData | undefined> => undefined),
         updateMemoryMetadata: mock(async (): Promise<MemoryToolItemData> => memoryItem),
         ...overrides,
@@ -142,7 +141,7 @@ describe('reconciler public progress and producer contracts', () => {
             tagIndex: {
                 createTagIndexItems: mock(async () => {}), refreshTagIndexItems,
                 deleteTagIndexItems: mock(async () => {}), listTagCounts:       mock(async () => []),
-            } as unknown as MemoryToolBackendTagIndex,
+            },
         });
 
         let completed = false;
@@ -184,7 +183,7 @@ describe('reconciler public progress and producer contracts', () => {
             tagIndex:  {
                 createTagIndexItems:  mock(async () => {}), refreshTagIndexItems: mock(async () => {}),
                 deleteTagIndexItems, listTagCounts:        mock(async () => []),
-            } as unknown as MemoryToolBackendTagIndex,
+            },
         });
 
         let completed = false;
@@ -264,7 +263,7 @@ describe('reconciler public progress and producer contracts', () => {
             tagIndex: {
                 createTagIndexItems:  mock(async () => {}), refreshTagIndexItems: mock(async () => {}),
                 deleteTagIndexItems:  mock(async () => {}), listTagCounts:        mock(async () => [{ tag: 'alpha', count: 2 }]),
-            } as unknown as MemoryToolBackendTagIndex,
+            },
         });
 
         const result = await runTagIndexReconciliation(deps, options);

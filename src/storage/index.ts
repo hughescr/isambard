@@ -33,7 +33,7 @@ export * from './contacts';
 export { PersonAllowlist, type PersonAllowlistEntry } from './person-allowlist';
 
 // Activity Logger
-export { createActivityLogger, type ActivityLogger, type ActivityLogEntry, type ActivityType } from './activity-log';
+export { createActivityLogger, type ActivityLogger, type ActivityLogEntry } from './activity-log';
 
 // Memory-Vec embedding library
 export {

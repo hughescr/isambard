@@ -276,6 +276,7 @@ src/
 │   │   ├── host-guard.ts            # URL allowlist/host guard for browser navigation
 │   │   ├── webview-adapter.ts       # BrowserAdapter implementation over Bun.WebView
 │   │   └── index.ts                 # Public exports
+│   ├── activity-types.ts               # Agent-owned ActivityType vocabulary and typed activity logger
 │   ├── types.ts                        # Platform-agnostic message types (MessageContext, PlatformImage)
 │   ├── context-builder.ts              # Memory context loading and user message prefix assembly
 │   ├── continuation-prompt-builder.ts  # Continuation note built when human-wait escalation interrupts a running turn
@@ -464,7 +465,7 @@ src/
 │   ├── client-holder.ts             # Swappable DynamoDB client holder for reconnect
 │   ├── dynamo-retry.ts              # Retry/timeout logic for DynamoDB operations; module-level health notifier (the one DI exception, installed/cleared by src/index.ts)
 │   ├── dynamo-probe-callback.ts     # Self-contained event-sender interface for the DynamoDB startup probe
-│   ├── activity-log.ts              # ActivityLogger and ActivityType values for cross-platform auto-logging
+│   ├── activity-log.ts              # Generic ActivityLogger persistence for cross-platform auto-logging
 │   ├── person-allowlist.ts          # Person-ID-keyed allowlist gating outbound writes
 │   ├── repositories/                # Shared DynamoDB access primitives
 │   │   ├── base.ts                  # DynamoTableAccess: abstract base wrapping common get/put/query/scan primitives

@@ -564,19 +564,23 @@ describe('Vector feature wiring', () => {
             });
             const afterCreate = [...enqueuedJobs];
             expect(afterCreate).toHaveLength(1);
-            expect(afterCreate[0].kind).toBe('upsert');
+            expect(afterCreate[0]).toEqual({
+                kind: 'upsert', path: '/state/test-item' as MemoryPath, layer: 'state', content: 'original content',
+            });
 
             // 2. update → should enqueue another 'upsert' job
             await backend.update('/state/test-item' as MemoryPath, { content: 'updated content' });
             const afterUpdate = [...enqueuedJobs];
             expect(afterUpdate).toHaveLength(2);
-            expect(afterUpdate[1].kind).toBe('upsert');
+            expect(afterUpdate[1]).toEqual({
+                kind: 'upsert', path: '/state/test-item' as MemoryPath, layer: 'state', content: 'updated content',
+            });
 
             // 3. delete → should enqueue a 'delete' job
             await backend.delete('/state/test-item' as MemoryPath);
             const afterDelete = [...enqueuedJobs];
             expect(afterDelete).toHaveLength(3);
-            expect(afterDelete[2].kind).toBe('delete');
+            expect(afterDelete[2]).toEqual({ kind: 'delete', path: '/state/test-item' as MemoryPath });
         });
     });
 });
