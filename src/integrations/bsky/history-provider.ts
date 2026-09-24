@@ -26,10 +26,7 @@ interface WindowAppendResult {
     skippedMatching: boolean
 }
 
-interface ConversationSearch {
-    conversation?: BskyConversation
-    truncated:     boolean
-}
+type ConversationSearch = { conversation: BskyConversation } | { conversation?: undefined, truncated: boolean };
 
 /**
  * Bluesky history provider for the cross-platform history system.
@@ -99,8 +96,8 @@ export class BskyHistoryProvider implements PlatformHistoryProvider {
         return this.fetchWindowedPages(
             async (cursor) => {
                 const response = cursor === undefined
-                    ? await this.bskyClient.getMessages(search.conversation!.id, maxMessages)
-                    : await this.bskyClient.getMessages(search.conversation!.id, maxMessages, cursor);
+                    ? await this.bskyClient.getMessages(search.conversation.id, maxMessages)
+                    : await this.bskyClient.getMessages(search.conversation.id, maxMessages, cursor);
                 return { items: response.messages, cursor: response.cursor };
             },
             message => message.sentAt,
@@ -127,7 +124,7 @@ export class BskyHistoryProvider implements PlatformHistoryProvider {
                 item => item.members.some(member => member.did === participantDid)
             );
             if(conversation) {
-                return { conversation, truncated: false };
+                return { conversation };
             }
             if(response.cursor === undefined) {
                 return { truncated: false };
