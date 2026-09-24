@@ -111,6 +111,121 @@ describe('runSchemaMigration', () => {
         }).not.toThrow();
     });
 
+    describe('ttl column (#129)', () => {
+        const PRE_129_DDL = `
+            CREATE TABLE memory_vectors (
+                rowid      INTEGER PRIMARY KEY,
+                pk         TEXT    NOT NULL,
+                sk         TEXT    NOT NULL,
+                layer      TEXT    NOT NULL,
+                content_hash TEXT  NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(pk, sk)
+            )
+        `;
+
+        function ttlColumn() {
+            return db.query<{ name: string, type: string, notnull: number }, []>('PRAGMA table_info(memory_vectors)')
+                .all()
+                .filter(c => c.name === 'ttl')
+                .map(c => ({ name: c.name, type: c.type, notnull: c.notnull }));
+        }
+
+        function ttlIndexSql() {
+            return db.query<{ sql: string }, []>(`SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_memory_vectors_ttl'`).get()?.sql;
+        }
+
+        it('a fresh database gets a nullable INTEGER ttl column and the partial ttl index', () => {
+            runSchemaMigration(db);
+            expect(ttlColumn()).toEqual([{ name: 'ttl', type: 'INTEGER', notnull: 0 }]);
+            expect(ttlIndexSql()?.replaceAll(/\s+/g, ' ').trim()).toBe('CREATE INDEX idx_memory_vectors_ttl ON memory_vectors(ttl) WHERE ttl IS NOT NULL');
+        });
+
+        it('adds ttl to a pre-#129 table, keeping every row with a NULL ttl', () => {
+            db.run(PRE_129_DDL);
+            db.run('INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at) VALUES (?, ?, ?, ?, ?)', ['DIR#/events', 'FILE#a', 'events', 'h1', 1]);
+            db.run('INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at) VALUES (?, ?, ?, ?, ?)', ['DIR#/state', 'FILE#b', 'state', 'h2', 2]);
+
+            runSchemaMigration(db);
+
+            expect(ttlColumn()).toEqual([{ name: 'ttl', type: 'INTEGER', notnull: 0 }]);
+            expect(db.query('SELECT pk, sk, content_hash, ttl FROM memory_vectors ORDER BY rowid').all()).toEqual([
+                { pk: 'DIR#/events', sk: 'FILE#a', content_hash: 'h1', ttl: null },
+                { pk: 'DIR#/state', sk: 'FILE#b', content_hash: 'h2', ttl: null },
+            ]);
+            expect(ttlIndexSql()).toBeDefined();
+        });
+
+        it('a second run on a migrated table neither re-adds the column nor throws', () => {
+            db.run(PRE_129_DDL);
+            runSchemaMigration(db);
+            db.run('INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at, ttl) VALUES (?, ?, ?, ?, ?, ?)', ['p', 's', 'events', 'h', 1, 42]);
+            expect(() => runSchemaMigration(db)).not.toThrow();
+            expect(ttlColumn()).toHaveLength(1);
+            expect(db.query('SELECT ttl FROM memory_vectors').all()).toEqual([{ ttl: 42 }]);
+        });
+
+        function addedColumns() {
+            return db.query<{ name: string, type: string, notnull: number }, []>('PRAGMA table_info(memory_vectors)')
+                .all()
+                .filter(c => c.name === 'ttl' || c.name === 'source_updated_at')
+                .map(c => ({ name: c.name, type: c.type, notnull: c.notnull }));
+        }
+
+        it('a fresh database also gets a nullable INTEGER source_updated_at column after ttl', () => {
+            runSchemaMigration(db);
+            expect(addedColumns()).toEqual([
+                { name: 'ttl', type: 'INTEGER', notnull: 0 },
+                { name: 'source_updated_at', type: 'INTEGER', notnull: 0 },
+            ]);
+        });
+
+        it('adds both columns to a pre-#129 table, every existing row reading NULL', () => {
+            db.run(PRE_129_DDL);
+            db.run('INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at) VALUES (?, ?, ?, ?, ?)', ['DIR#/events', 'FILE#a', 'events', 'h1', 1]);
+            runSchemaMigration(db);
+            expect(addedColumns()).toEqual([
+                { name: 'ttl', type: 'INTEGER', notnull: 0 },
+                { name: 'source_updated_at', type: 'INTEGER', notnull: 0 },
+            ]);
+            expect(db.query('SELECT ttl, source_updated_at FROM memory_vectors').all()).toEqual([{ ttl: null, source_updated_at: null }]);
+        });
+
+        it('adds only source_updated_at to a table that already has ttl, keeping its ttl values', () => {
+            db.run(PRE_129_DDL);
+            db.run('ALTER TABLE memory_vectors ADD COLUMN ttl INTEGER');
+            db.run('INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at, ttl) VALUES (?, ?, ?, ?, ?, ?)', ['p', 's', 'events', 'h', 1, 42]);
+            runSchemaMigration(db);
+            expect(addedColumns()).toEqual([
+                { name: 'ttl', type: 'INTEGER', notnull: 0 },
+                { name: 'source_updated_at', type: 'INTEGER', notnull: 0 },
+            ]);
+            expect(db.query('SELECT ttl, source_updated_at FROM memory_vectors').all()).toEqual([{ ttl: 42, source_updated_at: null }]);
+        });
+
+        it('a second run on a fully migrated table adds nothing and keeps both columns\' values', () => {
+            db.run(PRE_129_DDL);
+            runSchemaMigration(db);
+            db.run('INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at, ttl, source_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', ['p', 's', 'events', 'h', 1, 42, 7]);
+            expect(() => runSchemaMigration(db)).not.toThrow();
+            expect(db.query<{ name: string }, []>('PRAGMA table_info(memory_vectors)').all().map(c => c.name)).toEqual([
+                'rowid', 'pk', 'sk', 'layer', 'content_hash', 'updated_at', 'ttl', 'source_updated_at',
+            ]);
+            expect(db.query('SELECT ttl, source_updated_at FROM memory_vectors').all()).toEqual([{ ttl: 42, source_updated_at: 7 }]);
+        });
+
+        it('leaves the legacy-schema guard first: a legacy table is refused before any ALTER', () => {
+            db.run(`
+                CREATE TABLE memory_vectors (
+                    rowid INTEGER PRIMARY KEY, pk TEXT NOT NULL, sk TEXT NOT NULL, layer TEXT NOT NULL,
+                    content_hash TEXT NOT NULL, updated_at INTEGER NOT NULL, embedding BLOB NOT NULL, UNIQUE(pk, sk)
+                )
+            `);
+            expect(() => runSchemaMigration(db)).toThrow(VectorIndexUnavailableError);
+            expect(ttlColumn()).toEqual([]);
+        });
+    });
+
     describe('legacy schema migration guard', () => {
         it('throws VectorIndexUnavailableError when memory_vectors has an embedding column', () => {
             // Manually create the old schema (with embedding column)

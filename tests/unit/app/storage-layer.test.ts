@@ -462,6 +462,11 @@ describe('createStorageLayer', () => {
                 tableName: 'TestTable',
             }),
             spyOn(staticVecStoreModule.VectorIndex, 'open').mockResolvedValue({ close: vectorClose } as unknown as typeof staticVecStoreModule.VectorIndex.prototype),
+            spyOn(staticVecStoreModule, 'createVectorPruneScheduler').mockReturnValue({
+                start:   mock(() => {}),
+                stop:    mock(() => { cleanupOrder.push('prune'); }),
+                runOnce: mock(() => {}),
+            }),
             // @ts-expect-error - Deliberately failing backend constructor
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => { throw constructionError; })
         );
@@ -469,7 +474,7 @@ describe('createStorageLayer', () => {
         await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
             enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
         }, embedder, undefined, onIndexerEmbedderCloseAttempt)).rejects.toBe(constructionError);
-        expect(cleanupOrder).toEqual(['transfer', 'embedder', 'vector', 'holder']);
+        expect(cleanupOrder).toEqual(['prune', 'transfer', 'embedder', 'vector', 'holder']);
         expect(embedder.close).toHaveBeenCalledTimes(1);
         expect(onIndexerEmbedderCloseAttempt).toHaveBeenCalledTimes(1);
     });
@@ -523,6 +528,7 @@ describe('createStorageLayer', () => {
 
         expect(result.vectorIndex).toBeUndefined();
         expect(result.asyncIndexer).toBeUndefined();
+        expect(result.vectorPruneScheduler).toBeUndefined();
     });
 
     test('should NOT create vector index when vectorIndexConfig.enabled is false', async () => {
@@ -551,6 +557,7 @@ describe('createStorageLayer', () => {
 
         expect(result.vectorIndex).toBeUndefined();
         expect(result.asyncIndexer).toBeUndefined();
+        expect(result.vectorPruneScheduler).toBeUndefined();
     });
 
     test('should NOT create vector index when embedder is undefined even if vectorIndexConfig.enabled is true', async () => {
@@ -579,6 +586,7 @@ describe('createStorageLayer', () => {
 
         expect(result.vectorIndex).toBeUndefined();
         expect(result.asyncIndexer).toBeUndefined();
+        expect(result.vectorPruneScheduler).toBeUndefined();
     });
 
     test('should create vector index and asyncIndexer when vectorIndexConfig.enabled and embedder provided', async () => {
@@ -599,12 +607,13 @@ describe('createStorageLayer', () => {
 
         // Mock VectorIndex.open to avoid real SQLite file creation
         const mockVectorIndex = {
-            isClosed: false,
-            close:    mock(() => {}),
-            getHash:  mock((): string | undefined => undefined),
-            upsert:   mock(() => {}),
-            'delete': mock(() => {}),
-            query:    mock(() => []),
+            isClosed:     false,
+            close:        mock(() => {}),
+            getHash:      mock((): string | undefined => undefined),
+            upsert:       mock(() => {}),
+            'delete':     mock(() => {}),
+            query:        mock(() => []),
+            pruneExpired: mock(() => 0),
         };
         const VectorIndexOpenSpy = spyOn(staticVecStoreModule.VectorIndex, 'open').mockResolvedValue(mockVectorIndex as unknown as typeof staticVecStoreModule.VectorIndex.prototype);
         spies.push(VectorIndexOpenSpy);
@@ -625,6 +634,11 @@ describe('createStorageLayer', () => {
         expect(VectorIndexOpenSpy).toHaveBeenCalledWith('memory-vec.sqlite');
         expect(result.vectorIndex).toBeDefined();
         expect(result.asyncIndexer).toBeDefined();
+        // The prune scheduler is built over the opened index but not started (app.start() does that)
+        expect(result.vectorPruneScheduler).toBeDefined();
+        expect(mockVectorIndex.pruneExpired).not.toHaveBeenCalled();
+        result.vectorPruneScheduler!.runOnce();
+        expect(mockVectorIndex.pruneExpired).toHaveBeenCalledTimes(1);
         expect(mockLogger.info).toHaveBeenCalledWith('Vector index initialized at memory-vec.sqlite');
         expect(mockEmbedder.close).not.toHaveBeenCalled();
         await result.asyncIndexer?.close();

@@ -64,6 +64,10 @@ export {
 export {
     VectorIndex,
     AsyncIndexer,
+    createVectorPruneScheduler,
+    type VectorPruneScheduler,
+    type VectorRowSnapshot,
+    type VectorTtlUpdate,
     PACKED_EMBEDDING_BYTES,
     encodeOne,
     VectorIndexError,

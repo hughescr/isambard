@@ -13,6 +13,7 @@ import { mockLogger } from '../../../setup';
 import { ItemNotFoundError, ValidationError } from '@/errors/storage';
 import { MemoryToolBackend, reconciliationAccess } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
+import { createEpochSeconds } from '@/storage/repositories/types';
 
 describe('MemoryToolBackend', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -996,6 +997,12 @@ describe('MemoryToolBackend', () => {
             );
         }
 
+        /** The source version the index should carry: epoch ms of the updatedAt the item PutItem persisted. */
+        function putVersion(): number {
+            const item = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as { updatedAt: string };
+            return Date.parse(item.updatedAt);
+        }
+
         describe('create', () => {
             test('indexes a non-cognitive path under its first namespace', async () => {
                 ddbMock.on(PutCommand).resolves({});
@@ -1025,10 +1032,11 @@ describe('MemoryToolBackend', () => {
                 });
 
                 expect(enqueueMock).toHaveBeenCalledWith({
-                    kind:    'upsert',
-                    layer:   'users',
-                    path:    '/users/alice/name',
-                    content: 'Alice',
+                    kind:            'upsert',
+                    layer:           'users',
+                    path:            '/users/alice/name',
+                    content:         'Alice',
+                    sourceUpdatedAt: putVersion(),
                 });
             });
 
@@ -1042,8 +1050,10 @@ describe('MemoryToolBackend', () => {
                 });
                 expect(enqueueMock).toHaveBeenCalledTimes(1);
                 expect(enqueueMock.mock.calls[0][0]).toEqual({
-                    kind: 'upsert', path: '/identity/foo', content: 'hello world', layer: 'identity',
+                    kind: 'upsert', path: '/identity/foo', content: 'hello world', layer: 'identity', sourceUpdatedAt: putVersion(),
                 });
+                // The persisted updatedAt is a real ISO timestamp, so the version is a finite epoch-ms number.
+                expect(Number.isFinite(putVersion())).toBe(true);
             });
 
             test('does not call indexer.enqueue when no indexer is provided', async () => {
@@ -1099,8 +1109,10 @@ describe('MemoryToolBackend', () => {
                 await backendWithIndexer.update('/identity/foo' as MemoryPath, { content: 'new content' });
                 expect(enqueueMock).toHaveBeenCalledTimes(1);
                 expect(enqueueMock.mock.calls[0][0]).toEqual({
-                    kind: 'upsert', path: '/identity/foo', layer: 'identity', content: 'new content',
+                    kind: 'upsert', path: '/identity/foo', layer: 'identity', content: 'new content', sourceUpdatedAt: putVersion(),
                 });
+                // The update's fresh updatedAt, not the stored item's 2024 one.
+                expect(putVersion()).toBeGreaterThan(Date.parse(existingItemForUpdate.updatedAt));
             });
 
             test('does not propagate indexer.enqueue error on update', async () => {
@@ -1112,6 +1124,85 @@ describe('MemoryToolBackend', () => {
                 const backendWithIndexer = makeBackendWithIndexer();
                 const updatePromise = backendWithIndexer.update('/identity/foo' as MemoryPath, { content: 'new content' });
                 await expect(updatePromise).resolves.toBeDefined();
+            });
+
+            describe('TTL reaches the vector index (#129)', () => {
+                const ttlJob = (content: string, ttl: number | undefined) => ({ kind: 'upsert', layer: 'identity', path: '/identity/foo', content, ttl, sourceUpdatedAt: putVersion() });
+                const putTtl = (): unknown => (ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item as Record<string, unknown> | undefined)?.TTL;
+
+                test('create enqueues the TTL it wrote', async () => {
+                    ddbMock.on(PutCommand).resolves({});
+                    await makeBackendWithIndexer().create({
+                        path: '/identity/foo' as MemoryPath, content: 'hello', contentType: 'text/plain', ttl: createEpochSeconds(1_800_000_000),
+                    });
+                    expect(enqueueMock.mock.calls).toEqual([[ttlJob('hello', 1_800_000_000)]]);
+                    expect('ttl' in (enqueueMock.mock.calls[0][0] as object)).toBe(true);
+                });
+
+                test('a content update with no new TTL enqueues the stored TTL it carried forward', async () => {
+                    ddbMock.on(GetCommand).resolves({ Item: { ...existingItemForUpdate, TTL: 1_800_000_000 } });
+                    ddbMock.on(PutCommand).resolves({});
+                    await makeBackendWithIndexer().update('/identity/foo' as MemoryPath, { content: 'new content' });
+                    expect(putTtl()).toBe(1_800_000_000);
+                    expect(enqueueMock.mock.calls).toEqual([[ttlJob('new content', 1_800_000_000)]]);
+                });
+
+                test('a content update with a new TTL enqueues the new TTL', async () => {
+                    ddbMock.on(GetCommand).resolves({ Item: { ...existingItemForUpdate, TTL: 1_800_000_000 } });
+                    ddbMock.on(PutCommand).resolves({});
+                    await makeBackendWithIndexer().update('/identity/foo' as MemoryPath, { content: 'new content', ttl: createEpochSeconds(1_900_000_000) });
+                    expect(enqueueMock.mock.calls).toEqual([[ttlJob('new content', 1_900_000_000)]]);
+                });
+
+                test('enqueues the TTL the core write persisted, not the facade\'s earlier read', async () => {
+                    ddbMock.on(GetCommand)
+                        .resolvesOnce({ Item: { ...existingItemForUpdate, TTL: 1_700_000_000 } })
+                        .resolvesOnce({ Item: { ...existingItemForUpdate, TTL: 1_800_000_000 } });
+                    ddbMock.on(PutCommand).resolves({});
+                    await makeBackendWithIndexer().update('/identity/foo' as MemoryPath, { content: 'new content' });
+                    expect(putTtl()).toBe(1_800_000_000);
+                    expect(enqueueMock.mock.calls).toEqual([[ttlJob('new content', 1_800_000_000)]]);
+                });
+
+                test('a TTL-only refresh enqueues an upsert of the stored content without an identity reload', async () => {
+                    const onIdentityWrite = mock(() => {});
+                    ddbMock.on(GetCommand).resolves({ Item: existingItemForUpdate });
+                    ddbMock.on(PutCommand).resolves({});
+                    const backendWithIndexer = new MemoryToolBackend(
+                        ddbMock as unknown as DynamoDBDocumentClient,
+                        'TestTable',
+                        { enqueue: enqueueMock as (job: unknown) => void },
+                        undefined,
+                        onIdentityWrite
+                    );
+                    await backendWithIndexer.update('/identity/foo' as MemoryPath, { ttl: createEpochSeconds(1_900_000_000) });
+                    expect(enqueueMock.mock.calls).toEqual([[ttlJob('old content', 1_900_000_000)]]);
+                    expect(onIdentityWrite).not.toHaveBeenCalled();
+                    // Only the core read: no tag comparison read for a TTL-only change
+                    expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+                });
+
+                test('a metadata-only update enqueues nothing', async () => {
+                    ddbMock.on(GetCommand).resolves({ Item: existingItemForUpdate });
+                    ddbMock.on(PutCommand).resolves({});
+                    await makeBackendWithIndexer().update('/identity/foo' as MemoryPath, { metadata: { note: 'x' } });
+                    expect(enqueueMock).not.toHaveBeenCalled();
+                });
+
+                test('a content update to an identity memory still triggers the identity reload', async () => {
+                    const onIdentityWrite = mock(() => {});
+                    ddbMock.on(GetCommand).resolves({ Item: existingItemForUpdate });
+                    ddbMock.on(PutCommand).resolves({});
+                    const backendWithIndexer = new MemoryToolBackend(
+                        ddbMock as unknown as DynamoDBDocumentClient,
+                        'TestTable',
+                        { enqueue: enqueueMock as (job: unknown) => void },
+                        undefined,
+                        onIdentityWrite
+                    );
+                    await backendWithIndexer.update('/identity/foo' as MemoryPath, { content: 'new content' });
+                    expect(onIdentityWrite).toHaveBeenCalledTimes(1);
+                });
             });
         });
 

@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon';
 import { type DynamoDBKey } from '../repositories/base';
 import { type EpochSeconds } from '../repositories/types';
-import { decodeStoredMemoryToolItem } from './decode-stored-item';
+import { decodeStoredMemoryToolItem, storedTtl } from './decode-stored-item';
 import { MemoryToolKeyGenerator, generateContentPreview } from './key-generator';
 import {
     memoryToolItemSchema,
@@ -106,6 +106,16 @@ export class MemoryToolBackendCore {
     }
 
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
+        const { item } = await this.updateWithTtl(path, input);
+        return item;
+    }
+
+    /**
+     * {@link update}, also returning the TTL actually written with the PutItem (undefined = none).
+     * The vector indexer needs that exact value: a TTL taken from any other read of the item could
+     * differ from the one persisted.
+     */
+    async updateWithTtl(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<{ item: MemoryToolItemData, ttl: EpochSeconds | undefined }> {
         const existing = await this.get(path);
         if(!existing) {
             throw new ItemNotFoundError(path);
@@ -133,7 +143,7 @@ export class MemoryToolBackendCore {
         // value of `existing` even though MemoryToolItemData has no TTL field. Without explicit
         // re-attachment, the Zod schema parse strips it and PutItem silently clears the expiration.
         // input.ttl takes priority (caller is refreshing the TTL); otherwise carry forward existing.
-        const ttlToWrite = input.ttl ?? (existing as { TTL?: EpochSeconds }).TTL;
+        const ttlToWrite = input.ttl ?? storedTtl(existing);
 
         const result = memoryToolItemSchema.safeParse(updatedData);
         if(!result.success) {
@@ -150,7 +160,7 @@ export class MemoryToolBackendCore {
         // boundary cast: constructor-injected putItem requires Record<string,unknown> but MemoryToolItem carries branded MemoryPath/ContentType; runtime shapes are compatible
         await this.putItem(ddbItem);
 
-        return updated;
+        return { item: updated, ttl: ttlToWrite };
     }
 
     async delete(path: MemoryPath): Promise<void> {

@@ -137,8 +137,9 @@ export class MemoryToolBackend extends DynamoTableAccess {
             logger.warn({ error, path: input.path, msg: 'Failed to create tag index items' });
         }
 
-        // Enqueue vector index upsert job (fire-and-forget)
-        this.enqueueIndex({ kind: 'upsert', layer: layerStr, path: result.path, content: result.content });
+        // Enqueue vector index upsert job (fire-and-forget), carrying the TTL and updatedAt written
+        // to DynamoDB; the updatedAt is the source version that guards the row against stale writes
+        this.enqueueIndex({ kind: 'upsert', layer: layerStr, path: result.path, content: result.content, ttl: input.ttl, sourceUpdatedAt: Date.parse(result.updatedAt) });
 
         if(layerStr === 'identity') {
             this.onIdentityWrite?.();
@@ -243,10 +244,11 @@ export class MemoryToolBackend extends DynamoTableAccess {
         const existingItem = contentOrTagsChanged ? await this.coreOps.get(path) : undefined;
         const oldTags = existingItem?.tags;
 
-        const result = await this.coreOps.update(path, input);
+        // The TTL comes from the core write itself, so the index gets exactly what was persisted.
+        const { item: result, ttl } = await this.coreOps.updateWithTtl(path, input);
+        const layerStr = classifyMemoryPath(path).namespace;
 
         if(contentOrTagsChanged) {
-            const layerStr = classifyMemoryPath(path).namespace;
             const contentPreview = generateContentPreview(result.content);
             const normalizedNewTags = normalizeTags(result.tags);
 
@@ -264,16 +266,19 @@ export class MemoryToolBackend extends DynamoTableAccess {
             } catch (error) {
                 logger.warn({ error, path, msg: 'Failed to update tag index items' });
             }
+        }
 
-            // Enqueue vector index upsert job (fire-and-forget)
-            this.enqueueIndex({ kind: 'upsert', layer: layerStr, path, content: result.content });
+        // Enqueue vector index upsert job (fire-and-forget). A TTL-only refresh re-enqueues too:
+        // the indexer's hash check skips the embed and just updates the row's TTL.
+        if(contentOrTagsChanged || input.ttl !== undefined) {
+            this.enqueueIndex({ kind: 'upsert', layer: layerStr, path, content: result.content, ttl, sourceUpdatedAt: Date.parse(result.updatedAt) });
+        }
 
-            // Metadata-only updates (content === undefined && tags === undefined) intentionally
-            // skip this callback because metadata fields are not part of the rendered identity
-            // string returned by loadCoreIdentity — only content and tags affect the output.
-            if(layerStr === 'identity') {
-                this.onIdentityWrite?.();
-            }
+        // Metadata-only updates (content === undefined && tags === undefined) intentionally
+        // skip this callback because metadata fields are not part of the rendered identity
+        // string returned by loadCoreIdentity — only content and tags affect the output.
+        if(contentOrTagsChanged && layerStr === 'identity') {
+            this.onIdentityWrite?.();
         }
 
         return result;

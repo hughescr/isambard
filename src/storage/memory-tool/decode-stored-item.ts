@@ -1,6 +1,16 @@
 import { logger } from '@hughescr/logger';
+import { isEpochSeconds, type EpochSeconds } from '../repositories/types';
 import { stripDynamoKeys } from '../utils/index.js';
 import { normalizeStoredMemoryToolItem, storedMemoryToolItemSchema, type MemoryToolItemData } from './types';
+
+/**
+ * The DynamoDB `TTL` (epoch seconds) carried at runtime on a decoded item (see
+ * {@link decodeStoredMemoryToolItem}), or undefined when absent or not valid epoch seconds.
+ */
+export function storedTtl(item: object): EpochSeconds | undefined {
+    const ttl = (item as { TTL?: unknown }).TTL;
+    return isEpochSeconds(ttl) ? ttl : undefined;
+}
 
 /**
  * Decodes one raw DynamoDB record into {@link MemoryToolItemData}, tolerantly. A row that fails

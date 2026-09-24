@@ -319,6 +319,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     registerCleanup({ name: 'DynamoDB client holder', run: () => storage.holder.destroy() });
     registerCleanup({ name: 'vector index', run: () => storage.vectorIndex?.close() });
     registerCleanup({ name: 'async indexer', run: () => storage.asyncIndexer?.close() });
+    registerCleanup({ name: 'vector prune scheduler', run: () => storage.vectorPruneScheduler?.stop() });
     registerCleanup({ name: 'tag reconciliation scheduler', run: () => storage.tagIndexReconciliationScheduler?.stop() });
     registerCleanup({ name: 'contact reconciliation scheduler', run: () => storage.contactReconciliationScheduler?.stop() });
 
@@ -1343,6 +1344,12 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 logger.info('Contact reconciliation scheduler started');
             }
 
+            // #129: prune expired vector-index rows now and hourly (local only, no DynamoDB reads)
+            if(storage.vectorPruneScheduler) {
+                storage.vectorPruneScheduler.start();
+                logger.info('Vector index prune scheduler started');
+            }
+
             // Start the approved-outbound-action executor and outcome reporter polling loops
             approvedActionExecutor.start();
             approvedActionOutcomeReporter.start();
@@ -1407,7 +1414,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 { name: 'WildDuck client', run: shutdownEmailClient, onFailure: 'log-and-continue' },
                 { name: 'Discord bot', run: () => bot.stop(), onFailure: 'propagate' },
                 // Each step settles before the next starts, including after a rejection.
-                // This keeps indexer writes ahead of vector-index closure.
+                // This keeps indexer writes (and the last expiry prune) ahead of vector-index closure.
+                { name: 'vector prune scheduler', run: () => storage.vectorPruneScheduler?.stop(), onFailure: 'propagate' },
                 { name: 'async indexer', run: () => storage.asyncIndexer?.close(), onFailure: 'propagate' },
                 { name: 'vector index', run: () => storage.vectorIndex?.close(), onFailure: 'propagate' },
                 { name: 'DynamoDB probe', run: () => clearInterval(dynamoDBProbeInterval), onFailure: 'propagate' },

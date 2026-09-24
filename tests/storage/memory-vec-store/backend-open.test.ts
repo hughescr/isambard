@@ -33,10 +33,11 @@ function makeOpenDeps(overrides: Partial<VectorIndexOpenDeps> = {}) {
     const close = mock(() => {});
     const db = { close } as unknown as DatabaseType;
     const deps: VectorIndexOpenDeps = {
-        configure:      mock(() => {}),
-        createDatabase: mock(() => db),
-        loadExtension:  mock(() => {}),
-        migrateSchema:  mock(() => {}),
+        configure:           mock(() => {}),
+        createDatabase:      mock(() => db),
+        configureConnection: mock(() => {}),
+        loadExtension:       mock(() => {}),
+        migrateSchema:       mock(() => {}),
         ...overrides,
     };
     return { deps, db, close };
@@ -187,14 +188,41 @@ describe('VectorIndex.open injected boundaries', () => {
         expect(deps.loadExtension).not.toHaveBeenCalled();
     });
 
-    it.each(['extension', 'migration'])('closes the database and preserves the %s failure', async (stage) => {
+    it('configures the connection before loading the extension and migrating, on both open paths', async () => {
+        const order: string[] = [];
+        const { deps, db } = makeOpenDeps({
+            configureConnection: mock(() => { order.push('connection'); }),
+            loadExtension:       mock(() => { order.push('extension'); }),
+            migrateSchema:       mock(() => { order.push('migration'); }),
+        });
+        const opened = await VectorIndex.open('/fake/index.sqlite', deps);
+        opened.close();
+        expect(deps.configureConnection).toHaveBeenCalledWith(db);
+        VectorIndex.openWithDb(db, deps).close();
+        expect(order).toEqual(['connection', 'extension', 'migration', 'connection', 'extension', 'migration']);
+    });
+
+    it('applies the default busy_timeout/WAL connection pragmas when none is injected', () => {
+        const db = new Database(':memory:');
+        const index = VectorIndex.openWithDb(db, { loadExtension: mock(() => {}), migrateSchema: mock(() => {}) });
+        try {
+            expect(db.query('PRAGMA busy_timeout').get()).toEqual({ timeout: 5000 });
+        } finally {
+            index.close();
+        }
+    });
+
+    it.each(['connection', 'extension', 'migration'])('closes the database and preserves the %s failure', async (stage) => {
         const cause = new Error(`${stage} failed`);
         const failure = mock(() => {
             throw cause;
         });
-        const { deps, close } = makeOpenDeps(stage === 'extension'
-            ? { loadExtension: failure }
-            : { migrateSchema: failure });
+        const overrides: Record<string, Partial<VectorIndexOpenDeps>> = {
+            connection: { configureConnection: failure },
+            extension:  { loadExtension: failure },
+            migration:  { migrateSchema: failure },
+        };
+        const { deps, close } = makeOpenDeps(overrides[stage]);
         await expect(VectorIndex.open('/fake/index.sqlite', deps)).rejects.toMatchObject({
             message: `VectorIndex unavailable: ${cause.message}`,
             cause,
@@ -210,7 +238,7 @@ describe('VectorIndex validation without native SQLite calls', () => {
         try {
             let writeError: unknown;
             try {
-                index.upsert({ pk: 'pk', sk: 'sk', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1 });
+                index.upsert({ pk: 'pk', sk: 'sk', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1, ttl: null });
             } catch (error) {
                 writeError = error;
             }

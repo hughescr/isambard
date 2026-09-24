@@ -156,6 +156,8 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's provi
 | `bun run sst-dev` | SST development mode |
 | `bun run sst-deploy` | Deploy to AWS |
 
+Vector-index maintenance (backfill, orphan prune, backups; safe while Izzy runs): see [docs/vector-index-operations.md](docs/vector-index-operations.md).
+
 ### Directory Structure
 
 The project uses git worktrees to separate development from production execution:
@@ -529,9 +531,11 @@ src/
 │   │   ├── types.ts                 # Types for the memory-vec embedding library
 │   │   └── index.ts                 # Public exports
 │   ├── memory-vec-store/            # SQLite-backed vector index for semantic memory search
-│   │   ├── backend.ts               # VectorIndex: SQLite-backed vector index
+│   │   ├── backend.ts               # VectorIndex: SQLite-backed vector index (TTL expiry, source-version-guarded writes, guarded deletes)
+│   │   ├── connection.ts            # Per-connection busy_timeout + WAL pragmas
 │   │   ├── indexer.ts               # AsyncIndexer: non-blocking vector index worker
-│   │   ├── schema.ts                # SQLite DDL for the memory vector index
+│   │   ├── prune-scheduler.ts       # Startup + hourly local prune of expired rows
+│   │   ├── schema.ts                # SQLite DDL for the memory vector index (idempotent ttl/source_updated_at migration)
 │   │   ├── hash.ts                  # SHA-256 hex digest utility
 │   │   ├── types.ts                 # Types for the memory-vec-store module
 │   │   └── index.ts                 # Public exports

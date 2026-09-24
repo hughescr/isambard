@@ -141,6 +141,7 @@ void mock.module('@aws-sdk/lib-dynamodb', () => ({
     DeleteCommand:          class DeleteCommand { constructor(public input: unknown) {} },
     UpdateCommand:          class UpdateCommand { constructor(public input: unknown) {} },
     BatchWriteCommand:      class BatchWriteCommand { constructor(public input: unknown) {} },
+    BatchGetCommand:        class BatchGetCommand { constructor(public input: unknown) {} },
     ScanCommand:            class ScanCommand { constructor(public input: unknown) {} },
     TransactWriteCommand:   class TransactWriteCommand { constructor(public input: unknown) {} },
 }));
@@ -837,11 +838,33 @@ void mock.module('../tools/backfill-vectors-runtime', () => ({
                 destroy: () => { mockBackfillRuntime.closes++; },
             };
         },
-        openVectorIndex: async () => ({ getHash: () => undefined, upsert: () => undefined, close: () => undefined }),
+        openVectorIndex: async () => ({ getHash: () => undefined, upsert: () => undefined, setTtls: () => 0, close: () => undefined }),
         loadModel:       async () => ({ encode: async () => ({ data: new Uint8Array() }), close: async () => undefined }),
         now:             () => 0,
         sleep:           async () => undefined,
         write:           (message: string) => { mockBackfillRuntime.writes.push(message); },
         info:            () => undefined,
+    }),
+}));
+
+// Same for the #129 orphan-prune CLI (tools/prune-vector-orphans.ts): its default runtime is
+// replaced by in-memory owners, so a mutant of its CLI entry guard can never reach DynamoDB or
+// open a real SQLite file during test imports.
+export const mockPruneRuntime = { writes: [] as string[], opens: 0, closes: 0 };
+
+void mock.module('../tools/prune-vector-orphans-runtime', () => ({
+    createDefaultPruneDependencies: () => ({
+        openStorage: () => {
+            mockPruneRuntime.opens++;
+            return {
+                tableName:    'mock-table',
+                batchGetKeys: async () => ({ found: [], unprocessed: [], consumedReadUnits: 0 }),
+                destroy:      () => { mockPruneRuntime.closes++; },
+            };
+        },
+        openVectorIndex: async () => ({ listRowsByPathPrefix: () => [], 'delete': () => false, close: () => undefined }),
+        now:             () => 0,
+        sleep:           async () => undefined,
+        write:           (message: string) => { mockPruneRuntime.writes.push(message); },
     }),
 }));

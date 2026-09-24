@@ -3,6 +3,7 @@
  */
 import type { MemoryPath, IndexLayer } from '../memory-tool/types.js';
 import type { EmbedResult } from '../memory-vec/types.js';
+import type { EpochSeconds } from '../repositories/types.js';
 import { VectorIndexError } from '@/errors';
 
 /** Fixed width of the packed 1024-bit model embedding. */
@@ -26,29 +27,72 @@ export async function encodeOne(embedder: Pick<EmbedderLike, 'encode'>, text: st
  */
 export interface VectorIndexEntry {
     /** DynamoDB partition key */
-    pk:          string
+    pk:               string
     /** DynamoDB sort key */
-    sk:          string
+    sk:               string
     /** Memory layer (identity, state, events, etc.) */
-    layer:       IndexLayer
+    layer:            IndexLayer
     /** SHA-256 hash of the indexed text (`${path}\n${content}`) */
-    contentHash: string
+    contentHash:      string
     /** Packed 1024-bit binary embedding (128 bytes) */
-    vector:      Uint8Array
+    vector:           Uint8Array
     /** Unix timestamp (ms) of the last index update */
-    updatedAt:   number
+    updatedAt:        number
+    /**
+     * The memory's DynamoDB `TTL` (epoch SECONDS), or null when it never expires. Required so
+     * every writer states it: an upsert replaces the stored value, matching DynamoDB PutItem.
+     */
+    ttl:              EpochSeconds | null
+    /**
+     * The source version: epoch ms of the DynamoDB item's `updatedAt` as of the read or write this
+     * entry reflects. A write never replaces a row that already reflects a newer source version, so
+     * a stale read (a backfill page fetched before a live refresh) cannot roll a row back. Omitted
+     * or null means unknown: it fills a new or legacy (unversioned) row but never replaces a
+     * versioned one.
+     */
+    sourceUpdatedAt?: number | null
+}
+
+/**
+ * One row's TTL for {@link VectorIndex.setTtls}: `null` clears it. `sourceUpdatedAt` is the source
+ * version the TTL was read at, guarded exactly as for {@link VectorIndexEntry.sourceUpdatedAt}.
+ */
+export interface VectorTtlUpdate {
+    pk:               string
+    sk:               string
+    ttl:              EpochSeconds | null
+    sourceUpdatedAt?: number | null
+}
+
+/**
+ * A row's identity plus the fields that change whenever it is rewritten. The orphan-prune tool
+ * snapshots this and deletes a row only if it is still the same generation, so a vector
+ * re-indexed after the snapshot survives.
+ */
+export interface VectorRowSnapshot {
+    pk:              string
+    sk:              string
+    contentHash:     string
+    updatedAt:       number
+    ttl:             number | null
+    /** Advances even when a same-content, same-TTL write only re-stamps the row. */
+    sourceUpdatedAt: number | null
 }
 
 /**
  * An upsert job: index or re-index a memory item.
  */
 export interface IndexerUpsertJob {
-    kind:    'upsert'
-    layer:   IndexLayer
+    kind:            'upsert'
+    layer:           IndexLayer
     /** Sole identity, also used as part of the text fed to the embedder */
-    path:    MemoryPath
+    path:            MemoryPath
     /** Memory content, combined with path as `${path}\n${content}` */
-    content: string
+    content:         string
+    /** The TTL persisted to DynamoDB with this write (undefined = none); required so no writer forgets it. */
+    ttl:             EpochSeconds | undefined
+    /** Epoch ms of the `updatedAt` persisted with this write: the source version the row will carry. */
+    sourceUpdatedAt: number
 }
 
 /**

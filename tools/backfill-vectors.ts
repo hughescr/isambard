@@ -3,7 +3,15 @@
  *
  * Walks the GSI1 partitions of the indexed namespaces (identity, state, events
  * and users — nested paths included) and indexes every memory into SQLite.
- * Items whose content hash already matches are skipped unless --force.
+ * Items whose content hash already matches are skipped unless --force; their
+ * DynamoDB TTL is still stamped onto the index row (one batched write per page,
+ * no extra reads: GSI1 projects ALL attributes). Items already past their TTL
+ * are not hashed or embedded — the local expiry prune would delete them at once —
+ * but their TTL is stamped onto any existing row, so the prune removes it (#129).
+ *
+ * Every write carries the item's DynamoDB updatedAt as its source version, and the
+ * index never lets it replace a row a newer live write produced: a page read before
+ * Izzy refreshed or rewrote a memory cannot roll the vector or its TTL back.
  *
  * Usage:
  *   bun tools/backfill-vectors.ts [options]
@@ -25,6 +33,7 @@
 import path from 'node:path';
 import { logger } from '@hughescr/logger';
 import { createDefaultBackfillDependencies } from './backfill-vectors-runtime';
+import { paceAfterRead, parseRcuRate, requireConsumedReadUnits } from './rcu-pacing';
 import {
     MemoryToolKeyGenerator,
     classifyMemoryPath,
@@ -32,13 +41,16 @@ import {
     SEARCHABLE_NAMESPACE_VALUES,
     SEARCHABLE_NAMESPACES,
     PACKED_EMBEDDING_BYTES,
+    type EpochSeconds,
     type SearchableNamespace,
     type MemoryToolBackend,
     type ModelQuant,
     type ModelSlug,
-    type VectorIndex
+    type VectorIndex,
+    type VectorTtlUpdate
 } from '@/storage';
 import type { MemoryPath } from '@/storage/memory-tool';
+import { storedTtl } from '@/storage/memory-tool/decode-stored-item';
 import { sha256Hex } from '@/storage/memory-vec-store';
 
 // ── CLI options ───────────────────────────────────────────────────────────────
@@ -71,6 +83,16 @@ GSI1 is provisioned at 2 RCU, so keep the rate at or below 2.
 Run once with --force --layer users after deploying #58 so /users vectors written
 before it (labelled 'unknown') are rewritten as 'users'.
 
+TTL (#129): every row written carries the item's DynamoDB TTL. An unchanged item
+is not re-embedded, but its TTL is stamped onto the existing row (one batched
+local write per page, reported as "TTL updated"). Items already past their TTL
+are not embedded ("Skipped (expired)"), but their TTL is stamped onto any existing
+row so the local prune removes it. Every write carries the item's updatedAt, and a
+row that a newer live write already produced is left alone ("Skipped (index
+already newer)", or no TTL change). --dry-run writes no TTLs either.
+The vector database is opened with busy_timeout and WAL, so this tool can run
+while Izzy is live; pass --db-path pointing at the file Izzy uses.
+
 Requires SST shell for DynamoDB credentials:
   sst shell -- bun tools/backfill-vectors.ts
 `;
@@ -87,22 +109,34 @@ interface BackfillOptions {
 }
 
 interface BackfillPageStats {
-    scanned: number
-    skipped: number
-    indexed: number
-    errors:  number
+    scanned:    number
+    skipped:    number
+    indexed:    number
+    errors:     number
+    /** Unchanged rows whose stored TTL changed. */
+    ttlUpdated: number
+    /** Items already past their DynamoDB TTL: not hashed or embedded, only their TTL stamped. */
+    expired:    number
+    /** Embedded items the index already held at a newer source version, so left as they were. */
+    superseded: number
 }
 
 interface BackfillItem {
-    path:    MemoryPath
-    content: string
+    path:      MemoryPath
+    content:   string
+    /** The item's DynamoDB `updatedAt` (ISO 8601): its source version for the index's write guard. */
+    updatedAt: string
+    /** DynamoDB TTL (epoch seconds), carried at runtime on decoded items; read via storedTtl. */
+    TTL?:      number
 }
 
 interface PendingEmbedding {
-    item:        BackfillItem
-    keys:        { PK: string, SK: string }
-    text:        string
-    contentHash: string
+    item:            BackfillItem
+    keys:            { PK: string, SK: string }
+    text:            string
+    contentHash:     string
+    ttl:             EpochSeconds | null
+    sourceUpdatedAt: number
 }
 
 interface BatchEmbedder {
@@ -164,11 +198,7 @@ export function parseArgs(argv: string[]): BackfillOptions {
             options.modelQuant = value;
         },
         '--rate-limit-rcu-per-sec': (value) => {
-            const parsed = Number(value);
-            if(!value || !Number.isFinite(parsed) || parsed <= 0) {
-                throw new Error(`Invalid --rate-limit-rcu-per-sec value: ${value ?? '(missing)'}. Must be a positive number.`);
-            }
-            options.rateLimitRcuPerSec = parsed;
+            options.rateLimitRcuPerSec = parseRcuRate(value);
         },
     };
 
@@ -240,14 +270,21 @@ async function writeEmbeddingBatch(
     for(const [index, entry] of batch.entries()) {
         try {
             const vector = data.subarray(index * PACKED_EMBEDDING_BYTES, (index + 1) * PACKED_EMBEDDING_BYTES);
-            vectorIndex.upsert({
-                pk:          entry.keys.PK,
-                sk:          entry.keys.SK,
-                layer:       classifyMemoryPath(entry.item.path).namespace,
-                contentHash: entry.contentHash,
+            const written = vectorIndex.upsert({
+                pk:              entry.keys.PK,
+                sk:              entry.keys.SK,
+                layer:           classifyMemoryPath(entry.item.path).namespace,
+                contentHash:     entry.contentHash,
                 vector,
-                updatedAt:   Date.now(),
+                updatedAt:       Date.now(),
+                ttl:             entry.ttl,
+                sourceUpdatedAt: entry.sourceUpdatedAt,
             });
+            if(!written) {
+                // A live write newer than this page already reached the index.
+                stats.superseded++;
+                continue;
+            }
             stats.indexed++;
             if(stats.indexed % 10 === 0) {
                 process.stdout.write(`  Indexed ${stats.indexed} items in this page...\n`);
@@ -273,21 +310,48 @@ async function writePendingEmbeddings(
     await writePendingEmbeddings(pending, embedder, vectorIndex, stats, offset + EMBED_BATCH_SIZE);
 }
 
+/** Stamps one page's TTLs onto unchanged and expired items' rows in a single batched write; a failure counts one error. */
+function stampTtls(ttlUpdates: VectorTtlUpdate[], vectorIndex: Pick<VectorIndex, 'setTtls'>, stats: BackfillPageStats): void {
+    if(ttlUpdates.length === 0) {
+        return;
+    }
+    try {
+        stats.ttlUpdated += vectorIndex.setTtls(ttlUpdates);
+    } catch (err) {
+        logger.warn({ err: errorInfo(err), count: ttlUpdates.length, msg: 'Failed to update TTLs for unchanged or expired items' });
+        stats.errors++;
+    }
+}
+
 export async function processPage(
     items:       BackfillItem[],
     options:     BackfillOptions,
-    vectorIndex: Pick<VectorIndex, 'getHash' | 'upsert'>,
+    vectorIndex: Pick<VectorIndex, 'getHash' | 'upsert' | 'setTtls'>,
     embedder:    BatchEmbedder,
-    hashText:    (text: string) => Promise<string> = sha256Hex
+    hashText:    (text: string) => Promise<string> = sha256Hex,
+    now:         () => number = Date.now
 ): Promise<BackfillPageStats> {
-    const stats: BackfillPageStats = { scanned: items.length, skipped: 0, indexed: 0, errors: 0 };
+    const stats: BackfillPageStats = { scanned: items.length, skipped: 0, indexed: 0, errors: 0, ttlUpdated: 0, expired: 0, superseded: 0 };
+    const nowSeconds = Math.floor(now() / 1000);
+    const ttlUpdates: VectorTtlUpdate[] = [];
     const validItems = items.filter((item) => {
-        if(isMemoryPath(item.path)) {
-            return true;
+        if(!isMemoryPath(item.path)) {
+            logger.warn({ path: item.path, msg: 'Skipping malformed memory path' });
+            stats.skipped++;
+            return false;
         }
-        logger.warn({ path: item.path, msg: 'Skipping malformed memory path' });
-        stats.skipped++;
-        return false;
+        const ttl = storedTtl(item);
+        if(ttl !== undefined && ttl <= nowSeconds) {
+            // Not embedded (the local prune would delete it at once), but an existing row — say a
+            // pre-#129 row migrated with a NULL TTL — gets the TTL, so query() hides it and
+            // pruneExpired() removes it even if DynamoDB sweeps the item before the next backfill.
+            // setTtls ignores a missing row and one a newer live write already stamped.
+            stats.expired++;
+            const keys = MemoryToolKeyGenerator.createKeys(item.path);
+            ttlUpdates.push({ pk: keys.PK, sk: keys.SK, ttl, sourceUpdatedAt: Date.parse(item.updatedAt) });
+            return false;
+        }
+        return true;
     });
     const hashes = await Promise.allSettled(validItems.map(item => hashText(`${item.path}\n${item.content}`)));
     const pending: PendingEmbedding[] = [];
@@ -301,8 +365,13 @@ export async function processPage(
         }
         const keys = MemoryToolKeyGenerator.createKeys(item.path);
         const contentHash = hashResult.value;
+        const ttl = storedTtl(item) ?? null;
+        // The page may be older than a live write that already reached the index; the index's
+        // source-version guard (updatedAt) then keeps the newer row, whatever the content hash says.
+        const sourceUpdatedAt = Date.parse(item.updatedAt);
         if(!options.force && vectorIndex.getHash(keys.PK, keys.SK) === contentHash) {
             stats.skipped++;
+            ttlUpdates.push({ pk: keys.PK, sk: keys.SK, ttl, sourceUpdatedAt });
             continue;
         }
         if(options.dryRun) {
@@ -311,9 +380,12 @@ export async function processPage(
             stats.indexed++;
             continue;
         }
-        pending.push({ item, keys, text: `${item.path}\n${item.content}`, contentHash });
+        pending.push({ item, keys, text: `${item.path}\n${item.content}`, contentHash, ttl, sourceUpdatedAt });
     }
 
+    if(!options.dryRun) {
+        stampTtls(ttlUpdates, vectorIndex, stats);
+    }
     await writePendingEmbeddings(pending, embedder, vectorIndex, stats);
     return stats;
 }
@@ -327,23 +399,12 @@ interface BackfillStorage {
 
 export interface BackfillDependencies {
     openStorage:     () => BackfillStorage
-    openVectorIndex: (dbPath: string) => Promise<Pick<VectorIndex, 'getHash' | 'upsert' | 'close'>>
+    openVectorIndex: (dbPath: string) => Promise<Pick<VectorIndex, 'getHash' | 'upsert' | 'setTtls' | 'close'>>
     loadModel:       (model: { slug: ModelSlug, quant: ModelQuant }) => Promise<BackfillModel>
     now:             () => number
     sleep:           (ms: number) => Promise<void>
     write:           (message: string) => void
     info:            (details: Record<string, unknown>) => void
-}
-
-/**
- * A GSI1 page's DynamoDB-reported read units. Without that figure the page's true cost (large
- * rows, rows dropped as malformed) is unknown, so the backfill fails closed rather than read unpaced.
- */
-function requireConsumedReadUnits(consumedReadUnits: number | undefined, namespace: SearchableNamespace): number {
-    if(consumedReadUnits === undefined) {
-        throw new Error(`GSI1 query for ${namespace} reported no ConsumedCapacity; refusing to continue without RCU pacing`);
-    }
-    return consumedReadUnits;
 }
 
 export async function main(argv: string[] = process.argv, deps: BackfillDependencies = createDefaultBackfillDependencies()): Promise<void> {
@@ -379,13 +440,16 @@ export async function main(argv: string[] = process.argv, deps: BackfillDependen
     // Initialize DynamoDB + memory backend
     const { backend, destroy } = deps.openStorage();
 
-    let vectorIndex: Pick<VectorIndex, 'getHash' | 'upsert' | 'close'> | undefined;
+    let vectorIndex: Pick<VectorIndex, 'getHash' | 'upsert' | 'setTtls' | 'close'> | undefined;
     let embedder: BackfillModel | undefined;
 
     let totalScanned = 0;
     let totalSkipped = 0;
     let totalIndexed = 0;
     let totalErrors = 0;
+    let totalTtlUpdated = 0;
+    let totalExpired = 0;
+    let totalSuperseded = 0;
 
     try {
         vectorIndex = await deps.openVectorIndex(opts.dbPath);
@@ -399,28 +463,34 @@ export async function main(argv: string[] = process.argv, deps: BackfillDependen
 
                 // eslint-disable-next-line no-await-in-loop -- each GSI1 page depends on the previous cursor
                 const page = await backend.listByIndexNamespace(namespace, { limit: pageSize, cursor });
-                const consumedReadUnits = requireConsumedReadUnits(page.consumedReadUnits, namespace);
+                // Without the page's reported read units its true cost (large rows, rows dropped as
+                // malformed) is unknown, so the backfill fails closed rather than read unpaced.
+                const consumedReadUnits = requireConsumedReadUnits(page.consumedReadUnits, `GSI1 query for ${namespace}`);
 
                 cursor = page.nextCursor;
 
+                // Expiry is judged at the time the page was read.
                 // eslint-disable-next-line no-await-in-loop -- finish bounded embedding work before fetching the next GSI page
-                const pageStats = await processPage(page.items, opts, vectorIndex, embedder);
+                const pageStats = await processPage(page.items, opts, vectorIndex, embedder, sha256Hex, () => pageStartMs);
                 totalScanned += pageStats.scanned;
                 totalSkipped += pageStats.skipped;
                 totalIndexed += pageStats.indexed;
                 totalErrors += pageStats.errors;
+                totalTtlUpdated += pageStats.ttlUpdated;
+                totalExpired += pageStats.expired;
+                totalSuperseded += pageStats.superseded;
 
                 // Pace by the read units this page consumed, including across namespace transitions,
                 // so no two queries run back-to-back; nothing follows the very last page.
                 if(cursor || namespaceIndex < namespaces.length - 1) {
-                    const elapsed = deps.now() - pageStartMs;
-                    const pageBudgetMs = consumedReadUnits * msPerRcu;
-                    // Stryker disable next-line NumberLiteralValue: any non-positive floor is skipped by the sleepMs > 0 guard below, so 0 and -1 are indistinguishable
-                    const sleepMs = Math.max(0, pageBudgetMs - elapsed);
-                    if(sleepMs > 0) {
-                        // eslint-disable-next-line no-await-in-loop -- intentional sleep before the next GSI page
-                        await deps.sleep(sleepMs);
-                    }
+                    // eslint-disable-next-line no-await-in-loop -- intentional sleep before the next GSI page
+                    await paceAfterRead({
+                        consumedReadUnits,
+                        rateLimitRcuPerSec: opts.rateLimitRcuPerSec,
+                        startedAtMs:        pageStartMs,
+                        now:                deps.now,
+                        sleep:              deps.sleep,
+                    });
                 }
             } while(cursor);
         }
@@ -440,7 +510,10 @@ export async function main(argv: string[] = process.argv, deps: BackfillDependen
 Backfill complete:
   Scanned: ${totalScanned}
   Skipped (unchanged or malformed): ${totalSkipped}
+  Skipped (expired): ${totalExpired}
+  Skipped (index already newer): ${totalSuperseded}
   Indexed: ${totalIndexed}
+  TTL updated: ${totalTtlUpdated}
   Errors: ${totalErrors}
 `);
 

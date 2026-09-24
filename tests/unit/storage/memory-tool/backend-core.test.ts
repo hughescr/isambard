@@ -592,6 +592,23 @@ describe('MemoryToolBackendCore', () => {
             expect(result).not.toHaveProperty('TTL');
         });
 
+        test.each([
+            ['carried-forward', { TTL: 1_700_000_000 }, {}, 1_700_000_000],
+            ['refreshed', { TTL: 1_700_000_000 }, { ttl: createEpochSeconds(1_800_000_000) }, 1_800_000_000],
+            ['absent', {}, {}, undefined],
+        ] as const)('updateWithTtl() returns the %s TTL it wrote alongside the item', async (_label, stored, input, expected) => {
+            ddbMock.on(GetCommand).resolves({ Item: { ...ttlItemBase, ...stored } });
+            ddbMock.on(PutCommand).resolves({});
+
+            const { item, ttl } = await backend.updateWithTtl(ttlItemBase.path, { content: 'Updated content', ...input });
+
+            const written = ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item as Record<string, unknown>;
+            expect(ttl as number | undefined).toBe(expected);
+            expect(written.TTL as number | undefined).toBe(expected);
+            expect(item.content).toBe('Updated content');
+            expect(item).not.toHaveProperty('TTL');
+        });
+
         test('update() propagates a write failure', async () => {
             const writeFailure = new Error('update write failed');
             ddbMock.on(GetCommand).resolves({ Item: ttlItemBase });

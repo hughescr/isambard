@@ -370,13 +370,20 @@ describe('Vector feature wiring', () => {
             };
 
             const mockVectorIndex = {
-                isClosed: false,
-                close:    mock(() => { callOrder.push('vectorIndex.close'); }),
-                getHash:  mock((): string | undefined => undefined),
-                upsert:   mock(() => undefined),
-                'delete': mock(() => undefined),
-                query:    mock(() => []),
+                isClosed:     false,
+                close:        mock(() => { callOrder.push('vectorIndex.close'); }),
+                getHash:      mock((): string | undefined => undefined),
+                upsert:       mock(() => undefined),
+                'delete':     mock(() => undefined),
+                query:        mock(() => []),
+                pruneExpired: mock(() => 0),
             };
+            const pruneScheduler = {
+                start:   mock(() => { callOrder.push('pruneScheduler.start'); }),
+                stop:    mock(() => { callOrder.push('pruneScheduler.stop'); }),
+                runOnce: mock(() => undefined),
+            };
+            const createPruneScheduler = spyOn(vecStoreModule, 'createVectorPruneScheduler').mockReturnValue(pruneScheduler);
 
             const mockAsyncIndexer = {
                 isClosed: false,
@@ -407,6 +414,7 @@ describe('Vector feature wiring', () => {
                 destroyHolder,
                 openVectorIndex,
                 createAsyncIndexer,
+                createPruneScheduler,
                 spyOn(storageModule, 'loadEmbedder').mockResolvedValue(
                     fakeEmbedder as unknown as Awaited<ReturnType<typeof storageModule.loadEmbedder>>
                 ),
@@ -469,10 +477,13 @@ describe('Vector feature wiring', () => {
             expect(callOrder).toContain('asyncIndexer.close');
             expect(callOrder).toContain('vectorIndex.close');
 
-            // asyncIndexer.close must come BEFORE vectorIndex.close
+            // The prune scheduler stops first, then asyncIndexer.close, then vectorIndex.close (#129)
             const asyncIdx = callOrder.indexOf('asyncIndexer.close');
             const vecIdx = callOrder.indexOf('vectorIndex.close');
             expect(asyncIdx).toBeLessThan(vecIdx);
+            expect(createPruneScheduler).toHaveBeenCalledWith({ vectorIndex: mockVectorIndex, logger: expect.anything() });
+            expect(callOrder.indexOf('pruneScheduler.stop')).toBeGreaterThan(-1);
+            expect(callOrder.indexOf('pruneScheduler.stop')).toBeLessThan(asyncIdx);
             expect(mockAsyncIndexer.close).toHaveBeenCalledTimes(1);
             expect(mockVectorIndex.close).toHaveBeenCalledTimes(1);
             expect(destroyHolder).toHaveBeenCalledTimes(1);
@@ -494,7 +505,9 @@ describe('Vector feature wiring', () => {
                 createDynamoDBClient.mockReturnValue({ client: nextClient, docClient: mockDocClient, tableName: 'IsambardMemory' });
 
                 await app.start();
+                expect(callOrder).toContain('pruneScheduler.start');
                 await app.stop();
+                expect(callOrder.lastIndexOf('pruneScheduler.stop')).toBeLessThan(callOrder.indexOf('next asyncIndexer.close'));
 
                 expect(firstClient).not.toBe(nextClient);
                 expect(createDynamoDBClient.mock.calls.length).toBeGreaterThan(firstCycleClientCreations);
@@ -554,7 +567,7 @@ describe('Vector feature wiring', () => {
             );
 
             // 1. create → should enqueue an 'upsert' job
-            await backend.create({
+            const created = await backend.create({
                 path:        '/state/test-item' as MemoryPath,
                 content:     'original content',
                 contentType: 'text/plain',
@@ -562,15 +575,25 @@ describe('Vector feature wiring', () => {
             const afterCreate = [...enqueuedJobs];
             expect(afterCreate).toHaveLength(1);
             expect(afterCreate[0]).toEqual({
-                kind: 'upsert', path: '/state/test-item' as MemoryPath, layer: createIndexLayer('state'), content: 'original content',
+                kind:            'upsert',
+                path:            '/state/test-item' as MemoryPath,
+                layer:           createIndexLayer('state'),
+                content:         'original content',
+                ttl:             undefined,
+                sourceUpdatedAt: Date.parse(created.updatedAt),
             });
 
             // 2. update → should enqueue another 'upsert' job
-            await backend.update('/state/test-item' as MemoryPath, { content: 'updated content' });
+            const updated = await backend.update('/state/test-item' as MemoryPath, { content: 'updated content' });
             const afterUpdate = [...enqueuedJobs];
             expect(afterUpdate).toHaveLength(2);
             expect(afterUpdate[1]).toEqual({
-                kind: 'upsert', path: '/state/test-item' as MemoryPath, layer: createIndexLayer('state'), content: 'updated content',
+                kind:            'upsert',
+                path:            '/state/test-item' as MemoryPath,
+                layer:           createIndexLayer('state'),
+                content:         'updated content',
+                ttl:             undefined,
+                sourceUpdatedAt: Date.parse(updated.updatedAt),
             });
 
             // 3. delete → should enqueue a 'delete' job

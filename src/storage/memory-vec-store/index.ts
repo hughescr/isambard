@@ -7,8 +7,15 @@
  */
 
 // Core classes
-export { VectorIndex } from './backend.js';
+export { VectorIndex, PRUNE_EXPIRED_BATCH_SIZE } from './backend.js';
 export { AsyncIndexer } from './indexer.js';
+export {
+    createVectorPruneScheduler,
+    VECTOR_PRUNE_INTERVAL_MS,
+    type VectorPruneScheduler,
+    type VectorPruneSchedulerDeps
+} from './prune-scheduler.js';
+export { configureVectorDbConnection, VECTOR_DB_BUSY_TIMEOUT_MS } from './connection.js';
 
 // Types
 export { PACKED_EMBEDDING_BYTES, encodeOne } from './types.js';
@@ -16,6 +23,8 @@ export type { PackedBinaryEmbedding1024 } from './types.js';
 export type {
     EmbedderLike,
     VectorIndexEntry,
+    VectorRowSnapshot,
+    VectorTtlUpdate,
     IndexerJob,
     IndexerUpsertJob,
     IndexerDeleteJob,

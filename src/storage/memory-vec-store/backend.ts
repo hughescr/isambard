@@ -6,9 +6,13 @@
  * - Hash-based deduplication (skip re-embed when content unchanged)
  * - KNN query using sqlite-vec's built-in Hamming distance for bit[] columns
  * - Delete (pruning) that removes from both the metadata and embedding tables
+ * - TTL expiry (#129): each row carries its memory's DynamoDB TTL (epoch seconds); expired rows
+ *   are excluded from queries and removed by `pruneExpired()` with zero DynamoDB reads
+ * - Source-version guard (#129): each row carries the DynamoDB item's `updatedAt` it reflects, and
+ *   `upsert`/`setTtls` never replace a row with a newer one, so a stale read cannot roll it back
  *
  * Architecture: two tables share a rowid:
- *   memory_vectors  — metadata (pk, sk, layer, content_hash, updated_at)
+ *   memory_vectors  — metadata (pk, sk, layer, content_hash, updated_at, ttl, source_updated_at)
  *   vec_memory      — vec0 virtual table with embedding bit[1024]
  *
  * Embeddings are stored as bit vectors via `vec_bit(?)`. sqlite-vec uses Hamming
@@ -17,6 +21,11 @@
  * The sqlite-vec extension must be loaded before any vec0 table operations.
  * On macOS, Bun's built-in SQLite blocks extensions; a Homebrew-installed
  * libsqlite3.dylib is required. See `configureCustomSQLite()` for details.
+ *
+ * Concurrency (#129): every connection sets busy_timeout and WAL (see connection.ts), and every
+ * write transaction is IMMEDIATE — it takes the write lock before its first read, so a
+ * read-then-write can neither act on a stale read nor fail with SQLITE_BUSY_SNAPSHOT when another
+ * process (Izzy, the backfill, the orphan prune) commits in between.
  *
  * All public methods are synchronous (bun:sqlite is sync).
  * Open with `VectorIndex.open(path)` for file-backed DB, or
@@ -28,8 +37,15 @@ import { logger } from '@hughescr/logger';
 import * as sqliteVec from 'sqlite-vec';
 import { MemoryToolKeyGenerator } from '../memory-tool/key-generator.js';
 import { createMemoryPath, classifyMemoryPath, type IndexLayer } from '../memory-tool/types.js';
+import { configureVectorDbConnection } from './connection.js';
 import { runSchemaMigration } from './schema.js';
-import { PACKED_EMBEDDING_BYTES, type VectorIndexEntry, type VectorQueryResult } from './types.js';
+import {
+    PACKED_EMBEDDING_BYTES,
+    type VectorIndexEntry,
+    type VectorQueryResult,
+    type VectorRowSnapshot,
+    type VectorTtlUpdate
+} from './types.js';
 import { VectorIndexClosedError, VectorIndexError, VectorIndexUnavailableError } from '@/errors';
 
 // ---------------------------------------------------------------------------
@@ -174,11 +190,53 @@ interface RowIdRow {
     rowid: number
 }
 
+/** Row for a guarded delete: the rowid plus the generation fields. */
+interface GenerationRow {
+    rowid:             number
+    content_hash:      string
+    updated_at:        number
+    ttl:               number | null
+    source_updated_at: number | null
+}
+
+/** Row for a path-prefix listing. */
+interface SnapshotRow {
+    pk:                string
+    sk:                string
+    content_hash:      string
+    updated_at:        number
+    ttl:               number | null
+    source_updated_at: number | null
+}
+
+/** Default number of expired rows deleted per IMMEDIATE transaction by `pruneExpired`. */
+export const PRUNE_EXPIRED_BATCH_SIZE = 500;
+
 export interface VectorIndexOpenDeps {
-    configure?:      () => void
-    createDatabase?: (dbPath: string, options: { create: boolean, readwrite: boolean }) => Database
-    loadExtension?:  (db: Database) => void
-    migrateSchema?:  (db: Database) => void
+    configure?:           () => void
+    createDatabase?:      (dbPath: string, options: { create: boolean, readwrite: boolean }) => Database
+    /** Sets per-connection pragmas (busy_timeout, WAL); runs before the extension and schema. */
+    configureConnection?: (db: Database) => void
+    loadExtension?:       (db: Database) => void
+    migrateSchema?:       (db: Database) => void
+    /** Clock (epoch ms) for TTL expiry decisions; defaults to Date.now. */
+    now?:                 () => number
+}
+
+function defaultConfigureConnection(db: Database): void {
+    configureVectorDbConnection(db, logger);
+}
+
+/** True when a stored row is still the generation the caller snapshotted. */
+function isSameGeneration(row: GenerationRow, expected: Omit<VectorRowSnapshot, 'pk' | 'sk'>): boolean {
+    const { contentHash, updatedAt, ttl, sourceUpdatedAt } = expected;
+    return row.content_hash === contentHash && row.updated_at === updatedAt && row.ttl === ttl && row.source_updated_at === sourceUpdatedAt;
+}
+
+/** Wraps any open-time failure as the index being unavailable, keeping the cause. */
+function unavailable(err: unknown): VectorIndexUnavailableError {
+    const reason = err instanceof Error ? err.message : String(err);
+    return new VectorIndexUnavailableError(reason, err instanceof Error ? err : undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -192,11 +250,13 @@ export interface VectorIndexOpenDeps {
  * KNN search delegates to sqlite-vec Hamming distance (correct for bit[] columns).
  */
 export class VectorIndex {
-    #db: Database;
+    readonly #db:  Database;
+    readonly #now: () => number;
     #closed = false;
 
-    private constructor(db: Database) {
+    private constructor(db: Database, now: () => number) {
         this.#db = db;
+        this.#now = now;
     }
 
     /**
@@ -213,39 +273,41 @@ export class VectorIndex {
         try {
             (deps.configure ?? configureCustomSQLite)();
         } catch (err) {
-            const reason = err instanceof Error ? err.message : String(err);
-            throw new VectorIndexUnavailableError(reason, err instanceof Error ? err : undefined);
+            throw unavailable(err);
         }
 
         let db: Database;
         try {
             db = (deps.createDatabase ?? ((path, options) => new Database(path, options)))(dbPath, { create: true, readwrite: true });
         } catch (err) {
-            const reason = err instanceof Error ? err.message : String(err);
-            throw new VectorIndexUnavailableError(reason, err instanceof Error ? err : undefined);
+            throw unavailable(err);
         }
 
         try {
+            (deps.configureConnection ?? defaultConfigureConnection)(db);
             (deps.loadExtension ?? sqliteVec.load)(db);
             (deps.migrateSchema ?? runSchemaMigration)(db);
         } catch (err) {
             db.close();
-            const reason = err instanceof Error ? err.message : String(err);
-            throw new VectorIndexUnavailableError(reason, err instanceof Error ? err : undefined);
+            throw unavailable(err);
         }
 
-        return new VectorIndex(db);
+        return new VectorIndex(db, deps.now ?? Date.now);
     }
 
     /**
      * Creates a VectorIndex wrapping an already-opened Database.
-     * Loads the sqlite-vec extension and runs schema migration.
+     * Sets the connection pragmas, loads the sqlite-vec extension and runs schema migration.
      * Useful for testing with in-memory databases (caller controls extension loading).
      */
-    static openWithDb(db: Database, deps: Pick<VectorIndexOpenDeps, 'loadExtension' | 'migrateSchema'> = {}): VectorIndex {
+    static openWithDb(
+        db: Database,
+        deps: Pick<VectorIndexOpenDeps, 'configureConnection' | 'loadExtension' | 'migrateSchema' | 'now'> = {}
+    ): VectorIndex {
+        (deps.configureConnection ?? defaultConfigureConnection)(db);
         (deps.loadExtension ?? sqliteVec.load)(db);
         (deps.migrateSchema ?? runSchemaMigration)(db);
-        return new VectorIndex(db);
+        return new VectorIndex(db, deps.now ?? Date.now);
     }
 
     /** True once close() has been called. */
@@ -285,9 +347,14 @@ export class VectorIndex {
      * The embedding must be a Uint8Array (128 bytes for 1024 bits).
      * vec0 does not support ON CONFLICT, so the vec_memory row is deleted and re-inserted.
      *
+     * Source-version guard: an existing row is replaced only when it has no source version or the
+     * entry's is the same or newer; otherwise neither table changes (the row already reflects a
+     * later DynamoDB write than the one this entry was read from).
+     *
+     * @returns false when the guard kept a newer row, true when the entry was written.
      * @throws {VectorIndexError} If the embedding vector is not exactly 128 bytes.
      */
-    upsert(entry: VectorIndexEntry): void {
+    upsert(entry: VectorIndexEntry): boolean {
         this.#assertOpen();
         if(entry.vector.length !== VectorIndex.EXPECTED_BYTES) {
             throw new VectorIndexError(
@@ -297,17 +364,26 @@ export class VectorIndex {
             );
         }
 
-        const upsertTx = this.#db.transaction(() => {
-            // Step 1: upsert metadata row; ON CONFLICT updates all fields and preserves rowid
-            this.#db.run(
-                `INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at)
-                 VALUES (?, ?, ?, ?, ?)
+        const upsertTx = this.#db.transaction((): boolean => {
+            // Step 1: upsert metadata row; ON CONFLICT updates all fields (ttl included, so a
+            // re-put without a TTL clears it, as DynamoDB PutItem does) and preserves rowid —
+            // unless the stored row reflects a newer source version, when nothing changes.
+            const written = this.#db.run(
+                `INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at, ttl, source_updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(pk, sk) DO UPDATE SET
-                     layer        = excluded.layer,
-                     content_hash = excluded.content_hash,
-                     updated_at   = excluded.updated_at`,
-                [entry.pk, entry.sk, entry.layer, entry.contentHash, entry.updatedAt]
-            );
+                     layer             = excluded.layer,
+                     content_hash      = excluded.content_hash,
+                     updated_at        = excluded.updated_at,
+                     ttl               = excluded.ttl,
+                     source_updated_at = excluded.source_updated_at
+                 WHERE memory_vectors.source_updated_at IS NULL
+                    OR excluded.source_updated_at >= memory_vectors.source_updated_at`,
+                [entry.pk, entry.sk, entry.layer, entry.contentHash, entry.updatedAt, entry.ttl, entry.sourceUpdatedAt ?? null]
+            ).changes;
+            if(written === 0) {
+                return false;
+            }
 
             // Step 2: look up the rowid and upsert the vec_memory row at the same rowid
             const rowIdRow = this.#db
@@ -326,38 +402,151 @@ export class VectorIndex {
                 'INSERT INTO vec_memory (rowid, embedding) VALUES (?, vec_bit(?))',
                 [rowId, entry.vector]
             );
+            return true;
         });
 
-        upsertTx();
+        return upsertTx.immediate();
     }
 
     /**
      * Deletes the vector entry for (pk, sk).
-     * Removes from both `memory_vectors` and `vec_memory` in a single transaction.
+     * Removes from both `memory_vectors` and `vec_memory` in a single IMMEDIATE transaction.
      * No-op if the entry does not exist.
+     *
+     * With `expected`, the row is deleted only if it is still that generation (same content hash,
+     * updated_at, ttl and source_updated_at): the orphan-prune tool uses this so a vector
+     * re-indexed or re-stamped after its snapshot survives.
+     *
+     * @returns true when a row was deleted.
      */
-    delete(pk: string, sk: string): void {
+    delete(pk: string, sk: string, expected?: Omit<VectorRowSnapshot, 'pk' | 'sk'>): boolean {
         this.#assertOpen();
 
-        const deleteTx = this.#db.transaction(() => {
-            // Look up rowid before deleting from metadata table
-            const rowIdRow = this.#db
-                .query<RowIdRow, [string, string]>(
-                    'SELECT rowid FROM memory_vectors WHERE pk = ? AND sk = ?'
+        const deleteTx = this.#db.transaction((): boolean => {
+            // Look up rowid (and generation) before deleting from metadata table
+            const row = this.#db
+                .query<GenerationRow, [string, string]>(
+                    'SELECT rowid, content_hash, updated_at, ttl, source_updated_at FROM memory_vectors WHERE pk = ? AND sk = ?'
                 )
                 .get(pk, sk);
 
-            // Stryker disable next-line llm: SQLite returns null for a miss and RowIdRow is an object, so a falsiness check has identical results.
-            if(rowIdRow === null) {
-                return; // No-op: entry does not exist
+            // Stryker disable next-line llm: SQLite returns null for a miss and GenerationRow is an object, so a falsiness check has identical results.
+            if(row === null) {
+                return false; // No-op: entry does not exist
+            }
+            if(expected !== undefined && !isSameGeneration(row, expected)) {
+                return false; // Rewritten since the caller's snapshot: keep it
             }
 
             // Delete from metadata first, then from embedding index using the rowid we looked up above
-            this.#db.run('DELETE FROM memory_vectors WHERE pk = ? AND sk = ?', [pk, sk]);
-            this.#db.run('DELETE FROM vec_memory WHERE rowid = ?', [rowIdRow.rowid]);
+            this.#db.run('DELETE FROM memory_vectors WHERE rowid = ?', [row.rowid]);
+            this.#db.run('DELETE FROM vec_memory WHERE rowid = ?', [row.rowid]);
+            return true;
         });
 
-        deleteTx();
+        return deleteTx.immediate();
+    }
+
+    /**
+     * Deletes every row whose TTL has passed (`ttl <= now`, epoch seconds) from both tables.
+     * Each batch selects and deletes inside one IMMEDIATE transaction, so a TTL refreshed by
+     * another connection before the batch takes the write lock is honoured, and each lock hold
+     * stays short. Zero DynamoDB reads: DynamoDB applies the same TTL to the memory itself.
+     *
+     * @returns the number of rows deleted.
+     */
+    pruneExpired(batchSize: number = PRUNE_EXPIRED_BATCH_SIZE): number {
+        this.#assertOpen();
+        const nowSeconds = Math.floor(this.#now() / 1000);
+        let total = 0;
+        for(;;) {
+            const deleted = this.#pruneExpiredBatch(nowSeconds, batchSize);
+            total += deleted;
+            if(deleted < batchSize) {
+                return total;
+            }
+        }
+    }
+
+    #pruneExpiredBatch(nowSeconds: number, batchSize: number): number {
+        const batchTx = this.#db.transaction((): number => {
+            const rowIds = this.#db
+                .query<RowIdRow, [number, number]>(
+                    'SELECT rowid FROM memory_vectors WHERE ttl IS NOT NULL AND ttl <= ? ORDER BY rowid LIMIT ?'
+                )
+                .all(nowSeconds, batchSize)
+                .map(row => row.rowid);
+            const ids = JSON.stringify(rowIds);
+            // vec0's DELETE `changes` over-reports, so the count comes from memory_vectors only.
+            this.#db.run('DELETE FROM vec_memory WHERE rowid IN (SELECT value FROM json_each(?))', [ids]);
+            return this.#db.run('DELETE FROM memory_vectors WHERE rowid IN (SELECT value FROM json_each(?))', [ids]).changes;
+        });
+        return batchTx.immediate();
+    }
+
+    /**
+     * Sets the TTL of existing rows in one IMMEDIATE transaction. Missing keys are ignored.
+     *
+     * Source-version guard, as for {@link upsert}: an entry applies only to a row with no source
+     * version or one no newer than the entry's, so a TTL read before a live refresh is ignored.
+     * An applied entry records its source version; one whose TTL already matches only advances
+     * the row's version (never moving it back).
+     *
+     * @returns the number of rows whose TTL actually changed (a row already at that TTL counts 0).
+     */
+    setTtls(entries: readonly VectorTtlUpdate[]): number {
+        this.#assertOpen();
+        const setTx = this.#db.transaction((): number => {
+            const setTtl = this.#db.prepare<unknown, [number | null, number | null, string, string]>(
+                `UPDATE memory_vectors SET ttl = ?1, source_updated_at = ?2
+                 WHERE pk = ?3 AND sk = ?4 AND ttl IS NOT ?1
+                   AND (source_updated_at IS NULL OR ?2 >= source_updated_at)`
+            );
+            const advanceVersion = this.#db.prepare<unknown, [number | null, string, string]>(
+                `UPDATE memory_vectors SET source_updated_at = ?1
+                 WHERE pk = ?2 AND sk = ?3 AND (source_updated_at IS NULL OR ?1 > source_updated_at)`
+            );
+            let changed = 0;
+            for(const entry of entries) {
+                const sourceUpdatedAt = entry.sourceUpdatedAt ?? null;
+                changed += setTtl.run(entry.ttl, sourceUpdatedAt, entry.pk, entry.sk).changes;
+                advanceVersion.run(sourceUpdatedAt, entry.pk, entry.sk);
+            }
+            return changed;
+        });
+        return setTx.immediate();
+    }
+
+    /**
+     * Lists every row whose memory path is under `prefix` (which must start and end with `/`, and
+     * is not the root), ordered by rowid. Matches the directory itself (`DIR#/a/b` for `/a/b/`)
+     * and anything nested below it; a sibling such as `/a/bx/` is not matched. Uses substr
+     * rather than LIKE, whose `_` wildcard would match any character in a path.
+     *
+     * @throws {VectorIndexError} For a prefix that is not a non-root `/…/` directory.
+     */
+    listRowsByPathPrefix(prefix: string): VectorRowSnapshot[] {
+        this.#assertOpen();
+        if(!prefix.startsWith('/') || !prefix.endsWith('/') || prefix === '/') {
+            throw new VectorIndexError(`Path prefix must start and end with '/' and not be the root; got '${prefix}'`);
+        }
+        const directoryPk = `DIR#${prefix.slice(0, -1)}`;
+        const nestedPkPrefix = `DIR#${prefix}`;
+        return this.#db
+            .query<SnapshotRow, [string, string]>(
+                `SELECT pk, sk, content_hash, updated_at, ttl, source_updated_at FROM memory_vectors
+                 WHERE pk = ?1 OR substr(pk, 1, length(?2)) = ?2
+                 ORDER BY rowid`
+            )
+            .all(directoryPk, nestedPkPrefix)
+            .map(row => ({
+                pk:              row.pk,
+                sk:              row.sk,
+                contentHash:     row.content_hash,
+                updatedAt:       row.updated_at,
+                ttl:             row.ttl,
+                sourceUpdatedAt: row.source_updated_at,
+            }));
     }
 
     /**
@@ -385,26 +574,30 @@ export class VectorIndex {
             );
         }
 
+        // Rows past their TTL are hidden until the next pruneExpired() removes them.
+        const nowSeconds = Math.floor(this.#now() / 1000);
         const rows = layer === undefined
             ? this.#db
-                .query<KnnRow, [Uint8Array, number]>(
+                .query<KnnRow, [Uint8Array, number, number]>(
                     `SELECT m.pk, m.sk, m.layer, v.distance
                      FROM vec_memory v
                      JOIN memory_vectors m ON m.rowid = v.rowid
                      WHERE v.embedding MATCH vec_bit(?) AND k = ?
+                       AND (m.ttl IS NULL OR m.ttl > ?)
                      ORDER BY v.distance`
                 )
-                .all(queryVector, limit)
+                .all(queryVector, limit, nowSeconds)
             : this.#db
-                .query<KnnRow, [Uint8Array, number, string]>(
+                .query<KnnRow, [Uint8Array, number, number, string]>(
                     `SELECT m.pk, m.sk, m.layer, v.distance
                      FROM vec_memory v
                      JOIN memory_vectors m ON m.rowid = v.rowid
                      WHERE v.embedding MATCH vec_bit(?) AND k = ?
+                       AND (m.ttl IS NULL OR m.ttl > ?)
                        AND m.layer = ?
                      ORDER BY v.distance`
                 )
-                .all(queryVector, limit, layer);
+                .all(queryVector, limit, nowSeconds, layer);
         const valid: VectorQueryResult[] = [];
         for(const row of rows) {
             try {

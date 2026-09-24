@@ -5,7 +5,8 @@
  * The 33ms embed latency must NOT block hot DynamoDB writes — enqueue() returns immediately.
  *
  * Hash-check: before calling embedder.encode(), compute SHA-256 of `${path}\n${content}`.
- * If unchanged, skip embed and leave the existing row untouched.
+ * If unchanged, skip the embed and only bring the row's TTL up to date (#129), so a TTL refresh
+ * or removal still reaches the index.
  *
  * Error handling: on error, log and drop the job. The next write will re-enqueue.
  * Don't crash the worker. Don't retry.
@@ -13,7 +14,7 @@
 
 import { MemoryToolKeyGenerator } from '../memory-tool/key-generator.js';
 import { sha256Hex } from './hash.js';
-import { encodeOne, type EmbedderLike, type VectorIndexEntry, type IndexerJob } from './types.js';
+import { encodeOne, type EmbedderLike, type VectorIndexEntry, type IndexerJob, type VectorTtlUpdate } from './types.js';
 
 /** Minimal logger interface (compatible with @hughescr/logger) */
 interface IndexerLogger {
@@ -24,6 +25,7 @@ interface IndexerLogger {
 interface VectorIndexLike {
     getHash:  (pk: string, sk: string) => string | undefined
     upsert:   (entry: VectorIndexEntry) => void
+    setTtls:  (entries: readonly VectorTtlUpdate[]) => number
     'delete': (pk: string, sk: string) => void
 }
 
@@ -137,9 +139,14 @@ export class AsyncIndexer {
                 const text = `${job.path}\n${job.content}`;
                 const contentHash = await sha256Hex(text);
 
-                // Hash-check: skip embed if content unchanged
+                const ttl = job.ttl ?? null;
+                const { sourceUpdatedAt } = job;
+                // Hash-check: skip embed if content unchanged, but still carry the TTL (and the
+                // source version the vector index guards writes with) across
                 const existingHash = this.#vectorIndex.getHash(keys.PK, keys.SK);
-                if(existingHash !== contentHash) {
+                if(existingHash === contentHash) {
+                    this.#vectorIndex.setTtls([{ pk: keys.PK, sk: keys.SK, ttl, sourceUpdatedAt }]);
+                } else {
                     const vector = await encodeOne(this.#embedder, text);
 
                     this.#vectorIndex.upsert({
@@ -149,6 +156,8 @@ export class AsyncIndexer {
                         contentHash,
                         vector,
                         updatedAt: Date.now(),
+                        ttl,
+                        sourceUpdatedAt,
                     });
                 }
             }

@@ -6,6 +6,7 @@ import {
 import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig, VectorIndexConfig } from '@/config';
 import {
     DynamoDBClientHolder, type TagIndexReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, SessionResumeBackend, createMemoryTagIndexReconciliationScheduler, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike,
+    createVectorPruneScheduler, type VectorPruneScheduler,
     SessionJournalBackend, OperationalStateBackend, createOperationalStateStore, type OperationalStateStore
 } from '@/storage';
 
@@ -73,6 +74,12 @@ export interface StorageLayer {
      * @internal
      */
     asyncIndexer?:                    AsyncIndexer
+    /**
+     * Hourly local prune of expired vector-index rows (#129). Created (not started) only when
+     * the vector index is open; the app starts it and stops it before closing the index.
+     * @internal
+     */
+    vectorPruneScheduler?:            VectorPruneScheduler
 }
 
 async function releaseFailedStorage(
@@ -80,9 +87,12 @@ async function releaseFailedStorage(
     vectorIndex: VectorIndex | undefined,
     asyncIndexer: AsyncIndexer | undefined,
     tagIndexReconciliationScheduler: TagIndexReconciliationScheduler | undefined,
-    contactReconciliationScheduler: ContactReconciliationScheduler | undefined
+    contactReconciliationScheduler: ContactReconciliationScheduler | undefined,
+    vectorPruneScheduler: VectorPruneScheduler | undefined
 ): Promise<void> {
     // Unwind dependencies in order and attempt every release.
+    // The prune scheduler's stop() only clears a timer and cannot throw.
+    vectorPruneScheduler?.stop();
     try {
         await asyncIndexer?.close();
     } catch{ /* Preserve the construction error and continue cleanup. */ }
@@ -132,6 +142,7 @@ export async function createStorageLayer(
     // Optionally create vector index and async indexer
     let vectorIndex:  VectorIndex  | undefined;
     let asyncIndexer: AsyncIndexer | undefined;
+    let vectorPruneScheduler: VectorPruneScheduler | undefined;
     let tagIndexReconciliationScheduler: TagIndexReconciliationScheduler | undefined;
     let contactReconciliationScheduler: ContactReconciliationScheduler | undefined;
     try {
@@ -151,6 +162,7 @@ export async function createStorageLayer(
                 embedder: indexerEmbedder,
                 logger,
             });
+            vectorPruneScheduler = createVectorPruneScheduler({ vectorIndex, logger });
             // Stryker disable next-line llm: dbPath only feeds this log message, and pinning its empty-string rendering has no behavioural value.
             logger.info(`Vector index initialized at ${vectorIndexConfig.dbPath}`);
         }
@@ -239,11 +251,12 @@ export async function createStorageLayer(
             contactReconciliationScheduler,
             vectorIndex,
             asyncIndexer,
+            vectorPruneScheduler,
         };
     } catch (error) {
         // The caller has not received ownership yet. Unwind in dependency order,
         // attempting every release while retaining the construction failure.
-        await releaseFailedStorage(holder, vectorIndex, asyncIndexer, tagIndexReconciliationScheduler, contactReconciliationScheduler);
+        await releaseFailedStorage(holder, vectorIndex, asyncIndexer, tagIndexReconciliationScheduler, contactReconciliationScheduler, vectorPruneScheduler);
         throw error;
     }
 }
