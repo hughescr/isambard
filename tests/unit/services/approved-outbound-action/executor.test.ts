@@ -76,7 +76,7 @@ describe('createApprovedOutboundActionExecutor', () => {
     let settleClaim: ReturnType<typeof mock<ExecutorBackend['settleClaim']>>;
     let backend: ExecutorBackend;
     let registry: ServiceHealthRegistry;
-    let executors: Record<ApprovedOutboundActionType, ReturnType<typeof mock<(params: Record<string, unknown>) => Promise<void>>>>;
+    let executors: Record<ApprovedOutboundActionType, ReturnType<typeof mock<(params: Record<string, unknown>, signal: AbortSignal) => Promise<void>>>>;
     let logger: ApprovedOutboundActionExecutorLogger;
     let activityLog: ReturnType<typeof mock<(entry: { type: string, summary: string }) => Promise<void>>>;
     let onOutcomeRecorded: ReturnType<typeof mock<() => void>>;
@@ -140,7 +140,8 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(await build().executeOnce()).toEqual({ executed: 1, failed: 0 });
 
             expect(claim.mock.calls).toEqual([[BSKY]]);
-            expect(executors.bsky_reply.mock.calls).toEqual([[BSKY.params]]);
+            expect(executors.bsky_reply.mock.calls[0]?.[0]).toEqual(BSKY.params);
+            expect(executors.bsky_reply.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
             expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'executed' }]]);
             expect(claim.mock.invocationCallOrder[0]).toBeLessThan(executors.bsky_reply.mock.invocationCallOrder[0]);
             expect(executors.bsky_reply.mock.invocationCallOrder[0]).toBeLessThan(settleClaim.mock.invocationCallOrder[0]);
@@ -308,7 +309,8 @@ describe('createApprovedOutboundActionExecutor', () => {
 
             await expect(build().executeOnce()).rejects.toThrow('bsky write failed');
 
-            expect(executors.email_send.mock.calls).toEqual([[{ uid: 42 }]]);
+            expect(executors.email_send.mock.calls[0]?.[0]).toEqual({ uid: 42 });
+            expect(executors.email_send.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
             expect(settleClaim).toHaveBeenCalledWith(claimedOf(EMAIL), { state: 'executed' });
             expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
         });
@@ -585,6 +587,26 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(await pass).toEqual({ executed: 0, failed: 1 });
         });
 
+        test('aborts a hung send at its deadline while settling its outcome as permanently unknown', async () => {
+            listed = [BSKY];
+            const capturedSignal = Promise.withResolvers<AbortSignal>();
+            executors.bsky_reply.mockImplementation(async (_params, signal) => {
+                capturedSignal.resolve(signal);
+                return Promise.withResolvers<void>().promise;
+            });
+            const pass = build({ sendTimeoutMs: 1000 }).executeOnce();
+            await flush();
+
+            const signal = await capturedSignal.promise;
+            expect(signal.aborted).toBe(false);
+            jest.advanceTimersByTime(1000);
+            await flush();
+
+            expect(signal.aborted).toBe(true);
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(BSKY), { state: 'failed', lastError: sendTimedOutError(1000), failureKind: 'permanent' }]]);
+            expect(await pass).toEqual({ executed: 0, failed: 1 });
+        });
+
         test('a send that succeeds after its timeout is only logged', async () => {
             listed = [BSKY];
             const send = Promise.withResolvers<undefined>();
@@ -634,7 +656,8 @@ describe('createApprovedOutboundActionExecutor', () => {
             jest.advanceTimersByTime(1000);
             await flush();
             expect(claim.mock.calls).toEqual([[BSKY], [BSKY_2]]);
-            expect(executors.bsky_reply).toHaveBeenLastCalledWith({ text: 'second' });
+            expect(executors.bsky_reply.mock.calls.at(-1)?.[0]).toEqual({ text: 'second' });
+            expect(executors.bsky_reply.mock.calls.at(-1)?.[1]).toBeInstanceOf(AbortSignal);
             expect(await pass).toEqual({ executed: 1, failed: 1 });
         });
 
@@ -676,7 +699,8 @@ describe('createApprovedOutboundActionExecutor', () => {
             jest.advanceTimersByTime(0);
             await flush();
 
-            expect(executors.email_send.mock.calls).toEqual([[{ uid: 42 }]]);
+            expect(executors.email_send.mock.calls[0]?.[0]).toEqual({ uid: 42 });
+            expect(executors.email_send.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
             expect(settleClaim.mock.calls).toEqual([[claimedOf(EMAIL), { state: 'executed' }]]);
             expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
             executor.stop();
@@ -746,7 +770,8 @@ describe('createApprovedOutboundActionExecutor', () => {
             jest.advanceTimersByTime(0);
             await flush();
             expect(listOpen).toHaveBeenCalledTimes(4);
-            expect(executors.email_send.mock.calls).toEqual([[{ uid: 42 }]]);
+            expect(executors.email_send.mock.calls[0]?.[0]).toEqual({ uid: 42 });
+            expect(executors.email_send.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
             executor.stop();
         });
     });

@@ -387,8 +387,8 @@ export class WildDuckClient {
     /**
      * Submit a stored draft message for delivery.
      */
-    async submitMessage(mailboxPath: string, uid: number): Promise<void> {
-        await this.withAuthRetry(() => this.doSubmitMessage(mailboxPath, uid));
+    async submitMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<void> {
+        await this.withAuthRetry(() => this.doSubmitMessage(mailboxPath, uid, signal));
     }
 
     /**
@@ -677,11 +677,11 @@ export class WildDuckClient {
         return response.message.id;
     }
 
-    private async doSubmitMessage(mailboxPath: string, uid: number): Promise<void> {
+    private async doSubmitMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<void> {
         const mailboxId = this.resolveMailboxId(mailboxPath);
         await this.makeRequest<unknown>(
             `/users/me/mailboxes/${mailboxId}/messages/${uid}/submit`,
-            { method: 'POST' }
+            { method: 'POST', signal }
         );
     }
 
@@ -919,10 +919,11 @@ export class WildDuckClient {
             headers['X-Access-Token'] = this.token;
         }
 
+        const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
         const response = await fetch(`${this.options.url}${path}`, {
             ...options,
             headers,
-            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+            signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
         });
 
         if(response.status === 401) {

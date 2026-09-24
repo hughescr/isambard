@@ -58,7 +58,7 @@ export const STALE_CLAIM_ERROR = 'The send was interrupted before its outcome wa
 interface ApprovedOutboundActionExecutorDeps {
     backend:           Pick<ApprovedOutboundActionBackend, 'listOpen' | 'claim' | 'settleClaim'>
     registry:          ServiceHealthRegistry
-    executors:         Record<ApprovedOutboundActionType, (params: Record<string, unknown>) => Promise<void>>
+    executors:         Record<ApprovedOutboundActionType, (params: Record<string, unknown>, signal: AbortSignal) => Promise<void>>
     logger:            ServiceLogger
     /** Best-effort event sink for sends that have already settled durably as executed. */
     activityLogger?:   ActivityLogger<SentActivityType>
@@ -196,10 +196,11 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
 
     /** Send a claimed row, bounded by the send timeout, and say what its claim should record. */
     async function send(claimed: ClaimedApprovedOutboundAction): Promise<ClaimOutcome> {
+        const controller = new AbortController();
         // Starting the send on a microtask turns an executor's synchronous throw into a rejection.
-        const sending = Promise.resolve().then(async () => executors[claimed.type](claimed.params));
+        const sending = Promise.resolve().then(async () => executors[claimed.type](claimed.params, controller.signal));
         try {
-            if(await raceSendTimeout(sending, sendTimeoutMs) === 'sent') {
+            if(await raceSendTimeout(sending, sendTimeoutMs, () => controller.abort()) === 'sent') {
                 return { state: 'executed' };
             }
         } catch (err: unknown) {

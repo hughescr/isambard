@@ -719,7 +719,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             approvedActionOutcomeReporter.wake();
         },
         executors: {
-            bsky_reply: async (params) => {
+            bsky_reply: async (params, signal) => {
                 if(!bskyClient) {
                     throw new InvariantViolationError('approvedActionExecutor.bsky_reply', 'Bluesky client not available');
                 }
@@ -728,21 +728,21 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     parent: { uri: parsed.parentUri, cid: parsed.parentCid },
                     root:   (parsed.rootUri !== undefined && parsed.rootCid !== undefined) ? { uri: parsed.rootUri, cid: parsed.rootCid } : undefined,
                 };
-                await bskyClient.replyToPost(parsed.text, reply);
+                await bskyClient.replyToPost(parsed.text, reply, signal);
             },
-            bsky_dm: async (params) => {
+            bsky_dm: async (params, signal) => {
                 if(!bskyClient) {
                     throw new InvariantViolationError('approvedActionExecutor.bsky_dm', 'Bluesky client not available');
                 }
                 const parsed = bskyDMParamsSchema.parse(params);
-                await bskyClient.sendDirectMessage(parsed.convoId, parsed.text);
+                await bskyClient.sendDirectMessage(parsed.convoId, parsed.text, signal);
             },
-            email_send: async (params) => {
+            email_send: async (params, signal) => {
                 if(!emailSetup) {
                     throw new InvariantViolationError('approvedActionExecutor.email_send', 'Email not available');
                 }
                 const uid = z.object({ uid: z.number().int() }).parse(params).uid;
-                await emailSetup.wildDuckClient.submitMessage(EmailFolder.Drafts, uid);
+                await emailSetup.wildDuckClient.submitMessage(EmailFolder.Drafts, uid, signal);
             },
         },
         logger,

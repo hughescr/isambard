@@ -418,19 +418,25 @@ export class BlueskyClient {
      * An omitted `reply.root` defaults to `reply.parent` for top-level replies.
      * Detects RichText facets and validates grapheme length.
      */
-    async replyToPost(text: string, reply: BskyReplyInput): Promise<BskyStrongRef> {
+    async replyToPost(text: string, reply: BskyReplyInput, signal?: AbortSignal): Promise<BskyStrongRef> {
         try {
             const rt       = await this.buildValidatedRichText(text);
             const root     = reply.root ?? reply.parent;
-            const response = await this.agent.post({
-                text:   rt.text,
-                facets: rt.facets,
-                reply:  {
-                    root:   { uri: root.uri,          cid: root.cid },
-                    parent: { uri: reply.parent.uri,  cid: reply.parent.cid },
+            const response = await this.agent.com.atproto.repo.createRecord({
+                repo:       this.agent.assertDid,
+                collection: 'app.bsky.feed.post',
+                record:     {
+                    $type:     'app.bsky.feed.post',
+                    text:      rt.text,
+                    facets:    rt.facets,
+                    createdAt: new Date().toISOString(),
+                    reply:     {
+                        root:   { uri: root.uri,          cid: root.cid },
+                        parent: { uri: reply.parent.uri,  cid: reply.parent.cid },
+                    },
                 },
-            });
-            return { uri: createAtUri(response.uri), cid: createCid(response.cid) };
+            }, { signal });
+            return { uri: createAtUri(response.data.uri), cid: createCid(response.data.cid) };
         } catch (err: unknown) {
             if(err instanceof BskyValidationError) {
                 throw err;
@@ -555,13 +561,13 @@ export class BlueskyClient {
      * Send a direct message to a conversation.
      * Validates text length against the 1000-grapheme DM limit.
      */
-    async sendDirectMessage(convoId: string, text: string): Promise<BskyDirectMessage> {
+    async sendDirectMessage(convoId: string, text: string, signal?: AbortSignal): Promise<BskyDirectMessage> {
         try {
             const rt = await this.buildValidatedDMRichText(text);
             const response = await this.requireChatAgent().chat.bsky.convo.sendMessage({
                 convoId,
                 message: { text: rt.text, facets: rt.facets },
-            });
+            }, { signal });
             return await this.normalizeMessage(response.data);
         } catch (err: unknown) {
             if(err instanceof BskyError) {

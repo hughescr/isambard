@@ -25,6 +25,7 @@ interface MockPostResponse { uri: string, cid: string }
 // ---------------------------------------------------------------------------
 
 const mockAgentPost           = mock(async (): Promise<MockPostResponse> => ({ uri: 'at://new/post/uri', cid: 'new-post-cid' }));
+const mockCreateRecord        = mock(async (_params?: unknown, _options?: unknown): Promise<{ data: MockPostResponse }> => ({ data: { uri: 'at://new/post/uri', cid: 'new-post-cid' } }));
 const mockLogin               = mock(async (): Promise<Record<string, unknown>> => ({}));
 const mockGetTimeline         = mock(async (): Promise<MockFeedResponse> => ({ data: { feed: [] } }));
 const mockGetFeed             = mock(async (): Promise<MockFeedResponse> => ({ data: { feed: [] } }));
@@ -83,11 +84,21 @@ const MOCK_API_DOUBLE = {
             latestAgentOptions = options;
         }
 
+        assertDid = 'did:plc:testaccount';
+
         app = {
             bsky: {
                 feed: {
                     getFeed:     mockGetFeed,
                     searchPosts: mockSearchPosts,
+                },
+            },
+        };
+
+        com = {
+            atproto: {
+                repo: {
+                    createRecord: mockCreateRecord,
                 },
             },
         };
@@ -280,6 +291,7 @@ async function capturedError(operation: () => Promise<unknown>): Promise<Error> 
 describe.concurrent('BlueskyClient', () => {
     beforeEach(() => {
         mockAgentPost.mockReset();
+        mockCreateRecord.mockReset();
         mockLogin.mockReset();
         mockGetTimeline.mockReset();
         mockGetFeed.mockReset();
@@ -1540,35 +1552,42 @@ describe.concurrent('BlueskyClient', () => {
         const PARENT_REF: BskyStrongRef = { uri: createAtUri(PARENT_URI), cid: createCid(PARENT_CID) };
         const ROOT_REF:   BskyStrongRef = { uri: createAtUri(ROOT_URI),   cid: createCid(ROOT_CID) };
 
-        test('calls agent.post with text, facets, and reply ref', async () => {
+        test('creates the reply record with text, facets, reply ref, and supplied cancellation signal', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockRichTextState.text   = 'Reply text';
             mockRichTextState.facets = undefined;
-            mockAgentPost.mockResolvedValueOnce({ uri: 'at://reply/uri', cid: 'reply-cid' });
+            mockCreateRecord.mockResolvedValueOnce({ data: { uri: 'at://reply/uri', cid: 'reply-cid' } });
+            const signal = new AbortController().signal;
             const client = new BlueskyClient(CLIENT_OPTIONS);
-            await client.replyToPost('Reply text', { parent: PARENT_REF, root: ROOT_REF });
-            expect(mockAgentPost).toHaveBeenCalledWith({
-                text:   'Reply text',
-                facets: undefined,
-                reply:  {
-                    root:   { uri: ROOT_URI,   cid: ROOT_CID },
-                    parent: { uri: PARENT_URI, cid: PARENT_CID },
+            await client.replyToPost('Reply text', { parent: PARENT_REF, root: ROOT_REF }, signal);
+            expect(mockCreateRecord).toHaveBeenCalledWith({
+                repo:       'did:plc:testaccount',
+                collection: 'app.bsky.feed.post',
+                record:     {
+                    $type:     'app.bsky.feed.post',
+                    text:      'Reply text',
+                    facets:    undefined,
+                    createdAt: expect.any(String),
+                    reply:     {
+                        root:   { uri: ROOT_URI,   cid: ROOT_CID },
+                        parent: { uri: PARENT_URI, cid: PARENT_CID },
+                    },
                 },
-            });
+            }, { signal });
         });
 
         test('defaults root to parent when reply.root omitted', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockRichTextState.text = 'Top-level reply';
-            mockAgentPost.mockResolvedValueOnce({ uri: 'at://reply/uri', cid: 'reply-cid' });
+            mockCreateRecord.mockResolvedValueOnce({ data: { uri: 'at://reply/uri', cid: 'reply-cid' } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await client.replyToPost('Top-level reply', { parent: PARENT_REF });
-            expect(mockAgentPost).toHaveBeenCalledWith({
-                text:   'Top-level reply',
-                facets: undefined,
-                reply:  {
-                    root:   { uri: PARENT_URI, cid: PARENT_CID },
-                    parent: { uri: PARENT_URI, cid: PARENT_CID },
+            expect(mockCreateRecord.mock.calls[0]?.[0]).toMatchObject({
+                record: {
+                    reply: {
+                        root:   { uri: PARENT_URI, cid: PARENT_CID },
+                        parent: { uri: PARENT_URI, cid: PARENT_CID },
+                    },
                 },
             });
         });
@@ -1583,9 +1602,9 @@ describe.concurrent('BlueskyClient', () => {
             expect(call).toBeDefined();
         });
 
-        test('returns uri and cid from agent.post response', async () => {
+        test('returns uri and cid from createRecord response', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
-            mockAgentPost.mockResolvedValueOnce({ uri: 'at://reply/result', cid: 'reply-result-cid' });
+            mockCreateRecord.mockResolvedValueOnce({ data: { uri: 'at://reply/result', cid: 'reply-result-cid' } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
             const result = await client.replyToPost('Text', { parent: PARENT_REF });
             expect(result).toEqual({ uri: createAtUri('at://reply/result'), cid: createCid('reply-result-cid') });
@@ -1608,35 +1627,35 @@ describe.concurrent('BlueskyClient', () => {
         test('succeeds when grapheme length is exactly 300', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
             mockRichTextState.graphemeLength = 300;
-            mockAgentPost.mockResolvedValueOnce({ uri: 'at://uri', cid: 'cid' });
+            mockCreateRecord.mockResolvedValueOnce({ data: { uri: 'at://uri', cid: 'cid' } });
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await expect(client.replyToPost('x'.repeat(300), { parent: PARENT_REF })).resolves.toMatchObject({ uri: 'at://uri', cid: 'cid' });
         });
 
         test('throws BskyAuthError on 401', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
-            mockAgentPost.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
+            mockCreateRecord.mockRejectedValueOnce(makeXRPCError(401, 'AuthenticationRequired'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await expect(client.replyToPost('Text', { parent: PARENT_REF })).rejects.toBeInstanceOf(BskyAuthError);
         });
 
         test('throws BskyRateLimitError on 429', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
-            mockAgentPost.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
+            mockCreateRecord.mockRejectedValueOnce(makeXRPCError(429, 'RateLimitExceeded'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await expect(client.replyToPost('Text', { parent: PARENT_REF })).rejects.toBeInstanceOf(BskyRateLimitError);
         });
 
         test('throws BskyError on generic Error', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
-            mockAgentPost.mockRejectedValueOnce(new Error('Network error'));
+            mockCreateRecord.mockRejectedValueOnce(new Error('Network error'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await expect(client.replyToPost('Text', { parent: PARENT_REF })).rejects.toBeInstanceOf(BskyError);
         });
 
         test('throws BskyError on non-Error value', async () => {
             mockDetectFacets.mockResolvedValueOnce(undefined);
-            mockAgentPost.mockRejectedValueOnce('raw error');
+            mockCreateRecord.mockRejectedValueOnce('raw error');
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await expect(client.replyToPost('Text', { parent: PARENT_REF })).rejects.toBeInstanceOf(BskyError);
         });
@@ -2228,20 +2247,21 @@ describe.concurrent('BlueskyClient', () => {
     // -----------------------------------------------------------------------
 
     describe('sendDirectMessage()', () => {
-        test('sends message with text and facets and returns normalized message', async () => {
+        test('sends message with text and facets using the supplied cancellation signal', async () => {
             mockRichTextState.text   = 'Hello Alice!';
             mockRichTextState.facets = [{ index: { byteStart: 0, byteEnd: 5 }, features: [] }];
             mockSendMessage.mockResolvedValueOnce({ data: MESSAGE_VIEW });
+            const signal = new AbortController().signal;
             const client = new BlueskyClient(CLIENT_OPTIONS);
             await client.login();
-            const result = await client.sendDirectMessage('convo-001', 'Hello Alice!');
+            const result = await client.sendDirectMessage('convo-001', 'Hello Alice!', signal);
             expect(mockSendMessage).toHaveBeenCalledWith({
                 convoId: 'convo-001',
                 message: {
                     text:   'Hello Alice!',
                     facets: [{ index: { byteStart: 0, byteEnd: 5 }, features: [] }],
                 },
-            });
+            }, { signal });
             expect(result).toMatchObject({ id: 'msg-001', text: 'Hello there!', senderDid: 'did:plc:member1' });
         });
 
@@ -3354,7 +3374,7 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             expect(await capturedError(() => client.likePost({ uri: createAtUri('at://post'), cid: createCid('cid') }))).toHaveProperty('message', 'Failed to like post');
             mockAgentPost.mockRejectedValueOnce(new Error('down'));
             expect(await capturedError(() => client.sendPost('text'))).toHaveProperty('message', 'Failed to send post');
-            mockAgentPost.mockRejectedValueOnce(new Error('down'));
+            mockCreateRecord.mockRejectedValueOnce(new Error('down'));
             expect(await capturedError(() => client.replyToPost('text', { parent: { uri: createAtUri('at://post'), cid: createCid('cid') } }))).toHaveProperty('message', 'Failed to reply to post');
             mockGetProfile.mockRejectedValueOnce(new Error('down'));
             expect(await capturedError(() => client.follow('actor'))).toHaveProperty('message', 'Failed to follow user');

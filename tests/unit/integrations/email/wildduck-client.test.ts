@@ -1142,6 +1142,25 @@ describe('WildDuckClient', () => {
             expect(options.method).toBe('POST');
         });
 
+        test('propagates a caller abort through the composed request signal', async () => {
+            const client = await makeInitializedClient();
+            const controller = new AbortController();
+            const response = Promise.withResolvers<Response>();
+            let observedSignal: AbortSignal | null | undefined;
+            mockFetch.mockImplementationOnce(async (_url, options): Promise<Response> => {
+                observedSignal = options?.signal;
+                return response.promise;
+            });
+
+            const submitting = client.submitMessage('Drafts', 99, controller.signal);
+            await Promise.resolve();
+            controller.abort();
+
+            expect(observedSignal?.aborted).toBe(true);
+            response.resolve(makeJsonResponse({ success: true }));
+            await submitting;
+        });
+
         test('sends auth token header', async () => {
             const client = await makeInitializedClient();
 
