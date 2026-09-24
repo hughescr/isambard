@@ -255,7 +255,7 @@ src/
 │   │   ├── health-notification.ts   # Pure health-outage predicate and coalescer
 │   │   ├── notification-bridge.ts   # Source-agnostic notification submission seam
 │   │   ├── quota-notes.ts           # Quota threshold notifications and the perch quota-pause guard
-│   │   ├── quota-poller.ts          # Process-wide vendor quota polling via utraque
+│   │   ├── provider-snapshot.ts     # Neutral vendor-quota snapshot types and fresh Anthropic quota projection (poller lifecycle moved to src/app/quota-poller.ts, wire parsing to src/integrations/utraque + src/integrations/anthropic, #46)
 │   │   ├── resume-store.ts          # Role-bound convenience store over session-resume rows
 │   │   ├── task-launch-registry.ts  # In-memory registry of background-work launches
 │   │   ├── turn-synopsis.ts         # attachTurnSynopsis + SynopsisBudget: THE ONE turn synopsis producer (wired per session in app/sessions.ts)
@@ -339,7 +339,7 @@ src/
 │       └── README.md                # Perch time scheduling design documentation
 ├── integrations/                    # External service integrations
 │   ├── discord/                     # Discord bot integration
-│   │   ├── bot.ts                   # Thin bot orchestrator with start/stop lifecycle
+│   │   ├── bot.ts                   # Discord adapter: client, event/interaction routing, readiness; open/exit/shutdown/recovery live in src/app/runtime.ts
 │   │   ├── handlers.ts              # Event handlers (ready, error, messageCreate)
 │   │   ├── client.ts                # Discord.js client factory
 │   │   ├── types.ts                 # Branded IDs plus ChannelScope/DM_SCOPE and DiscordMessageContext schema
@@ -367,7 +367,9 @@ src/
 │   │   │   ├── bsky-adapter.ts         # Outbound Bluesky reply/DM card → BskyOutboundApprovals (parses embed fields)
 │   │   │   ├── email-embeds.ts         # Inbound email review/unsafe/restricted-access embeds
 │   │   │   ├── email-review-handler.ts # Inbound email review buttons (trash/junk/allow/allowlist)
-│   │   │   └── bsky-embeds.ts          # Bluesky reply/DM approval card builder
+│   │   │   ├── bsky-embeds.ts          # Bluesky reply/DM approval card builder
+│   │   │   ├── card-edit-gate.ts       # ApprovalCardEditGate: holds a clicked card during write+edit so a pending edit can't land after a fast outcome edit
+│   │   │   └── outcome-delivery.ts     # createApprovedActionOutcomeDelivery: notifies Izzy and edits the approval card on a terminal outcome
 │   │   ├── history-provider.ts      # Discord history provider for cross-platform context
 │   │   ├── setup/                   # Bot initialization setup modules
 │   │   │   ├── presence-setup.ts          # Presence manager, per-session status generators, ledger subscriptions + synopsis attachment
@@ -378,8 +380,7 @@ src/
 │   │   │   ├── discord-envelope-provider.ts # Builds the platform-agnostic DiscordEnvelopeInput a Discord turn hands to the conductor
 │   │   │   ├── event-handler-setup.ts     # Channel registry init, message processing, cleanup handlers
 │   │   │   ├── email-setup.ts             # Email MCP server init and WildDuck SSE listener lifecycle
-│   │   │   ├── bsky-setup.ts              # Bluesky integration setup and approval callbacks
-│   │   │   ├── bsky-dm-poller.ts          # Health-gated poller raising an accumulate notification for new Bluesky DMs
+│   │   │   ├── bsky-setup.ts              # Bluesky integration setup and approval callbacks (wires src/integrations/bsky/dm-poller.ts)
 │   │   │   └── wake-delivery.ts           # Delivers a background-work wake turn's reply to Discord
 │   │   ├── presence/                # Dynamic status updates reflecting agent activity
 │   │   │   ├── index.ts                    # Barrel: the module's named exports
@@ -442,24 +443,31 @@ src/
 │   │   ├── history-provider.ts          # Bluesky history provider for cross-platform context
 │   │   ├── rejection-backend.ts         # DynamoDB backend for admin-rejected posts/DMs
 │   │   ├── outbound-approvals.ts        # BskyOutboundApprovals: approve/reject reply and DM operations (no Discord)
+│   │   ├── dm-poller.ts                 # Health-gated poller raising an accumulate notification for new Bluesky DMs (moved from discord/setup, #41)
 │   │   ├── index.ts                     # Public exports (error hierarchy lives in src/errors/bsky.ts)
 │   │   └── checkpoint/                  # Notification/feed checkpoint tracking
 │   │       ├── types.ts                 # Checkpoint types
 │   │       ├── checkpoint-manager.ts    # Checkpoint persistence
 │   │       ├── uri-sanitizer.ts         # AT URI sanitization
 │   │       └── index.ts                 # Public exports
-│   └── caldav/                        # CalDAV calendar integration
-│       ├── client.ts                    # CalDAV client via tsdav
-│       ├── types.ts                     # Calendar domain types, including the CalendarTimeRange union
-│       ├── formatter.ts                 # Calendar event formatting with timezone support
-│       ├── time-range.ts                # The one display-zone policy for CalendarTimeRange (formatter, agenda, change list)
-│       ├── index.ts                     # Public exports (error hierarchy lives in src/errors/caldav.ts)
-│       └── calendar-registry/           # Per-user/shared calendar DynamoDB registry
-│           ├── backend.ts               # DynamoDB CRUD for calendar credentials
-│           ├── key-generator.ts         # DynamoDB key construction
-│           ├── resolve.ts               # Resolves a server identifier to a CalendarServerEntry
-│           ├── types.ts                 # CalendarRegistryScope and registry record types
-│           └── index.ts                 # Public exports
+│   ├── caldav/                        # CalDAV calendar integration
+│   │   ├── client.ts                    # CalDAV client via tsdav
+│   │   ├── types.ts                     # Calendar domain types, including the CalendarTimeRange union
+│   │   ├── formatter.ts                 # Calendar event formatting with timezone support
+│   │   ├── time-range.ts                # The one display-zone policy for CalendarTimeRange (formatter, agenda, change list)
+│   │   ├── index.ts                     # Public exports (error hierarchy lives in src/errors/caldav.ts)
+│   │   └── calendar-registry/           # Per-user/shared calendar DynamoDB registry
+│   │       ├── backend.ts               # DynamoDB CRUD for calendar credentials
+│   │       ├── key-generator.ts         # DynamoDB key construction
+│   │       ├── resolve.ts               # Resolves a server identifier to a CalendarServerEntry
+│   │       ├── types.ts                 # CalendarRegistryScope and registry record types
+│   │       └── index.ts                 # Public exports
+│   ├── utraque/                       # Utraque schema-2 provider-capacity wire adapter (Codex/DeepSeek quota); not yet an eslint boundary element (pending)
+│   │   ├── provider-capacity.ts         # Parses schema-2 provider reports; invalid schema, non-OK status, and thrown transport failures stay distinct
+│   │   └── index.ts                     # Public exports
+│   └── anthropic/                     # Direct Anthropic OAuth usage fallback; not yet an eslint boundary element (pending)
+│       ├── usage-fallback.ts            # Parses the direct OAuth usage endpoint, separate from SDK rate-limit frames; never receives utraque headers
+│       └── index.ts                     # Public exports
 ├── storage/                         # DynamoDB data access layer
 │   ├── client.ts                    # DynamoDB client factory
 │   ├── client-holder.ts             # Swappable DynamoDB client holder for reconnect
@@ -522,6 +530,12 @@ src/
 │   │   ├── backend.ts               # SessionResumeBackend: role-keyed store for storing/retrieving session ID
 │   │   ├── types.ts                 # SessionId branded type and SessionResumeItem DynamoDB record
 │   │   └── index.ts                 # Public exports
+│   ├── operational-state/           # Integration replay cursors (OPERATIONAL_STATE#<owner> partition; Discord inbox + Bluesky feed/notification/DM checkpoints, #57)
+│   │   ├── backend.ts               # OperationalStateBackend: strongly-consistent get/put/listByPrefix over the owner partition
+│   │   ├── decode.ts                # Tolerant decode of one raw DynamoDB record
+│   │   ├── legacy-fallback.ts       # createOperationalStateStore: wraps the backend with a read-only legacy /state/services/<owner>/<name> fallback on miss (info-logged once per key per process)
+│   │   ├── types.ts                 # Operational-state record types
+│   │   └── index.ts                 # Public exports
 │   └── index.ts                     # Public exports
 ├── app/                             # Application composition root
 │   ├── storage-layer.ts             # createStorageLayer: DynamoDB client, memory backend, reconciliation
@@ -530,6 +544,9 @@ src/
 │   ├── mcp-servers.ts               # createMcpSharedDeps + createMcpServerInstances: builds every MCP server set
 │   ├── identity-loader.ts           # loadIdentityContext: bot identity from memory for presence
 │   ├── sessions.ts                  # Assembles the conversation and perch conductors and their shared session ambience
+│   ├── runtime.ts                   # createSessionSupervisor + startSessions: opens both conductors, cross-session shutdown, boot recovery (#41)
+│   ├── quota-poller.ts              # createQuotaPoller: process-wide vendor quota polling lifecycle and ledger fan-out (wire parsing lives in src/integrations/utraque + src/integrations/anthropic, #46)
+│   ├── startup-chain.ts             # createStartupChain: single-flight guard so a repeated app.start() never reruns startSessions (#113)
 │   ├── lifecycle.ts                 # Process-lifecycle seams: signal handlers, Discord recovery handler
 │   ├── hot-reload-guard.ts          # Hot-reload guard for the composition root (survives Bun --hot)
 │   └── index.ts                     # Composition-root barrel: re-exports every factory above

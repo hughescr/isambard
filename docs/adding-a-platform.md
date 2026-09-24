@@ -25,27 +25,32 @@ Each platform integration lives under `src/integrations/{platform}/`. For exampl
 
 ### Module boundary rules
 
-Module boundaries are enforced by `eslint-plugin-boundaries` via `eslint-boundaries.config.mjs`. The hierarchy from least to most dependent is:
+Module boundaries are enforced by `eslint-plugin-boundaries` via `eslint-boundaries.config.mjs`'s `boundaries/dependencies` rule (`default: 'disallow'` — every permitted edge is an explicit policy). It is not a single ladder: `agent` and `email` import each other (type-only, both directions), and so do `agent` and `bsky` (runtime values, both directions); `discord` may import every other platform integration, but no other platform integration may import `discord`. See `docs/architecture.md`'s Layering section for the full allow-list and worked examples — this guide follows the same rules rather than restating a different chain.
 
 ```
-utils → errors → config → storage → agent → {discord, email, bsky, your-platform} → app
+utils → errors → config → storage → services → agent ⇄ {email, bsky} → {discord, caldav} → app
 ```
 
-**Key rules:**
+(`caldav` is independent of `agent` — it never imports it — and `discord` is the only integration allowed to import every other one, for its approval-UI adapters.)
 
-1. Add a `boundaryElements` entry for your platform:
+**Key rules for a new platform:**
+
+1. Add a `boundaryElements` entry for your platform in `eslint-boundaries.config.mjs`:
    ```js
    { type: 'yourplatform', pattern: 'src/integrations/yourplatform/**' }
    ```
 
-2. Add an `allow` rule for your platform (permitted to depend on `utils`, `errors`, `config`, `storage`, `agent`):
+2. Decide the direction(s) your platform needs and add the matching `allow` policies. Every new platform integration may depend on `utils`, `errors`, `config`, `storage`, `services`:
    ```js
-   { from: { type: 'yourplatform' }, allow: { to: { type: ['utils', 'errors', 'config', 'storage', 'agent'] } } },
+   { from: { element: { type: 'yourplatform' } }, allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services'] } } } },
    ```
+   If your platform's MCP tools or context injection need agent-owned ports (`PlatformHistoryProvider`, `NotifyFn`, `ActivityLogger`) as *types only*, mirror the `agent ⇄ email` policy pair (a `dependency: { kind: 'type' }` policy each way) rather than granting a full value import — that keeps the agent module from acquiring a runtime dependency it doesn't need. If your platform genuinely needs to call agent-exported functions at runtime (as Bluesky does), mirror the `agent ⇄ bsky` pair instead (no `dependency` restriction, both directions). Either way, `agent` also needs a policy allowing it to import your platform (value or type, matching what its MCP adapter and context builder actually use).
 
-3. If `discord` needs to reference your platform (e.g., for approval flows), add it to the `discord` allow list too.
+3. Your platform must **not** import `discord` — email, Bluesky and CalDAV never do (discord.js and Discord UI stay entirely inside `src/integrations/discord/` and `src/app/`, per the fence below). If `discord` needs to reference your platform (e.g., for approval flows), add your type to the `discord` allow list, not the reverse.
 
-4. Add your type to the `app` allow list so the composition root can wire it in.
+4. Add your type to `APP_MAY_IMPORT` in `eslint-boundaries.config.mjs` so the composition root can wire it in.
+
+5. `discord.js` and `@discordjs/*` are fenced separately, by `eslint.config.mjs`'s `no-restricted-imports` (not the boundaries rule): only `src/integrations/discord/**` and `src/app/**` may import them, and your platform's integration folder must not. The one existing exemption is `src/agent/discord-mcp-server.ts` (the Discord MCP adapter the agent module hosts by convention), which carries its own scoped `eslint-disable-next-line` rather than an `ignores` entry — don't take that as precedent for a new platform's integration folder.
 
 Boundary violations are caught at lint time — run `bun run lint` to verify.
 
