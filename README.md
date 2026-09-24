@@ -361,6 +361,7 @@ src/
 │   │   ├── allowlist-commands.ts    # Person-allowlist Discord slash commands
 │   │   ├── allowlist-interaction-handler.ts # Modal/button interactions for the allowlist saga flow
 │   │   ├── calendar-commands.ts     # /calendar slash command (CalDAV registry management)
+│   │   ├── index.ts                 # Public Discord integration exports
 │   │   ├── approvals/               # Discord UI for admin approvals (the only home of this UI)
 │   │   │   ├── interaction-handler.ts  # DiscordOutboundApprovalInteractionHandler: ack, reject modal, result embeds
 │   │   │   ├── email-adapter.ts        # Outbound email card → EmailOutboundApprovals
@@ -411,7 +412,8 @@ src/
 │   │   │   ├── resolve.ts           # Resolves a channel identifier to a numeric channel ID
 │   │   │   ├── response-router.ts   # Maps conductor-mode EnvelopeKinds to their well-known channel targets
 │   │   │   ├── sentinel.ts          # @@NO_RESPONSE@@ sentinel detection and stripping
-│   │   │   └── key-generator.ts     # ChannelRegistryKeyGenerator for DynamoDB key construction
+│   │   │   ├── key-generator.ts     # ChannelRegistryKeyGenerator for DynamoDB key construction
+│   │   │   └── index.ts             # Public channel-registry exports
 │   │   ├── inbox/                   # Unread message tracking with checkpoint persistence
 │   │   │   ├── types.ts              # DiscordChannelCheckpoint, UnreadMessage, UnreadOverview schemas
 │   │   │   ├── config.ts             # InboxConfig schema with defaults
@@ -422,7 +424,8 @@ src/
 │   │       ├── types.ts             # AttachmentMetadata, FetchedImage, StoredAttachment types
 │   │       ├── converter.ts         # HEIC/HEIF to PNG conversion
 │   │       ├── fetcher.ts           # Fetches image attachments from Discord URLs
-│   │       └── formatting.ts        # Byte formatting and attachment info appending
+│   │       ├── formatting.ts        # Byte formatting and attachment info appending
+│   │       └── index.ts             # Public attachment utility exports
 │   ├── email/                       # Email integration (WildDuck HTTP API + SSE)
 │   │   ├── types.ts                     # Email types (EmailFolder, WildDuckMessage, SearchCriteria)
 │   │   ├── wildduck-client.ts           # WildDuck HTTP API client (search, flags, drafts, send)
@@ -476,6 +479,7 @@ src/
 │   ├── activity-log.ts              # Generic ActivityLogger persistence for cross-platform auto-logging
 │   ├── person-allowlist.ts          # Person-ID-keyed allowlist gating outbound writes
 │   ├── repositories/                # Shared DynamoDB access primitives
+│   │   ├── .gitkeep                # Git placeholder file
 │   │   ├── base.ts                  # DynamoTableAccess: abstract base wrapping common get/put/query/scan primitives
 │   │   └── types.ts                 # EpochSeconds branded type and shared repository types
 │   ├── utils/                       # Storage utilities
@@ -505,6 +509,7 @@ src/
 │   │   ├── index.ts                 # Public exports
 │   │   └── reconciliation/          # Tag index reconciliation (three phases: completeness/orphan/count)
 │   │       ├── types.ts             # Reconciliation config, state, and result types
+│   │       ├── factory.ts           # Binds a memory backend's private tag-index reconciliation operations at the storage boundary
 │   │       ├── reconciler.ts        # Three-phase reconciler implementation
 │   │       ├── scheduler.ts         # Interval-based reconciliation scheduler with abort support
 │   │       └── index.ts             # Public exports
@@ -575,6 +580,7 @@ src/
 │   ├── outbox/                         # Reliable message delivery (outbox pattern)
 │   │   ├── backend.ts                  # DynamoDB outbox storage; paginated priority-ordered dequeue conditionally cleans malformed rows
 │   │   ├── drainer.ts                  # Outbox message drainer
+│   │   ├── health-listener.ts          # Triggers an outbox drain when Discord reconnects
 │   │   ├── discord-payload.ts          # Discord-api-types-typed outbox payload schemas
 │   │   ├── key-generator.ts            # Outbox DynamoDB key construction
 │   │   ├── types.ts                    # Outbox types
@@ -582,6 +588,11 @@ src/
 │   ├── approved-outbound-action/       # Durable records of admin-approved outbound actions
 │   │   ├── backend.ts                  # Row storage, assertTransition, conditional state moves
 │   │   ├── executor.ts                 # Polling executor; transient/permanent failure classification
+│   │   ├── outcome-reporter.ts         # Polling reporter that delivers each durable action outcome to Izzy and its approval card
+│   │   ├── outcome.ts                  # Builds the approval-card and Izzy notification copy for action outcomes
+│   │   ├── send-timeout.ts             # Races an external send against a deadline and clears its timer when settled
+│   │   ├── single-flight-loop.ts       # Coalescing, adaptive-polling loop shared by action executor and outcome reporter
+│   │   ├── waking-writer.ts            # Writer wrapper that wakes the executor after a durable approval write
 │   │   ├── retry-on-reconnect.ts       # Health listener resetting transient failures on reconnect
 │   │   ├── types.ts                    # approved/executed/failed schema and writer interface
 │   │   └── index.ts                    # Public exports
@@ -594,6 +605,7 @@ src/
 │       ├── token-bucket.ts             # TokenBucketRateLimiter: refill-over-time token bucket
 │       └── index.ts                    # Public exports
 ├── config/                          # Zod-validated configuration
+│   ├── .gitkeep                    # Git placeholder file
 │   ├── schemas.ts                   # Configuration schemas (including quota thresholds, task board, inbox)
 │   ├── loader.ts                    # Configuration loader from SST Resource / env-var
 │   ├── retry-config.ts              # Claude retry policy config (imports retryPolicySchema from @/utils)
@@ -602,6 +614,9 @@ src/
 │   ├── email-folders.ts             # EmailFolder enum (WildDuck top-level folders)
 │   └── index.ts                     # Public exports
 └── utils/                           # Shared utilities
+    ├── .gitkeep                    # Git placeholder file
+    ├── http-fetch.ts                # Minimal typed fetch response and request port for quota adapters
+    ├── quota-wire.ts                # Narrow runtime decoders for external provider quota-report values
     ├── time.ts                      # Time formatting (formatRelativeTime, getCurrentTimeContext, ...)
     ├── text.ts                      # truncateToWordBoundary and HARD_MAX_STATUS_LENGTH
     ├── filename.ts                  # sanitizeFilename and deduplicateFilename
@@ -611,10 +626,12 @@ src/
     ├── interaction-route.ts         # CustomId branded type: encodeCustomId/parseCustomId codec
     ├── index.ts                     # Public exports
     ├── media/                       # Media processing utilities
+    │   ├── index.ts                 # Public media-processing exports
     │   ├── types.ts                 # Media types and interfaces
     │   ├── fetcher.ts                # Media file fetching
     │   ├── converters/               # Format conversion
-    │   │   └── heic.ts              # HEIC/HEIF to PNG conversion
+    │   │   ├── heic.ts              # HEIC/HEIF to PNG conversion
+    │   │   └── index.ts             # Public image-format conversion exports
     │   └── video/                   # Video processing pipeline
     │       ├── processor.ts         # Main video processor
     │       ├── downloader.ts        # Video downloading
@@ -625,14 +642,16 @@ src/
     │       ├── subtitle-extractor.ts # Subtitle/transcript extraction
     │       ├── spawn-runner.ts      # ffmpeg process runner
     │       ├── markdown-builder.ts  # Video analysis markdown output
-    │       └── types.ts             # Video processing types
+    │       ├── types.ts             # Video processing types
+    │       └── index.ts             # Public video-processing exports
     └── retry/                       # Retry utilities with exponential backoff (Discord + Bluesky only — see Cross-Cutting Patterns)
         ├── types.ts                 # Retry configuration types
         ├── classifier.ts            # Error classification for retry decisions
         ├── delay.ts                 # Exponential backoff delay calculation
         ├── defaults.ts               # Validates the retry policy and merges deps with defaults
         ├── retry-async.ts           # Retry wrapper for async functions
-        └── retry-async-generator.ts # Retry wrapper for async generators
+        ├── retry-async-generator.ts # Retry wrapper for async generators
+        └── index.ts                 # Public retry utility exports
 ```
 
 ## Roadmaps
