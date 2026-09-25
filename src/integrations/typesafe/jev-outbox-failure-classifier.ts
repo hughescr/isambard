@@ -12,10 +12,8 @@ interface JevResponse {
     answers: { disposition: { choice: OutboxFailureClassification['disposition'], confidence: number } }
 }
 
+/** A null payload throws on `.answers`; the caller's catch turns that into the fallback. */
 function isClassification(value: unknown): value is JevResponse {
-    if(typeof value !== 'object' || value === null) {
-        return false;
-    }
     const answer = value as { answers?: { disposition?: { choice?: unknown, confidence?: unknown } } };
     const disposition = answer.answers?.disposition?.choice;
     const confidence = answer.answers?.disposition?.confidence;
