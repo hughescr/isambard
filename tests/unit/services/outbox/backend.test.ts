@@ -189,6 +189,15 @@ describe('OutboxBackend', () => {
             expect(await backend.dequeue('discord')).toEqual([expect.objectContaining({ id: ready.id, progress: ready.progress })]);
         });
 
+        test('returns a retry whose next attempt is exactly now', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
+            const ready = makeItem({ progress: { attemptCount: 2, nextAttemptAt: '2030-01-01T00:00:00.000Z' } });
+            ddbMock.on(QueryCommand).resolves({ Items: [ready] });
+
+            expect(await backend.dequeue('discord')).toEqual([expect.objectContaining({ id: ready.id, progress: ready.progress })]);
+        });
+
         test('deletes an invalid destination, then pages to the next valid item', async () => {
             const invalid = { ...makeItem(), destination: '', PK: 'OUTBOX#discord', SK: 'ITEM#0#bad' };
             const valid = { ...makeItem(), PK: 'OUTBOX#discord', SK: 'ITEM#1#good' };
@@ -466,6 +475,22 @@ describe('OutboxBackend', () => {
             });
             expect(stored?.progress).toHaveProperty('lastAttemptAt', expect.any(String));
         });
+
+        test('waits for the unknown-outcome persistence write to finish', async () => {
+            const persisted = Promise.withResolvers<Record<string, never>>();
+            ddbMock.on(PutCommand).callsFake(() => persisted.promise);
+            let settled = false;
+            const pending = backend.markUnknown(makeItem(), 'history unavailable', '2030-01-01T00:01:00.000Z').then(() => {
+                settled = true;
+                return undefined;
+            });
+
+            await Promise.resolve();
+            expect(settled).toBe(false);
+            persisted.resolve({});
+            await pending;
+            expect(settled).toBe(true);
+        });
     });
 
     describe('markFailed()', () => {
@@ -474,6 +499,42 @@ describe('OutboxBackend', () => {
             await backend.markFailed(makeItem({ progress: { attemptCount: 1 } }), 'still offline', { retryable: true });
             expect((ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress as { attemptCount: number }).attemptCount).toBe(2);
             expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+        });
+
+        test('persists all original item fields and an explicit future retry time', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const item = makeItem({ payload: { text: 'preserve me' }, progress: { attemptCount: 1 } });
+
+            await backend.markFailed(item, 'still offline', { retryable: true, nextAttemptAt: '2030-01-01T00:01:00.000Z' });
+
+            const stored = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item;
+            expect(stored).toMatchObject({
+                id:          item.id,
+                createdAt:   item.createdAt,
+                type:        item.type,
+                service:     item.service,
+                destination: item.destination,
+                payload:     item.payload,
+                priority:    item.priority,
+                dedupeKey:   item.dedupeKey,
+                epoch:       item.epoch,
+                progress:    {
+                    attemptCount:  2,
+                    lastError:     'still offline',
+                    nextAttemptAt: '2030-01-01T00:01:00.000Z',
+                    outcome:       'retryable',
+                },
+            });
+            expect(stored?.progress).toHaveProperty('lastAttemptAt', expect.any(String));
+        });
+
+        test('omits nextAttemptAt when markFailed is not given a future retry', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.markFailed(makeItem(), 'still offline', { retryable: true });
+
+            const progress = ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress as Record<string, unknown>;
+            expect(progress).not.toHaveProperty('nextAttemptAt');
         });
 
         test('terminal failure deletes without a retry write', async () => {

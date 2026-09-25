@@ -291,6 +291,71 @@ describe('createOutboxDrainer', () => {
         retrying.stop();
     });
 
+    test('names verification-pending errors and uses their default message', () => {
+        const error = new OutboxVerificationPendingError();
+        expect(error.name).toBe('OutboxVerificationPendingError');
+        expect(error.message).toBe('Discord delivery verification remains indeterminate');
+    });
+
+    test('waits for unknown-outcome persistence before scheduling its retry', async () => {
+        const item = makeItem({ progress: { attemptCount: 0 } });
+        const persisted = Promise.withResolvers<void>();
+        outboxBackend.dequeue.mockImplementationOnce(async (): Promise<OutboxItem[]> => [item]);
+        outboxBackend.markUnknown.mockImplementationOnce(() => persisted.promise);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new OutboxVerificationPendingError('unverified');
+        });
+        const retrying = createOutboxDrainer({ ...deps, now: () => 1000 });
+        const draining = retrying.drain(SERVICE);
+
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(jest.getTimerCount()).toBe(0);
+        persisted.resolve();
+        expect(await draining).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
+        expect(jest.getTimerCount()).toBe(1);
+        retrying.stop();
+    });
+
+    test('logs a failed unknown-outcome persistence without scheduling a retry', async () => {
+        const item = makeItem();
+        const persistenceError = new Error('write unavailable');
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+        outboxBackend.markUnknown.mockImplementationOnce(async (): Promise<void> => {
+            throw persistenceError;
+        });
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new OutboxVerificationPendingError('unverified');
+        });
+
+        expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
+        expect(logger.error).toHaveBeenCalledWith(
+            { service: SERVICE, itemId: item.id, error: persistenceError },
+            'Failed to persist indeterminate outbox verification'
+        );
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('waits exactly one backoff interval before retrying an unknown outcome', async () => {
+        const item = makeItem();
+        outboxBackend.dequeue
+            .mockImplementationOnce(async (): Promise<OutboxItem[]> => [item])
+            .mockImplementationOnce(async (): Promise<OutboxItem[]> => []);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new OutboxVerificationPendingError('unverified');
+        });
+        const retrying = createOutboxDrainer({ ...deps, now: () => 1000 });
+
+        await retrying.drain(SERVICE);
+        jest.advanceTimersByTime(99);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(1);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        retrying.stop();
+    });
+
     test('abandons a classified known rejection and records its decision', async () => {
         const item = makeItem();
         const classify = mock(async () => ({ disposition: 'abandon' as const, confidence: 0.97 }));
@@ -319,6 +384,57 @@ describe('createOutboxDrainer', () => {
         expect(outboxBackend.discard).not.toHaveBeenCalled();
     });
 
+    test('classifies a numeric code rejection with exactly its message and code', async () => {
+        const item = makeItem();
+        const classify = mock(async () => ({ disposition: 'retry' as const, confidence: 0.83 }));
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw Object.assign(new Error('rate limited'), { code: 429 });
+        });
+        const classified = createOutboxDrainer({ ...deps, failureClassifier: { classify } });
+
+        expect(await classified.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+        expect(classify).toHaveBeenCalledWith({ message: 'rate limited', code: 429 });
+        expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'rate limited', { retryable: true, nextAttemptAt: expect.any(String) });
+        classified.stop();
+    });
+
+    test('does not classify delivery errors without a numeric status or code', async () => {
+        const item = makeItem();
+        const classify = mock(async () => ({ disposition: 'abandon' as const, confidence: 1 }));
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new Error('connection reset');
+        });
+        const classified = createOutboxDrainer({ ...deps, failureClassifier: { classify } });
+
+        expect(await classified.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+        expect(classify).not.toHaveBeenCalled();
+        expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'connection reset', { retryable: true, nextAttemptAt: expect.any(String) });
+        classified.stop();
+    });
+
+    test('logs a failed classified discard and still reports the delivery failure', async () => {
+        const item = makeItem();
+        const discardError = new Error('delete unavailable');
+        const classify = mock(async () => ({ disposition: 'abandon' as const, confidence: 0.97 }));
+        outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+        outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
+            throw discardError;
+        });
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw Object.assign(new Error('Missing Permissions'), { status: 403 });
+        });
+        const classified = createOutboxDrainer({ ...deps, failureClassifier: { classify } });
+
+        expect(await classified.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+        expect(logger.error).toHaveBeenCalledWith(
+            { service: SERVICE, itemId: item.id, reason: 'classified_abandon', error: discardError },
+            'Failed to discard classified outbox item'
+        );
+        classified.stop();
+    });
+
     test('preserves the earliest pending retry from a batch', async () => {
         const early = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001', progress: { attemptCount: 0 } });
         const late = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002', progress: { attemptCount: 8 } });
@@ -333,6 +449,49 @@ describe('createOutboxDrainer', () => {
         await Promise.resolve();
 
         expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+    });
+
+    test('replaces a later retry timer with an earlier one and clears the old timer', async () => {
+        const late = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001', progress: { attemptCount: 8 } });
+        const early = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002', progress: { attemptCount: 0 } });
+        outboxBackend.dequeue
+            .mockImplementationOnce(async (): Promise<OutboxItem[]> => [late, early])
+            .mockImplementation(async (): Promise<OutboxItem[]> => []);
+        deliverFn.mockImplementation(async (): Promise<void> => {
+            throw new Error('offline');
+        });
+        const retrying = createOutboxDrainer({ ...deps, now: () => 1000 });
+
+        await retrying.drain(SERVICE);
+        expect(jest.getTimerCount()).toBe(1);
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        jest.advanceTimersByTime(25_500);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        retrying.stop();
+    });
+
+    test('caps retry backoff at sixty seconds and schedules it from the injected clock', async () => {
+        const item = makeItem({ progress: { attemptCount: 10 } });
+        outboxBackend.dequeue
+            .mockImplementationOnce(async (): Promise<OutboxItem[]> => [item])
+            .mockImplementationOnce(async (): Promise<OutboxItem[]> => []);
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new Error('offline');
+        });
+        const retrying = createOutboxDrainer({ ...deps, maxAttempts: 12, now: () => 1000 });
+
+        expect(await retrying.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+        expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'offline', { retryable: true, nextAttemptAt: '1970-01-01T00:01:01.000Z' });
+        jest.advanceTimersByTime(59_999);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+        jest.advanceTimersByTime(1);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        retrying.stop();
     });
 
     test('treats an unready channel after registry check as a retryable delivery error', async () => {

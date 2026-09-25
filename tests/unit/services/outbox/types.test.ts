@@ -51,6 +51,12 @@ describe('outboxItemSchema', () => {
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveryToken: '0'.repeat(17) } }).success).toBe(true);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveryToken: '0'.repeat(18) } }).success).toBe(false);
     });
+
+    test('progress.deliveryToken accepts exactly one through seventeen characters', () => {
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveryToken: 'a' } }).success).toBe(true);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveryToken: 'abcdefghijklmnopq' } }).success).toBe(true);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveryToken: 'abcdefghijklmnopqr' } }).success).toBe(false);
+    });
 });
 
 describe('serializedDiscordPayloadSchema', () => {
