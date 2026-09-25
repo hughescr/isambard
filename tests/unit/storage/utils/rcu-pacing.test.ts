@@ -78,6 +78,12 @@ describe('waitForRcuPacer', () => {
         expect(sleep).not.toHaveBeenCalled();
     });
 
+    test('sleeps out a debt of exactly one millisecond', async () => {
+        const sleep = mock(async (_ms: number) => undefined);
+        await waitForRcuPacer({ nextAllowedAtMs: 1001 }, () => 1000, sleep);
+        expect(sleep.mock.calls).toEqual([[1]]);
+    });
+
     test('waits for the sleep before resolving', async () => {
         const gate = Promise.withResolvers<undefined>();
         let resolved = false;
@@ -188,6 +194,71 @@ describe('sleepRespectingSignal', () => {
         controller.abort();
         await expect(pending).rejects.toEqual(new DOMException('Aborted', 'AbortError'));
         expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('waits out a one-millisecond delay on a timer rather than resolving immediately', async () => {
+        let resolved = false;
+        const pending = sleepRespectingSignal(1).then(() => {
+            resolved = true;
+            return undefined;
+        });
+        await Promise.resolve();
+        expect(resolved).toBe(false);
+        expect(jest.getTimerCount()).toBe(1);
+        jest.advanceTimersByTime(1);
+        await pending;
+        expect(resolved).toBe(true);
+    });
+
+    test('names the already-aborted rejection exactly: an "Aborted" AbortError', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const error: unknown = await sleepRespectingSignal(1000, controller.signal).catch((error_: unknown) => error_);
+        expect(error).toBeInstanceOf(DOMException);
+        expect((error as DOMException).name).toBe('AbortError');
+        expect((error as DOMException).message).toBe('Aborted');
+    });
+
+    test('detaches its abort listener when the delay elapses', async () => {
+        const addEventListener = mock((_type: string, _listener: () => void) => undefined);
+        const removeEventListener = mock((_type: string, _listener: () => void) => undefined);
+        const signal = { aborted: false, addEventListener, removeEventListener } as unknown as AbortSignal;
+
+        const pending = sleepRespectingSignal(1000, signal);
+        expect(addEventListener).toHaveBeenCalledTimes(1);
+        const listener = addEventListener.mock.calls[0]?.[1];
+        expect(addEventListener.mock.calls[0]?.[0]).toBe('abort');
+        expect(removeEventListener).not.toHaveBeenCalled();
+
+        jest.advanceTimersByTime(1000);
+        await pending;
+        expect(removeEventListener.mock.calls).toEqual([['abort', listener]]);
+    });
+
+    test('detaches its abort listener and rejects with an exactly named AbortError when the signal fires mid-wait', async () => {
+        const added: { type?: string, listener?: () => void } = {};
+        const addEventListener = mock((type: string, listener: () => void) => {
+            added.type = type;
+            added.listener = listener;
+        });
+        const removeEventListener = mock((_type: string, _listener: () => void) => undefined);
+        const signal = { aborted: false, addEventListener, removeEventListener } as unknown as AbortSignal;
+
+        const pending = sleepRespectingSignal(1000, signal).catch((error_: unknown) => error_);
+        expect(addEventListener).toHaveBeenCalledTimes(1);
+        expect(added.type).toBe('abort');
+        const { listener } = added;
+        if(!listener) {
+            throw new Error('sleepRespectingSignal registered no abort listener');
+        }
+        listener(); // what the signal would do on abort
+
+        const error: unknown = await pending;
+        expect(removeEventListener.mock.calls).toEqual([['abort', listener]]);
+        expect(jest.getTimerCount()).toBe(0);
+        expect(error).toBeInstanceOf(DOMException);
+        expect((error as DOMException).name).toBe('AbortError');
+        expect((error as DOMException).message).toBe('Aborted');
     });
 
     test('resolves normally and does not react to a later abort once the delay has already elapsed', async () => {
