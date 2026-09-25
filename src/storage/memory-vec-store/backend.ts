@@ -209,6 +209,9 @@ interface SnapshotRow {
     source_updated_at: number | null
 }
 
+/** sqlite-vec 0.1.x rejects KNN k values above this ceiling. */
+const SQLITE_VEC_KNN_MAX_K = 4096;
+
 /** Default number of expired rows deleted per IMMEDIATE transaction by `pruneExpired`. */
 export const PRUNE_EXPIRED_BATCH_SIZE = 500;
 
@@ -221,6 +224,8 @@ export interface VectorIndexOpenDeps {
     migrateSchema?:       (db: Database) => void
     /** Clock (epoch ms) for TTL expiry decisions; defaults to Date.now. */
     now?:                 () => number
+    /** Override the sqlite-vec KNN ceiling for small fallback tests. Must be positive. */
+    knnMaxK?:             number
 }
 
 function defaultConfigureConnection(db: Database): void {
@@ -250,13 +255,15 @@ function unavailable(err: unknown): VectorIndexUnavailableError {
  * KNN search delegates to sqlite-vec Hamming distance (correct for bit[] columns).
  */
 export class VectorIndex {
-    readonly #db:  Database;
-    readonly #now: () => number;
+    readonly #db:      Database;
+    readonly #now:     () => number;
+    readonly #knnMaxK: number;
     #closed = false;
 
-    private constructor(db: Database, now: () => number) {
+    private constructor(db: Database, now: () => number, knnMaxK: number) {
         this.#db = db;
         this.#now = now;
+        this.#knnMaxK = knnMaxK;
     }
 
     /**
@@ -292,7 +299,7 @@ export class VectorIndex {
             throw unavailable(err);
         }
 
-        return new VectorIndex(db, deps.now ?? Date.now);
+        return new VectorIndex(db, deps.now ?? Date.now, deps.knnMaxK ?? SQLITE_VEC_KNN_MAX_K);
     }
 
     /**
@@ -302,12 +309,12 @@ export class VectorIndex {
      */
     static openWithDb(
         db: Database,
-        deps: Pick<VectorIndexOpenDeps, 'configureConnection' | 'loadExtension' | 'migrateSchema' | 'now'> = {}
+        deps: Pick<VectorIndexOpenDeps, 'configureConnection' | 'loadExtension' | 'migrateSchema' | 'now' | 'knnMaxK'> = {}
     ): VectorIndex {
         (deps.configureConnection ?? defaultConfigureConnection)(db);
         (deps.loadExtension ?? sqliteVec.load)(db);
         (deps.migrateSchema ?? runSchemaMigration)(db);
-        return new VectorIndex(db, deps.now ?? Date.now);
+        return new VectorIndex(db, deps.now ?? Date.now, deps.knnMaxK ?? SQLITE_VEC_KNN_MAX_K);
     }
 
     /** True once close() has been called. */
@@ -553,13 +560,15 @@ export class VectorIndex {
      * Runs a KNN query against the vec0 virtual table using sqlite-vec Hamming distance.
      *
      * sqlite-vec returns rows in distance order ascending (smallest distance = most similar).
-     * The `k` parameter controls how many candidates sqlite-vec evaluates internally.
+     * The requested result limit is distinct from vec0's candidate k: post-filtered
+     * TTL/layer rows and malformed paths trigger bounded KNN overfetch. Beyond vec0's
+     * k ceiling, an exact local scan considers the remaining indexed rows.
      *
      * vec_bit() converts the raw Uint8Array query vector into the bit vector format
      * that sqlite-vec's MATCH operator expects.
      *
      * @param queryVector - 128-byte packed binary query vector (Uint8Array)
-     * @param limit - Maximum number of results (maps to `k = ?` in vec0 KNN syntax)
+     * @param limit - Maximum number of eligible results (candidate k may grow beyond this)
      * @param layer - Optional layer filter (identity, state, events, etc.)
      * @returns Results sorted by Hamming distance ascending (most similar first)
      * @throws {VectorIndexError} If the query vector is not exactly 128 bytes.
@@ -576,7 +585,7 @@ export class VectorIndex {
 
         // Rows past their TTL are hidden until the next pruneExpired() removes them.
         const nowSeconds = Math.floor(this.#now() / 1000);
-        const rows = layer === undefined
+        const knn = (k: number): KnnRow[] => (layer === undefined
             ? this.#db
                 .query<KnnRow, [Uint8Array, number, number]>(
                     `SELECT m.pk, m.sk, m.layer, v.distance
@@ -586,7 +595,7 @@ export class VectorIndex {
                        AND (m.ttl IS NULL OR m.ttl > ?)
                      ORDER BY v.distance`
                 )
-                .all(queryVector, limit, nowSeconds)
+                .all(queryVector, k, nowSeconds)
             : this.#db
                 .query<KnnRow, [Uint8Array, number, number, string]>(
                     `SELECT m.pk, m.sk, m.layer, v.distance
@@ -597,17 +606,59 @@ export class VectorIndex {
                        AND m.layer = ?
                      ORDER BY v.distance`
                 )
-                .all(queryVector, limit, nowSeconds, layer);
-        const valid: VectorQueryResult[] = [];
-        for(const row of rows) {
-            try {
-                const path = createMemoryPath(MemoryToolKeyGenerator.parsePath(row.pk, row.sk));
-                valid.push({ path, layer: classifyMemoryPath(path).namespace, distance: row.distance });
-            } catch (error) {
-                logger.warn({ error, pk: row.pk, sk: row.sk, msg: 'Skipping malformed legacy vector-index row' });
+                .all(queryVector, k, nowSeconds, layer));
+        const warned = new Set<string>();
+        const eligible = (rows: KnnRow[]): VectorQueryResult[] => {
+            const valid: VectorQueryResult[] = [];
+            for(const row of rows) {
+                try {
+                    const path = createMemoryPath(MemoryToolKeyGenerator.parsePath(row.pk, row.sk));
+                    valid.push({ path, layer: classifyMemoryPath(path).namespace, distance: row.distance });
+                    if(valid.length === limit) {
+                        break;
+                    }
+                } catch (error) {
+                    const key = JSON.stringify([row.pk, row.sk]);
+                    if(!warned.has(key)) {
+                        logger.warn({ error, pk: row.pk, sk: row.sk, msg: 'Skipping malformed legacy vector-index row' });
+                        warned.add(key);
+                    }
+                }
+            }
+            return valid;
+        };
+
+        let k = Math.min(limit, this.#knnMaxK);
+        let valid = eligible(knn(k));
+        if(valid.length === limit) {
+            return valid;
+        }
+        // Count vec0 itself: counting only the filtered join would falsely signal exhaustion.
+        const total = this.#db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM vec_memory').get()!.n;
+        while(k < total && k < this.#knnMaxK) {
+            k = Math.min(total, this.#knnMaxK, k * 2);
+            valid = eligible(knn(k));
+            if(valid.length === limit) {
+                return valid;
             }
         }
-        return valid;
+        if(k >= total) {
+            return valid;
+        }
+        // sqlite-vec 0.1.x rejects k > 4096. Scan the small local index exactly,
+        // retaining SQL TTL/layer predicates and checking legacy paths before slicing.
+        const rows = layer === undefined
+            ? this.#db.query<KnnRow, [Uint8Array, number]>(
+                `SELECT m.pk, m.sk, m.layer, vec_distance_hamming(v.embedding, vec_bit(?)) AS distance
+                 FROM vec_memory v JOIN memory_vectors m ON m.rowid = v.rowid
+                 WHERE m.ttl IS NULL OR m.ttl > ? ORDER BY distance`
+            ).all(queryVector, nowSeconds)
+            : this.#db.query<KnnRow, [Uint8Array, number, string]>(
+                `SELECT m.pk, m.sk, m.layer, vec_distance_hamming(v.embedding, vec_bit(?)) AS distance
+                 FROM vec_memory v JOIN memory_vectors m ON m.rowid = v.rowid
+                 WHERE (m.ttl IS NULL OR m.ttl > ?) AND m.layer = ? ORDER BY distance`
+            ).all(queryVector, nowSeconds, layer);
+        return eligible(rows);
     }
 
     /**

@@ -193,7 +193,7 @@ describe('VectorIndex', () => {
         });
 
         it('skips malformed legacy keys and root vectors, deriving valid result layers from paths', () => {
-            const warn = spyOn(logger, 'warn');
+            const warn = spyOn(logger, 'warn').mockClear();
             index.upsert({ pk: 'bad', sk: 'FILE#bad', layer: createIndexLayer('unknown'), contentHash: 'a', vector: makeVector(0xFF), updatedAt: 1, ttl: null });
             index.upsert({ pk: 'DIR#/', sk: 'FILE#', layer: createIndexLayer('unknown'), contentHash: 'b', vector: makeVector(0xFF), updatedAt: 2, ttl: null });
             index.upsert({ pk: 'DIR#/users/alice', sk: 'FILE#name', layer: createIndexLayer('unknown'), contentHash: 'c', vector: makeVector(0xFF), updatedAt: 3, ttl: null });
@@ -297,6 +297,33 @@ describe('VectorIndex', () => {
     });
 
     describe('VectorIndex.open()', () => {
+        it('uses the default KNN ceiling on the open path without an override', async () => {
+            const openedDb = new Database(':memory:');
+            const originalQuery = openedDb.query.bind(openedDb);
+            const requestedK: unknown[] = [];
+            spyOn(openedDb, 'query').mockImplementation(((sql: string) => {
+                const statement = originalQuery(sql);
+                if(sql.includes('MATCH vec_bit(?)')) {
+                    const originalAll = statement.all.bind(statement) as (...args: unknown[]) => ReturnType<typeof statement.all>;
+                    spyOn(statement, 'all').mockImplementation((...args: unknown[]) => {
+                        requestedK.push(args[1]);
+                        return originalAll(...args);
+                    });
+                }
+                return statement;
+            }) as typeof openedDb.query);
+            const opened = await VectorIndex.open(':memory:', { createDatabase: () => openedDb });
+            try {
+                opened.upsert({ pk: 'DIR#/identity', sk: 'FILE#found', layer: createIndexLayer('identity'), contentHash: 'h', vector: makeVector(0), updatedAt: 1, ttl: null });
+                expect(opened.query(makeVector(0), 1)).toEqual([
+                    { path: createMemoryPath('/identity/found'), layer: createIndexLayer('identity'), distance: 0 },
+                ]);
+                expect(requestedK).toEqual([1]);
+            } finally {
+                opened.close();
+            }
+        });
+
         // This test's genuine purpose is to exercise the real file-backed open path:
         // a real bun:sqlite Database on disk, real sqlite-vec native extension loading
         // (configureCustomSQLite + sqliteVec.load), a real schema migration, and real
@@ -374,6 +401,7 @@ describe('VectorIndex TTL and prune (#129)', () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         index.close();
     });
 
@@ -409,6 +437,154 @@ describe('VectorIndex TTL and prune (#129)', () => {
             expect(index.query(makeVector(0xFF), 10)).toHaveLength(1);
             clockMs = (NOW_S + 1) * 1000;
             expect(index.query(makeVector(0xFF), 10)).toEqual([]);
+        });
+    });
+
+    describe('query overfetch', () => {
+        function ranked(sk: string, bits: number, ttl: number | null, overrides: Partial<VectorIndexEntry> = {}): void {
+            const vector = makeVector(0);
+            vector[0] = bits;
+            index.upsert(entry(sk, ttl, { vector, ...overrides }));
+        }
+
+        it('does not count or retry when the first KNN pass fills the limit', () => {
+            ranked('near', 0, null);
+            ranked('far', 1, null);
+            const queries = spyOn(db, 'query');
+            expect(index.query(makeVector(0), 1)).toEqual([
+                { path: createMemoryPath('/events/activity/chat/near'), layer: createIndexLayer('events'), distance: 0 },
+            ]);
+            expect(queries.mock.calls.filter(call => String(call[0]).includes('MATCH vec_bit(?)'))).toHaveLength(1);
+            expect(queries.mock.calls.filter(call => String(call[0]).includes('COUNT(*) AS n FROM vec_memory'))).toHaveLength(0);
+        });
+
+        it('finds two live neighbours beyond the expired nearest two in distance order', () => {
+            ranked('expired-0', 0, NOW_S);
+            ranked('expired-1', 1, NOW_S - 1);
+            ranked('live-2', 3, NOW_S + 1);
+            ranked('live-3', 7, null);
+            ranked('live-4', 15, null);
+            const queries = spyOn(db, 'query');
+            expect(index.query(makeVector(0), 2)).toEqual([
+                { path: createMemoryPath('/events/activity/chat/live-2'), layer: createIndexLayer('events'), distance: 2 },
+                { path: createMemoryPath('/events/activity/chat/live-3'), layer: createIndexLayer('events'), distance: 3 },
+            ]);
+            expect(queries.mock.calls.filter(call => String(call[0]).includes('MATCH vec_bit(?)'))).toHaveLength(2);
+        });
+
+        it('finds matching-layer neighbours beyond the wrong-layer nearest two', () => {
+            ranked('wrong-0', 0, null, { pk: 'DIR#/state', layer: createIndexLayer('state') });
+            ranked('wrong-1', 1, null, { pk: 'DIR#/state', layer: createIndexLayer('state') });
+            ranked('right-2', 3, null);
+            ranked('right-3', 7, null);
+            expect(index.query(makeVector(0), 2, createLayerName('events'))).toEqual([
+                { path: createMemoryPath('/events/activity/chat/right-2'), layer: createIndexLayer('events'), distance: 2 },
+                { path: createMemoryPath('/events/activity/chat/right-3'), layer: createIndexLayer('events'), distance: 3 },
+            ]);
+        });
+
+        it('grows twice past mixed TTL and layer rejections before returning exactly two results', () => {
+            ranked('expired-0', 0, NOW_S);
+            ranked('wrong-1', 1, null, { pk: 'DIR#/state', layer: createIndexLayer('state') });
+            ranked('expired-2', 3, NOW_S - 1);
+            ranked('wrong-3', 7, null, { pk: 'DIR#/state', layer: createIndexLayer('state') });
+            ranked('right-4', 15, null);
+            ranked('right-5', 31, NOW_S + 1);
+            ranked('right-6', 63, null);
+            const queries = spyOn(db, 'query');
+            expect(index.query(makeVector(0), 2, createLayerName('events'))).toEqual([
+                { path: createMemoryPath('/events/activity/chat/right-4'), layer: createIndexLayer('events'), distance: 4 },
+                { path: createMemoryPath('/events/activity/chat/right-5'), layer: createIndexLayer('events'), distance: 5 },
+            ]);
+            expect(queries.mock.calls.filter(call => String(call[0]).includes('MATCH vec_bit(?)'))).toHaveLength(3);
+        });
+
+        it('terminates when every indexed candidate is filtered out', () => {
+            ranked('expired', 0, NOW_S);
+            ranked('wrong', 1, null, { pk: 'DIR#/state', layer: createIndexLayer('state') });
+            const queries = spyOn(db, 'query');
+            expect(index.query(makeVector(0), 1, createLayerName('events'))).toEqual([]);
+            expect(queries.mock.calls.filter(call => String(call[0]).includes('MATCH vec_bit(?)'))).toHaveLength(2);
+            expect(queries.mock.calls.filter(call => String(call[0]).includes('vec_distance_hamming'))).toHaveLength(0);
+        });
+
+        it('returns fewer than the requested limit when all indexed candidates have been examined', () => {
+            ranked('expired', 0, NOW_S);
+            ranked('live', 1, null);
+            ranked('wrong', 3, null, { pk: 'DIR#/state', layer: createIndexLayer('state') });
+            expect(index.query(makeVector(0), 2, createLayerName('events'))).toEqual([
+                { path: createMemoryPath('/events/activity/chat/live'), layer: createIndexLayer('events'), distance: 1 },
+            ]);
+        });
+
+        it('uses an exact scan beyond the vec0 KNN ceiling to find a live matching-layer row', () => {
+            const smallDb = new Database(':memory:');
+            const small = VectorIndex.openWithDb(smallDb, { now: () => NOW_MS, knnMaxK: 2 });
+            try {
+                const vector = (bits: number): Uint8Array => {
+                    const v = makeVector(0);
+                    v[0] = bits;
+                    return v;
+                };
+                small.upsert(entry('expired', NOW_S, { vector: vector(0) }));
+                small.upsert(entry('wrong', null, { pk: 'DIR#/state', layer: createIndexLayer('state'), vector: vector(1) }));
+                small.upsert(entry('live', null, { vector: vector(3) }));
+                expect(small.query(makeVector(0), 1, createLayerName('events'))).toEqual([
+                    { path: createMemoryPath('/events/activity/chat/live'), layer: createIndexLayer('events'), distance: 2 },
+                ]);
+            } finally {
+                small.close();
+            }
+        });
+
+        it('caps initial KNN k when the requested limit exceeds the ceiling', () => {
+            const smallDb = new Database(':memory:');
+            const small = VectorIndex.openWithDb(smallDb, { now: () => NOW_MS, knnMaxK: 2 });
+            try {
+                small.upsert(entry('first', null));
+                small.upsert(entry('second', null));
+                small.upsert(entry('third', null));
+                const queries = spyOn(smallDb, 'query');
+                expect(small.query(makeVector(0xFF), 3)).toHaveLength(3);
+                expect(queries.mock.calls.filter(call => String(call[0]).includes('MATCH vec_bit(?)'))).toHaveLength(1);
+                expect(queries.mock.calls.filter(call => String(call[0]).includes('vec_distance_hamming'))).toHaveLength(1);
+            } finally {
+                small.close();
+            }
+        });
+
+        it('the ceiling scan excludes malformed paths and returns fewer than requested', () => {
+            const smallDb = new Database(':memory:');
+            const small = VectorIndex.openWithDb(smallDb, { now: () => NOW_MS, knnMaxK: 2 });
+            const warn = spyOn(logger, 'warn').mockClear();
+            try {
+                const vector = makeVector(0);
+                small.upsert(entry('bad', null, { pk: 'bad', vector }));
+                const live = makeVector(0);
+                live[0] = 1;
+                small.upsert(entry('live', null, { vector: live }));
+                const expired = makeVector(0);
+                expired[0] = 3;
+                small.upsert(entry('expired', NOW_S, { vector: expired }));
+                expect(small.query(makeVector(0), 2)).toEqual([
+                    { path: createMemoryPath('/events/activity/chat/live'), layer: createIndexLayer('events'), distance: 1 },
+                ]);
+                expect(warn.mock.calls.filter(call => (call[0] as Record<string, unknown> | undefined)?.msg === 'Skipping malformed legacy vector-index row')).toHaveLength(1);
+            } finally {
+                small.close();
+            }
+        });
+
+        it('skips a malformed nearest path during expansion and warns only once', () => {
+            const warn = spyOn(logger, 'warn').mockClear();
+            ranked('bad', 0, null, { pk: 'bad' });
+            ranked('live', 1, null);
+            ranked('far', 3, null);
+            expect(index.query(makeVector(0), 2)).toEqual([
+                { path: createMemoryPath('/events/activity/chat/live'), layer: createIndexLayer('events'), distance: 1 },
+                { path: createMemoryPath('/events/activity/chat/far'), layer: createIndexLayer('events'), distance: 2 },
+            ]);
+            expect(warn.mock.calls.filter(call => (call[0] as Record<string, unknown> | undefined)?.msg === 'Skipping malformed legacy vector-index row')).toHaveLength(1);
         });
     });
 

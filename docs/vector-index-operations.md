@@ -21,6 +21,10 @@ WAL notes:
 
 Each row stores its memory's DynamoDB `TTL`. Queries hide expired rows immediately, and Izzy deletes them at startup and then every hour (`Pruned expired vector-index rows` at info level when there were any). This makes no DynamoDB reads. It runs only while the vector index is open, which needs the embedder to load. If the embedder is disabled, nothing is pruned or indexed until it is fixed.
 
+## Search cost with selective filters (#135)
+
+A semantic query may rerun local KNN with progressively more candidates when the nearest vectors are expired, outside the requested layer, or have malformed legacy paths. When sqlite-vec's 4096-candidate ceiling is reached on a larger index, the query makes one exact local Hamming-distance scan instead of returning a misleadingly short result. This can raise synchronous SQLite query latency for selective searches, but requires neither a rebuild of the live index nor additional DynamoDB reads. TTL and layer visibility stay the same.
+
 ## Drift cleanup runbook (#129)
 
 Only Craig runs these steps. Izzy stays running throughout. Run every tool from the develop checkout, unsandboxed, under `sst shell --`, against the same stage Izzy uses.
