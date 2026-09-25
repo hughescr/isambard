@@ -43,7 +43,6 @@ interface IndexerWork {
     job:         IndexerJob
     attempts:    number
     state:       WorkState
-    done:        boolean
     retryTimer?: ReturnType<typeof setTimeout>
     completion:  Promise<void>
     resolve:     () => void
@@ -81,6 +80,16 @@ export class AsyncIndexer {
     /** True once close() has been called. */
     get isClosed(): boolean {
         return this.#closed;
+    }
+
+    /**
+     * Number of paths with unfinished work (queued, executing or sleeping on a retry).
+     * Observability for the supersession bookkeeping: it returns to 0 once all work settles.
+     *
+     * @internal
+     */
+    get trackedPathCount(): number {
+        return this.#latestWorkByPath.size;
     }
 
     /** Queue depth soft-cap threshold */
@@ -154,7 +163,7 @@ export class AsyncIndexer {
         const completion = new Promise<void>((resolve) => {
             resolveWork = resolve;
         });
-        const work: IndexerWork = { job, attempts: 0, state: 'queued', done: false, completion, resolve: resolveWork };
+        const work: IndexerWork = { job, attempts: 0, state: 'queued', completion, resolve: resolveWork };
         this.#completionTail = this.#completionTail.then(() => completion);
         return work;
     }
@@ -165,7 +174,8 @@ export class AsyncIndexer {
 
     /** Processes one attempt. Delayed retries are deliberately outside the serial tail. */
     async #processWork(work: IndexerWork): Promise<void> {
-        if(work.done || work.state !== 'queued') {
+        // A superseded queued retry is already 'complete' by the time its turn comes.
+        if(work.state !== 'queued') {
             return;
         }
         work.state = 'executing';
@@ -227,26 +237,24 @@ export class AsyncIndexer {
             delayMs,
             msg:         'AsyncIndexer job failed: retrying with bounded backoff',
         });
+        // Only #completeWork() moves a work out of 'sleeping' before this fires, and it clears the
+        // timer synchronously — so when the timer does fire, the work is still the path's latest.
         work.retryTimer = setTimeout(() => {
             work.retryTimer = undefined;
-            if(work.done || work.state !== 'sleeping' || this.#latestWorkByPath.get(work.job.path) !== work) {
-                return;
-            }
             work.state = 'queued';
             this.#appendWork(work);
         }, delayMs);
     }
 
+    /**
+     * Settles a work exactly once. Callers only ever pass unsettled work: enqueue() retires the
+     * path's latest work (never 'complete', since completion removes it from the map), and
+     * #processWork() completes the work it is executing.
+     */
     #completeWork(work: IndexerWork): void {
-        if(work.done) {
-            return;
-        }
-        work.done = true;
         work.state = 'complete';
-        if(work.retryTimer !== undefined) {
-            clearTimeout(work.retryTimer);
-            work.retryTimer = undefined;
-        }
+        clearTimeout(work.retryTimer);
+        work.retryTimer = undefined;
         this.#pending--;
         if(this.#latestWorkByPath.get(work.job.path) === work) {
             this.#latestWorkByPath.delete(work.job.path);

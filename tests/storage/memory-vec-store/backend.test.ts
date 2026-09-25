@@ -575,6 +575,45 @@ describe('VectorIndex TTL and prune (#129)', () => {
             }
         });
 
+        describe('default sqlite-vec KNN ceiling', () => {
+            /** Records the k bound to each vec0 KNN statement the index runs. */
+            function recordKnnK(): number[] {
+                const ks: number[] = [];
+                const realQuery = db.query.bind(db);
+                spyOn(db, 'query').mockImplementation(((sql: string) => {
+                    const statement = realQuery(sql);
+                    if(!sql.includes('MATCH vec_bit(?)')) {
+                        return statement;
+                    }
+                    return {
+                        all: (...params: unknown[]) => {
+                            ks.push(params[1] as number);
+                            return statement.all(...(params as never[]));
+                        },
+                    };
+                }) as unknown as typeof db.query);
+                return ks;
+            }
+
+            it('asks sqlite-vec for exactly 4096 neighbours when the limit is at the ceiling', () => {
+                index.upsert(entry('only', null));
+                const ks = recordKnnK();
+                expect(index.query(makeVector(0xFF), 4096)).toEqual([
+                    { path: createMemoryPath('/events/activity/chat/only'), layer: createIndexLayer('events'), distance: 0 },
+                ]);
+                expect(ks).toEqual([4096]);
+            });
+
+            it('caps a limit one above the ceiling at the 4096 neighbours sqlite-vec accepts', () => {
+                index.upsert(entry('only', null));
+                const ks = recordKnnK();
+                expect(index.query(makeVector(0xFF), 4097)).toEqual([
+                    { path: createMemoryPath('/events/activity/chat/only'), layer: createIndexLayer('events'), distance: 0 },
+                ]);
+                expect(ks).toEqual([4096]);
+            });
+        });
+
         it('skips a malformed nearest path during expansion and warns only once', () => {
             const warn = spyOn(logger, 'warn').mockClear();
             ranked('bad', 0, null, { pk: 'bad' });

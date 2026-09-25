@@ -132,6 +132,13 @@ describe('AsyncIndexer', () => {
             expect(arg.updatedAt).toBeGreaterThan(0);
         });
 
+        it('tracks a path while its work is pending and retires it on completion', async () => {
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/tracked') });
+            expect(indexer.trackedPathCount).toBe(1);
+            await indexer.drain();
+            expect(indexer.trackedPathCount).toBe(0);
+        });
+
         it('drain resolves immediately when queue is empty', async () => {
             await expect(indexer.drain()).resolves.toBeUndefined();
         });
@@ -374,6 +381,28 @@ describe('AsyncIndexer', () => {
             expect(warnCalls).toEqual([[{ error: failure, path, msg: 'AsyncIndexer job failed: dropping and continuing' }]]);
         });
 
+        it('drops a vector-index upsert failure after a successful embedding without retrying', async () => {
+            const failure = new Error('disk full');
+            mockVectorIndex.upsert.mockImplementation(() => {
+                throw failure;
+            });
+            const path = createMemoryPath('/retry/after-encode');
+            const firstWarning = new Promise<unknown>((resolve) => {
+                logger.warn.mockImplementation((...args: unknown[]) => {
+                    resolve(args[0]);
+                });
+            });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'x', ttl: undefined, sourceUpdatedAt: 1 });
+            // The embedding succeeded, so the upsert failure is not an embedding failure: no retry.
+            expect(await firstWarning).toEqual({ error: failure, path, msg: 'AsyncIndexer job failed: dropping and continuing' });
+            expect(jest.getTimerCount()).toBe(0);
+            await indexer.drain();
+            expect(mockEmbedder.encode).toHaveBeenCalledTimes(1);
+            expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+            expect(indexer.trackedPathCount).toBe(0);
+        });
+
         it('supersedes a sleeping retry silently when newer same-path work arrives', async () => {
             const path = createMemoryPath('/retry/supersede');
             mockVectorIndex.delete.mockImplementation(() => {
@@ -383,12 +412,62 @@ describe('AsyncIndexer', () => {
             indexer.enqueue({ kind: 'delete', path });
             await retryWarning;
             jest.advanceTimersByTime(0);
+            expect(jest.getTimerCount()).toBe(1);
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'new', ttl: undefined, sourceUpdatedAt: 2 });
+            // Superseding the sleeping retry cancels its backoff timer outright.
+            expect(jest.getTimerCount()).toBe(0);
             jest.advanceTimersByTime(500);
             await indexer.drain();
             expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
             expect(logger.warn).toHaveBeenCalledTimes(1);
+            expect(indexer.trackedPathCount).toBe(0);
+        });
+
+        it('keeps the newer same-path work tracked when older in-flight work completes, so the newer work still retries', async () => {
+            const path = createMemoryPath('/retry/older-completes');
+            let resolveOld!: (result: EmbedResult) => void;
+            const oldEmbedding = new Promise<EmbedResult>((resolve) => {
+                resolveOld = resolve;
+            });
+            let markOldStarted!: () => void;
+            const oldStarted = new Promise<void>((resolve) => {
+                markOldStarted = resolve;
+            });
+            const failure = new Error('embed failed');
+            let encodeCount = 0;
+            mockEmbedder.encode.mockImplementation(async () => {
+                encodeCount++;
+                if(encodeCount === 1) {
+                    markOldStarted();
+                    return oldEmbedding;
+                }
+                if(encodeCount === 2) {
+                    throw failure;
+                }
+                return makeEmbedResult();
+            });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'old', ttl: undefined, sourceUpdatedAt: 1 });
+            await oldStarted;
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'new', ttl: undefined, sourceUpdatedAt: 2 });
+            expect(indexer.trackedPathCount).toBe(1);
+            const firstWarning = new Promise<unknown>((resolve) => {
+                logger.warn.mockImplementation((...args: unknown[]) => {
+                    resolve(args[0]);
+                });
+            });
+            resolveOld(makeEmbedResult());
+            // The older job's completion must not retire the newer job's tracking entry, so the
+            // newer job's transient failure is still retried rather than dropped as superseded.
+            expect(await firstWarning).toEqual({ error: failure, path, attempt: 1, nextAttempt: 2, delayMs: 250, msg: 'AsyncIndexer job failed: retrying with bounded backoff' });
+            expect(indexer.trackedPathCount).toBe(1);
+            expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(250);
+            await indexer.drain();
+            expect(mockEmbedder.encode).toHaveBeenCalledTimes(3);
+            expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(2);
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+            expect(indexer.trackedPathCount).toBe(0);
         });
 
         it('drops a failed in-flight job when newer same-path work supersedes it', async () => {
