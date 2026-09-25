@@ -18,7 +18,7 @@ import { InvariantViolationError } from '@/errors';
 import { WellKnownChannelNotFoundError } from '@/errors/discord';
 import { DiscordCapabilityImpl, type DiscordCapability } from '@/integrations/discord/capability';
 import { ResponseRouter } from '@/integrations/discord/channel-registry/response-router';
-import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
+import { DISCORD_MAX_LENGTH, DISCORD_SAFE_LENGTH } from '@/integrations/discord/messages';
 import { DELIVERY_TOKEN_MAX_LENGTH } from '@/integrations/discord/outbox-replay';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
@@ -410,6 +410,52 @@ describe('sendEnvelopeResponse', () => {
         expect(payload.content.slice(0, content.length)).toBe(content);
         expect(payload.content.length).toBeLessThanOrEqual(DISCORD_MAX_LENGTH);
         expect(decodeDeliveryCode(payload.content)).toBe(payload.nonce);
+    });
+
+    test('with a discordCapability, splits content that exceeds the worst-case delivery-code budget by one character into two chunks', async () => {
+        const worstCaseBudget = maxContentLengthForDeliveryCode('0'.repeat(DELIVERY_TOKEN_MAX_LENGTH), DISCORD_MAX_LENGTH);
+        const content = 'a'.repeat(worstCaseBudget + 1);
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'target-channel-456' as ChannelId,
+            shouldSend:      true,
+            content,
+        });
+        const mockSendToChannelCapability = mock(async () => ({ status: 'sent' as const }));
+        const mockDiscordCapability = { sendToChannel: mockSendToChannelCapability } as unknown as DiscordCapability;
+
+        await sendEnvelopeResponse({
+            envelopeId:        'env-worst-case-budget',
+            kind:              'catchup',
+            text:              content,
+            responseRouter:    mockResponseRouter,
+            client:            mockClient,
+            rateLimiter:       mockRateLimiter,
+            discordCapability: mockDiscordCapability,
+        });
+
+        expect(mockSendToChannelCapability).toHaveBeenCalledTimes(2);
+    });
+
+    test('without a discordCapability, splits at the default safe length rather than the delivery-code budget', async () => {
+        const deliveryCodeBudget = maxContentLengthForDeliveryCode('0'.repeat(DELIVERY_TOKEN_MAX_LENGTH), DISCORD_MAX_LENGTH);
+        const content = 'a'.repeat(DISCORD_SAFE_LENGTH + 1);
+        expect(content.length).toBeLessThanOrEqual(deliveryCodeBudget);
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'target-channel-456' as ChannelId,
+            shouldSend:      true,
+            content,
+        });
+
+        await sendEnvelopeResponse({
+            envelopeId:     'env-no-capability-safe-length',
+            kind:           'catchup',
+            text:           content,
+            responseRouter: mockResponseRouter,
+            client:         mockClient,
+            rateLimiter:    mockRateLimiter,
+        });
+
+        expect(mockSendToChannel).toHaveBeenCalledTimes(2);
     });
 
     test('with a discordCapability, a discord-kind envelope queues under the agent_response outbox type', async () => {

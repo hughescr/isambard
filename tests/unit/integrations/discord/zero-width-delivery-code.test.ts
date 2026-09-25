@@ -33,4 +33,29 @@ describe('zero-width delivery code', () => {
         expect(appendDeliveryCode(text, token)).toHaveLength(DISCORD_MAX_LENGTH);
         expect(appendDeliveryCode(`${text}a`, token)).toHaveLength(DISCORD_MAX_LENGTH + 1);
     });
+
+    test('throws for a token character outside the base-36 alphabet', () => {
+        expect(() => deliveryCodeFor('!')).toThrow('Delivery token contains unsupported character: !');
+    });
+
+    test('tolerates a trailing start sentinel after the final end sentinel', () => {
+        const token = 'iz0';
+        const trailingStartSentinel = zeroWidth('2063');
+        expect(decodeDeliveryCode(`${deliveryCodeFor(token)}${trailingStartSentinel}`)).toBe(token);
+    });
+
+    test('does not decode a valid-looking digit run with no start sentinel before the end sentinel', () => {
+        const codeWithoutStartSentinel = deliveryCodeFor('i').slice(1);
+        expect(decodeDeliveryCode(codeWithoutStartSentinel)).toBeUndefined();
+    });
+
+    test('rejects a delivery code with an empty encoded token between adjacent sentinels', () => {
+        expect(decodeDeliveryCode(deliveryCodeFor(''))).toBeUndefined();
+    });
+
+    test('stops decoding at the first undecodable character group, never skipping past it', () => {
+        const validGroup = deliveryCodeFor('a').slice(1, -1);
+        const content = `${zeroWidth('2063')}${validGroup}xyz${validGroup}${zeroWidth('2064')}`;
+        expect(decodeDeliveryCode(content)).toBeUndefined();
+    });
 });

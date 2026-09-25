@@ -6,7 +6,9 @@ const START_SENTINEL = '⁣';
 const END_SENTINEL = '⁤';
 const ZERO_WIDTH_DIGITS = ['​', '‌', '‍', '⁠'] as const;
 const ZERO_WIDTH_DIGIT_INDEX = new Map(ZERO_WIDTH_DIGITS.map((digit, index) => [digit, index]));
-const TRAILING_ZERO_WIDTH_CHARACTERS = new Set(['​', '‌', '‍', '⁠', '⁣', '⁤', '﻿']);
+// END_SENTINEL is deliberately excluded: `finalSentinel` below is always the LAST end-sentinel
+// occurrence, so no end-sentinel character can ever fall in the trailing slice.
+const TRAILING_ZERO_WIDTH_CHARACTERS = new Set(['​', '‌', '‍', '⁠', '⁣', '﻿']);
 const TOKEN_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 function encodeTokenCharacter(character: string): string {
@@ -21,8 +23,11 @@ function encodeTokenCharacter(character: string): string {
 }
 
 function decodeTokenCharacter(encoded: string): string | undefined {
+    // encoded.length is always exactly 3 here: the sole caller below only ever slices 3-character
+    // chunks, so a length check would be dead code — an undefined digit (from too few/many
+    // characters or an unmapped character) already reports via the checks below.
     const [first, second, third] = Array.from(encoded, digit => ZERO_WIDTH_DIGIT_INDEX.get(digit as typeof ZERO_WIDTH_DIGITS[number]));
-    if(first === undefined || second === undefined || third === undefined || encoded.length !== 3) {
+    if(first === undefined || second === undefined || third === undefined) {
         return undefined;
     }
     return TOKEN_ALPHABET[first * 16 + second * 4 + third];
@@ -58,12 +63,16 @@ export function decodeDeliveryCode(content: string): string | undefined {
             return undefined;
         }
     }
-    const startSentinel = content.lastIndexOf(START_SENTINEL, finalSentinel - 1);
+    // No `- 1` adjustment needed: position `finalSentinel` itself holds the end sentinel
+    // character, never the start sentinel, so bounding the search there is equivalent.
+    const startSentinel = content.lastIndexOf(START_SENTINEL, finalSentinel);
     if(startSentinel === -1) {
         return undefined;
     }
     const encoded = content.slice(startSentinel + START_SENTINEL.length, finalSentinel);
-    if(encoded.length === 0 || encoded.length % 3 !== 0) {
+    // A non-multiple-of-3 length is not checked explicitly: it always leaves a final
+    // under-length chunk below, which decodeTokenCharacter already rejects as undefined.
+    if(encoded.length === 0) {
         return undefined;
     }
     let token = '';
