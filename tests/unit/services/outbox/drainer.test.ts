@@ -265,6 +265,21 @@ describe('createOutboxDrainer', () => {
             expect(logger.error).toHaveBeenCalledWith({ service: SERVICE, itemId: item.id, error: 'null' }, 'Failed to deliver outbox item');
         });
 
+        test('records an undefined delivery failure as an unclassified retry', async () => {
+            const item = makeItem();
+            const classify = mock(async () => ({ disposition: 'abandon' as const, confidence: 1 }));
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw undefined;
+            });
+            const classified = createOutboxDrainer({ ...deps, failureClassifier: { classify }, now: () => 1000 });
+
+            expect(await classified.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(classify).not.toHaveBeenCalled();
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'undefined', { retryable: true, nextAttemptAt: '1970-01-01T00:00:01.100Z' });
+            classified.stop();
+        });
+
         test('logs error when delivery fails', async () => {
             const item = makeItem();
             outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
@@ -524,6 +539,26 @@ describe('createOutboxDrainer', () => {
         retrying.stop();
     });
 
+    test('keeps the pending retry timer when a later failure retries at the same instant', async () => {
+        const first = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001' });
+        const second = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
+        outboxBackend.dequeue.mockImplementationOnce(async (): Promise<OutboxItem[]> => [first, second]);
+        deliverFn.mockImplementation(async (): Promise<void> => {
+            throw new Error('offline');
+        });
+        const retrying = createOutboxDrainer({ ...deps, now: () => 1000 });
+        const setTimeoutSpy = spyOn(globalThis, 'setTimeout');
+        const clearTimeoutSpy = spyOn(globalThis, 'clearTimeout');
+
+        expect(await retrying.drain(SERVICE)).toEqual({ delivered: 0, failed: 2, discarded: 0, unacknowledged: 0 });
+        expect(outboxBackend.markFailed).toHaveBeenNthCalledWith(1, first, 'offline', { retryable: true, nextAttemptAt: '1970-01-01T00:00:01.100Z' });
+        expect(outboxBackend.markFailed).toHaveBeenNthCalledWith(2, second, 'offline', { retryable: true, nextAttemptAt: '1970-01-01T00:00:01.100Z' });
+        expect(setTimeoutSpy).toHaveBeenCalledTimes(1);
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 100);
+        expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+        retrying.stop();
+    });
+
     test('caps retry backoff at sixty seconds and schedules it from the injected clock', async () => {
         const item = makeItem({ progress: { attemptCount: 10 } });
         outboxBackend.dequeue
@@ -588,6 +623,18 @@ describe('createOutboxDrainer', () => {
             });
             expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
             expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Channel unavailable', { retryable: false });
+        });
+
+        test('schedules no retry timer after a terminal delivery failure', async () => {
+            const item = makeItem({ progress: { attemptCount: 9 } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Channel unavailable');
+            });
+
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Channel unavailable', { retryable: false });
+            expect(jest.getTimerCount()).toBe(0);
         });
 
         test('already exhausted row is discarded without another send', async () => {
@@ -769,6 +816,29 @@ describe('createOutboxDrainer', () => {
             await Promise.resolve();
 
             expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        });
+
+        test('keeps the later backoff retry instead of an immediate follow-up after a full batch with a failure', async () => {
+            const failing = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001', progress: { attemptCount: 1 } });
+            const next = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' });
+            const last = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000003' });
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (): Promise<OutboxItem[]> => [failing, next, last])
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('offline');
+            });
+            const retrying = createOutboxDrainer({ ...deps, now: () => 1000 });
+
+            expect(await retrying.drain(SERVICE)).toEqual({ delivered: 2, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(failing, 'offline', { retryable: true, nextAttemptAt: '1970-01-01T00:00:01.200Z' });
+            jest.advanceTimersByTime(199);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            retrying.stop();
         });
 
         test('does NOT schedule another drain when batch is partial (less than batchSize)', async () => {

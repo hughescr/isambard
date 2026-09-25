@@ -634,6 +634,21 @@ describe('createOutboxReplayDeliverFn', () => {
         expect(send).toHaveBeenNthCalledWith(2, { embeds: undefined, components, content: appendDeliveryCode('', deliveryTokenFor(item, 1)), nonce: deliveryTokenFor(item, 1), enforceNonce: true });
     });
 
+    test('does not acknowledge an unknown text and single-embed delivery until the embed code is present', async () => {
+        const embeds = [{ title: 'Approval needed' }];
+        const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'textandembed' }, payload: { text: 'Hello', embeds } });
+        const send = mock(async (): Promise<Message> => ({ id: 'replacement' } as Message));
+        const fetch = mock(async () => new Map([['message-1', { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)) }]]));
+        const channel = { send, messages: { fetch } } as unknown as TextChannel;
+
+        await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(item);
+
+        expect(fetch).toHaveBeenCalledWith({ limit: 100 });
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenNthCalledWith(1, { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)), nonce: deliveryTokenFor(item, 0), enforceNonce: true });
+        expect(send).toHaveBeenNthCalledWith(2, { embeds, components: undefined, content: appendDeliveryCode('', deliveryTokenFor(item, 1)), nonce: deliveryTokenFor(item, 1), enforceNonce: true });
+    });
+
     test('retries an unknown delivery after successful history proves its code absent', async () => {
         const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'missingmarker' }, payload: { text: 'Hello' } });
         const send = mock(async (): Promise<Message> => ({ id: 'replacement' } as Message));
@@ -694,6 +709,15 @@ describe('createOutboxReplayDeliverFn', () => {
         });
 
         await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toBeNull();
+    });
+
+    test('preserves an undefined send rejection without trying to read a status from it', async () => {
+        const channel = makeChannel(async () => {
+            throw undefined;
+        });
+
+        await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toBeUndefined();
+        expect(channel.send).toHaveBeenCalledTimes(1);
     });
 });
 
