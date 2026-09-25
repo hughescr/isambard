@@ -32,9 +32,16 @@ export default $config({
         // Import infrastructure
         const { memoryTable } = await import('./sst/dynamo');
 
+        // SST prints every top-level output after a deploy, and `secret.value` is the
+        // decrypted secret itself, so never output anything derived from `.value` here.
+        // `secret.name` is just the plain string passed to `new sst.Secret(...)`, so it's
+        // safe to print; this lists every secret's SST name (for `sst secret set <name>`)
+        // automatically as secrets are added to ./sst/secrets.
+        const secretNames = Object.values(secrets).map(secret => secret.name);
+
         return {
             memoryTable: memoryTable.name,
-            secrets,
+            secretNames,
             config,
         };
     },
