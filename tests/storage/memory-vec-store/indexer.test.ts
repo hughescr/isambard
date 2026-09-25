@@ -262,7 +262,7 @@ describe('AsyncIndexer', () => {
         });
 
         it('logs and drops a job whose TTL stamp throws, and keeps working', async () => {
-            const failure = new Error('database is locked');
+            const failure = new Error('TTL stamp failed');
             mockVectorIndex.getHash.mockReturnValue(await sha256Hex(`${path}\nsame`));
             mockVectorIndex.setTtls.mockImplementationOnce(() => {
                 throw failure;
@@ -285,30 +285,253 @@ describe('AsyncIndexer', () => {
         });
     });
 
-    describe('error handling', () => {
-        it('logs and drops job when embed throws, does not crash worker', async () => {
-            mockEmbedder.encode.mockImplementation(async () => {
-                throw new Error('embed failed');
-            });
-            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a', ttl: undefined, sourceUpdatedAt: 1 });
-            // Should not throw
-            await indexer.drain();
-            expect(logger.warn).toHaveBeenCalled();
+    describe('bounded transient retries', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
         });
 
-        it('continues processing subsequent jobs after one fails', async () => {
-            let callCount = 0;
-            mockEmbedder.encode.mockImplementation(async (): Promise<EmbedResult> => {
-                callCount++;
-                if(callCount === 1) {
-                    throw new Error('first fails');
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        const waitForRetryWarning = (): Promise<void> => new Promise((resolve) => {
+            logger.warn.mockImplementation((...args: unknown[]) => {
+                const payload = args[0] as Record<string, unknown>;
+                if(payload.msg === 'AsyncIndexer job failed: retrying with bounded backoff') {
+                    resolve();
                 }
-                return makeEmbedResult();
             });
-            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a', ttl: undefined, sourceUpdatedAt: 1 });
+        });
+
+        it('pins the bounded retry policy literals', () => {
+            expect(AsyncIndexer.RETRY_MAX_ATTEMPTS).toBe(3);
+            expect(AsyncIndexer.RETRY_BASE_DELAY_MS).toBe(250);
+        });
+
+        it('retries an embedder failure after 250ms and then succeeds', async () => {
+            mockEmbedder.encode.mockImplementationOnce(async () => {
+                throw new Error('embed failed');
+            });
+            const retryWarning = waitForRetryWarning();
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/retry/embed'), content: 'x', ttl: undefined, sourceUpdatedAt: 1 });
+            await retryWarning;
+            jest.advanceTimersByTime(0);
+            expect(mockEmbedder.encode).toHaveBeenCalledTimes(1);
+            expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ path: createMemoryPath('/retry/embed'), attempt: 1, nextAttempt: 2, delayMs: 250, msg: 'AsyncIndexer job failed: retrying with bounded backoff' }));
+            jest.advanceTimersByTime(249);
+            await Promise.resolve();
+            expect(mockEmbedder.encode).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(1);
+            await indexer.drain();
+            expect(mockEmbedder.encode).toHaveBeenCalledTimes(2);
+            expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
+        });
+
+        it('retries SQLITE_BUSY with exponential 250ms then 500ms backoff before terminal drop', async () => {
+            const failure = new Error('SQLITE_BUSY: database is locked');
+            mockVectorIndex.delete.mockImplementation(() => {
+                throw failure;
+            });
+            const path = createMemoryPath('/retry/busy');
+            const retryWarning = waitForRetryWarning();
+            indexer.enqueue({ kind: 'delete', path });
+            await retryWarning;
+            jest.advanceTimersByTime(0);
+            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
+            const secondRetryWarning = new Promise<void>((resolve) => {
+                logger.warn.mockImplementation((...args: unknown[]) => {
+                    const payload = args[0] as Record<string, unknown>;
+                    if(payload.attempt === 2) {
+                        resolve();
+                    }
+                });
+            });
+            jest.advanceTimersByTime(250);
+            await secondRetryWarning;
+            jest.advanceTimersByTime(0);
+            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(2);
+            jest.advanceTimersByTime(500);
+            await indexer.drain();
+            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(3);
+            const warnCalls = logger.warn.mock.calls as unknown as unknown[][];
+            expect(warnCalls).toEqual([
+                [expect.objectContaining({ error: failure, path, attempt: 1, nextAttempt: 2, delayMs: 250, msg: 'AsyncIndexer job failed: retrying with bounded backoff' })],
+                [expect.objectContaining({ error: failure, path, attempt: 2, nextAttempt: 3, delayMs: 500, msg: 'AsyncIndexer job failed: retrying with bounded backoff' })],
+                [{ error: failure, path, msg: 'AsyncIndexer job failed: dropping and continuing' }],
+            ]);
+        });
+
+        it('drops a non-lock vector-index error immediately without retrying', async () => {
+            const failure = new Error('disk full');
+            mockVectorIndex.delete.mockImplementation(() => {
+                throw failure;
+            });
+            const path = createMemoryPath('/retry/non-transient');
+            indexer.enqueue({ kind: 'delete', path });
+            await indexer.drain();
+            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
+            const warnCalls = logger.warn.mock.calls as unknown as unknown[][];
+            expect(warnCalls).toEqual([[{ error: failure, path, msg: 'AsyncIndexer job failed: dropping and continuing' }]]);
+        });
+
+        it('supersedes a sleeping retry silently when newer same-path work arrives', async () => {
+            const path = createMemoryPath('/retry/supersede');
+            mockVectorIndex.delete.mockImplementation(() => {
+                throw new Error('database is locked');
+            });
+            const retryWarning = waitForRetryWarning();
+            indexer.enqueue({ kind: 'delete', path });
+            await retryWarning;
+            jest.advanceTimersByTime(0);
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'new', ttl: undefined, sourceUpdatedAt: 2 });
+            jest.advanceTimersByTime(500);
+            await indexer.drain();
+            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
+            expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+        });
+
+        it('drops a failed in-flight job when newer same-path work supersedes it', async () => {
+            const path = createMemoryPath('/retry/in-flight');
+            const failure = new Error('embedding failed');
+            let rejectFirst!: (reason?: unknown) => void;
+            const firstEmbedding = new Promise<EmbedResult>((_resolve, reject) => {
+                rejectFirst = reject;
+            });
+            let markFirstStarted!: () => void;
+            const firstStarted = new Promise<void>((resolve) => {
+                markFirstStarted = resolve;
+            });
+            mockEmbedder.encode.mockImplementationOnce(async () => {
+                markFirstStarted();
+                return firstEmbedding;
+            });
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'old', ttl: undefined, sourceUpdatedAt: 1 });
+            await firstStarted;
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'new', ttl: undefined, sourceUpdatedAt: 2 });
+            rejectFirst(failure);
+            await indexer.drain();
+            expect(mockEmbedder.encode).toHaveBeenCalledTimes(2);
+            expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
+            expect(logger.warn).toHaveBeenCalledWith({ error: failure, path, msg: 'AsyncIndexer job failed: dropping and continuing' });
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+        });
+
+        it('supersedes a retry queued behind another job before it starts', async () => {
+            const retryPath = createMemoryPath('/retry/queued');
+            let resolveBlocker!: (result: EmbedResult) => void;
+            const blockerResult = new Promise<EmbedResult>((resolve) => {
+                resolveBlocker = resolve;
+            });
+            let markBlockerStarted!: () => void;
+            const blockerStarted = new Promise<void>((resolve) => {
+                markBlockerStarted = resolve;
+            });
+            mockVectorIndex.delete.mockImplementationOnce(() => {
+                throw new Error('database is locked');
+            });
+            mockEmbedder.encode.mockImplementation(async () => {
+                markBlockerStarted();
+                return blockerResult;
+            });
+            const retryWarning = waitForRetryWarning();
+            indexer.enqueue({ kind: 'delete', path: retryPath });
+            await retryWarning;
+            jest.advanceTimersByTime(0);
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/retry/blocker'), content: 'block', ttl: undefined, sourceUpdatedAt: 1 });
+            await blockerStarted;
+            jest.advanceTimersByTime(250);
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: retryPath, content: 'new', ttl: undefined, sourceUpdatedAt: 2 });
+            resolveBlocker(makeEmbedResult());
+            await indexer.drain();
+            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
+            expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(2);
+        });
+
+        it('runs another path before a sleeping retry and makes its captured drain await that retry', async () => {
+            let resolveSecond!: () => void;
+            const secondProcessed = new Promise<void>((resolve) => {
+                resolveSecond = resolve;
+            });
+            let deleteCount = 0;
+            mockVectorIndex.delete.mockImplementation(() => {
+                deleteCount++;
+                if(deleteCount === 1) {
+                    throw new Error('database is locked');
+                }
+                resolveSecond();
+            });
+            const retryWarning = waitForRetryWarning();
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/first') });
+            const capturedDrain = indexer.drain();
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/second') });
+            await retryWarning;
+            jest.advanceTimersByTime(0);
+            await secondProcessed;
+            expect(mockVectorIndex.delete).toHaveBeenCalledWith(expect.any(String), expect.any(String));
+            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(2);
+            let drained = false;
+            void capturedDrain.then(() => {
+                drained = true;
+                return undefined;
+            });
+            await Promise.resolve();
+            expect(drained).toBe(false);
+            jest.advanceTimersByTime(250);
+            await capturedDrain;
+            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(3);
+        });
+
+        it('decrements queue pressure once per logical retrying job', async () => {
+            mockVectorIndex.delete.mockImplementationOnce(() => {
+                throw new Error('database is locked');
+            });
+            const retryWarning = waitForRetryWarning();
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/pressure') });
+            await retryWarning;
+            jest.advanceTimersByTime(0);
+            for(let i = 0; i < 1100; i++) {
+                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/retry/pressure-${i}`) });
+            }
+            expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ queueLen: 1100, path: createMemoryPath('/retry/pressure-1098') }));
+            jest.advanceTimersByTime(250);
+            await indexer.drain();
+        });
+
+        it('close waits through a transient retry before closing the embedder', async () => {
+            mockEmbedder.encode.mockImplementationOnce(async () => {
+                throw new Error('embed failed');
+            });
+            const retryWarning = waitForRetryWarning();
+            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/retry/close'), content: 'x', ttl: undefined, sourceUpdatedAt: 1 });
+            const closing = indexer.close();
+            await retryWarning;
+            jest.advanceTimersByTime(0);
+            expect(mockEmbedder.close).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(250);
+            await closing;
+            expect(mockEmbedder.encode).toHaveBeenCalledTimes(2);
+            expect(mockEmbedder.close).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('error handling', () => {
+        it('logs and drops a non-transient vector-index failure without crashing the worker', async () => {
+            mockVectorIndex.delete.mockImplementation(() => {
+                throw new Error('delete failed');
+            });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a') });
+            await indexer.drain();
+            expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ msg: 'AsyncIndexer job failed: dropping and continuing' }));
+        });
+
+        it('continues processing subsequent jobs after a non-transient failure', async () => {
+            mockVectorIndex.delete.mockImplementationOnce(() => {
+                throw new Error('delete failed');
+            });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a') });
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/b'), content: 'b', ttl: undefined, sourceUpdatedAt: 1 });
             await indexer.drain();
-            // Second job should still be processed
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
         });
 
@@ -369,11 +592,11 @@ describe('AsyncIndexer', () => {
     });
 
     describe('error logging', () => {
-        it('logs warn with path and msg fields when embed fails', async () => {
-            mockEmbedder.encode.mockImplementation(async () => {
-                throw new Error('embed error');
+        it('logs warn with path and msg fields when a non-transient job fails', async () => {
+            mockVectorIndex.delete.mockImplementation(() => {
+                throw new Error('delete error');
             });
-            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a', ttl: undefined, sourceUpdatedAt: 1 });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a') });
             await indexer.drain();
             expect(logger.warn).toHaveBeenCalledTimes(1);
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
@@ -383,11 +606,11 @@ describe('AsyncIndexer', () => {
             expect((warnArg.msg as string).length).toBeGreaterThan(0);
         });
 
-        it('includes "AsyncIndexer" in the msg field', async () => {
-            mockEmbedder.encode.mockImplementation(async () => {
-                throw new Error('embed error');
+        it('includes "AsyncIndexer" in the terminal drop msg field', async () => {
+            mockVectorIndex.delete.mockImplementation(() => {
+                throw new Error('delete error');
             });
-            indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/a'), content: 'a', ttl: undefined, sourceUpdatedAt: 1 });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a') });
             await indexer.drain();
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
             const warnArg = warnCalls[0][0];

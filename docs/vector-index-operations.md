@@ -8,7 +8,7 @@ Every connection to the vector database sets `PRAGMA busy_timeout = 5000` and th
 
 - Readers never block on a writer, and a writer never blocks readers.
 - When two connections want to write at once, the second one waits, synchronously, for up to 5 s. `bun:sqlite` is synchronous, so while Izzy is waiting its event loop is blocked for that time. The tools keep every transaction short (one row, one page of TTL updates, or one prune batch of at most 500 rows), so real waits are milliseconds.
-- A wait longer than 5 s still fails with `database is locked`. That is a bounded wait, not a delivery guarantee. In Izzy the indexer logs and drops that job (`AsyncIndexer job failed: dropping and continuing`), and the next backfill repairs it. In a tool, the failure is counted and the tool exits non-zero.
+- A wait longer than 5 s still fails with `database is locked`. That is a bounded wait, not a delivery guarantee. In Izzy the indexer retries SQLite busy/locked and embedding failures in memory for up to three total attempts, after 250 ms then 500 ms; a newer write for the same memory supersedes a pending retry. It logs and drops an exhausted or non-transient failure (`AsyncIndexer job failed: dropping and continuing`), and the next backfill repairs it. This retry state is process-local, so a restart also relies on a later write or backfill. In a tool, the failure is counted and the tool exits non-zero.
 
 WAL notes:
 

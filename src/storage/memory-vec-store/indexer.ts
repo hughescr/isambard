@@ -8,8 +8,9 @@
  * If unchanged, skip the embed and only bring the row's TTL up to date (#129), so a TTL refresh
  * or removal still reaches the index.
  *
- * Error handling: on error, log and drop the job. The next write will re-enqueue.
- * Don't crash the worker. Don't retry.
+ * Error handling: retry transient embedding and SQLite lock failures in memory with bounded
+ * exponential backoff. Log and drop other failures (or exhausted retries); the next write or
+ * backfill repairs derived index data. Don't crash the worker.
  */
 
 import { MemoryToolKeyGenerator } from '../memory-tool/key-generator.js';
@@ -36,6 +37,18 @@ export interface AsyncIndexerDeps {
     logger?:     IndexerLogger
 }
 
+type WorkState = 'queued' | 'executing' | 'sleeping' | 'complete';
+
+interface IndexerWork {
+    job:         IndexerJob
+    attempts:    number
+    state:       WorkState
+    done:        boolean
+    retryTimer?: ReturnType<typeof setTimeout>
+    completion:  Promise<void>
+    resolve:     () => void
+}
+
 /**
  * Async vector indexer that processes upsert/delete jobs sequentially.
  *
@@ -50,12 +63,12 @@ export class AsyncIndexer {
     readonly #logger:      IndexerLogger;
 
     #pending = 0;
-    /**
-     * The currently running worker chain.
-     * A single linked chain: each job appends a `.then()` to the previous promise.
-     * Draining just awaits #tail, which resolves when all enqueued work is done.
-     */
-    #tail: Promise<void> = Promise.resolve();
+    /** The serial execution chain. Delayed retries append only when their timer fires. */
+    #tail:           Promise<void> = Promise.resolve();
+    /** Completion chain for logical work, including retry delays captured by drain(). */
+    #completionTail: Promise<void> = Promise.resolve();
+    /** The newest work for each path, used to retire stale pending retries. */
+    #latestWorkByPath = new Map<string, IndexerWork>();
     #closed = false;
 
     constructor(deps: AsyncIndexerDeps) {
@@ -76,6 +89,12 @@ export class AsyncIndexer {
     /** Log once per this many enqueues above the threshold to avoid log flooding */
     static readonly QUEUE_WARN_THROTTLE = 100;
 
+    /** Initial attempt plus this many bounded retry attempts. */
+    static readonly RETRY_MAX_ATTEMPTS = 3;
+
+    /** Delay before the first retry; subsequent retries double this delay. */
+    static readonly RETRY_BASE_DELAY_MS = 250;
+
     /**
      * Enqueues a job for asynchronous processing.
      * Returns immediately — never blocks.
@@ -85,8 +104,15 @@ export class AsyncIndexer {
      * (throttled: once per QUEUE_WARN_THROTTLE additional enqueues above threshold).
      */
     enqueue(job: IndexerJob): void {
-        // Chain: previous tail resolves → process this job → new tail resolves
-        this.#tail = this.#tail.then(() => this.#processJob(job));
+        const prior = this.#latestWorkByPath.get(job.path);
+        if(prior?.state === 'sleeping' || (prior?.state === 'queued' && prior.attempts > 0)) {
+            // A newer write makes a pending retry stale. Supersession is expected, not a failure.
+            this.#completeWork(prior);
+        }
+
+        const work = this.#createWork(job);
+        this.#latestWorkByPath.set(job.path, work);
+        this.#appendWork(work);
         this.#pending++;
 
         // Soft cap: warn if queue is growing large, throttled to avoid flooding logs
@@ -100,11 +126,9 @@ export class AsyncIndexer {
         }
     }
 
-    /**
-     * Waits until all currently enqueued jobs have been processed.
-     */
+    /** Waits until all work captured at call time has settled, including delayed retries. */
     async drain(): Promise<void> {
-        await this.#tail;
+        await this.#completionTail;
     }
 
     /**
@@ -118,41 +142,57 @@ export class AsyncIndexer {
         }
         this.#closed = true;
 
-        // Wait for all pending work to finish
+        // Wait for all pending work, including bounded delayed retries, to finish
         await this.drain();
 
         // Close the embedder
         await this.#embedder.close();
     }
 
-    /**
-     * Processes a single job. On error: logs and drops. Never throws.
-     * Always dequeues the job at the end, whether success or error.
-     */
-    async #processJob(job: IndexerJob): Promise<void> {
+    #createWork(job: IndexerJob): IndexerWork {
+        let resolveWork!: () => void;
+        const completion = new Promise<void>((resolve) => {
+            resolveWork = resolve;
+        });
+        const work: IndexerWork = { job, attempts: 0, state: 'queued', done: false, completion, resolve: resolveWork };
+        this.#completionTail = this.#completionTail.then(() => completion);
+        return work;
+    }
+
+    #appendWork(work: IndexerWork): void {
+        this.#tail = this.#tail.then(() => this.#processWork(work));
+    }
+
+    /** Processes one attempt. Delayed retries are deliberately outside the serial tail. */
+    async #processWork(work: IndexerWork): Promise<void> {
+        if(work.done || work.state !== 'queued') {
+            return;
+        }
+        work.state = 'executing';
+        work.attempts++;
+        let encoding = false;
         try {
-            const keys = MemoryToolKeyGenerator.createKeys(job.path);
-            if(job.kind === 'delete') {
+            const keys = MemoryToolKeyGenerator.createKeys(work.job.path);
+            if(work.job.kind === 'delete') {
                 this.#vectorIndex.delete(keys.PK, keys.SK);
             } else {
-                // kind === 'upsert'
-                const text = `${job.path}\n${job.content}`;
+                const text = `${work.job.path}\n${work.job.content}`;
                 const contentHash = await sha256Hex(text);
-
-                const ttl = job.ttl ?? null;
-                const { sourceUpdatedAt } = job;
+                const ttl = work.job.ttl ?? null;
+                const { sourceUpdatedAt } = work.job;
                 // Hash-check: skip embed if content unchanged, but still carry the TTL (and the
                 // source version the vector index guards writes with) across
                 const existingHash = this.#vectorIndex.getHash(keys.PK, keys.SK);
                 if(existingHash === contentHash) {
                     this.#vectorIndex.setTtls([{ pk: keys.PK, sk: keys.SK, ttl, sourceUpdatedAt }]);
                 } else {
+                    encoding = true;
                     const vector = await encodeOne(this.#embedder, text);
-
+                    encoding = false;
                     this.#vectorIndex.upsert({
                         pk:        keys.PK,
                         sk:        keys.SK,
-                        layer:     job.layer,
+                        layer:     work.job.layer,
                         contentHash,
                         vector,
                         updatedAt: Date.now(),
@@ -161,15 +201,60 @@ export class AsyncIndexer {
                     });
                 }
             }
+            this.#completeWork(work);
         } catch (error) {
-            // Log and drop — next write will re-enqueue; do not crash the worker
-            const warnPayload = {
+            if((encoding || this.#isBusyError(error)) && work.attempts < AsyncIndexer.RETRY_MAX_ATTEMPTS && this.#latestWorkByPath.get(work.job.path) === work) {
+                this.#scheduleRetry(work, error);
+                return;
+            }
+            this.#logger.warn({
                 error,
-                path: job.path,
+                path: work.job.path,
                 msg:  'AsyncIndexer job failed: dropping and continuing',
-            };
-            this.#logger.warn(warnPayload);
+            });
+            this.#completeWork(work);
+        }
+    }
+
+    #scheduleRetry(work: IndexerWork, error: unknown): void {
+        const delayMs = AsyncIndexer.RETRY_BASE_DELAY_MS * 2 ** (work.attempts - 1);
+        work.state = 'sleeping';
+        this.#logger.warn({
+            error,
+            path:        work.job.path,
+            attempt:     work.attempts,
+            nextAttempt: work.attempts + 1,
+            delayMs,
+            msg:         'AsyncIndexer job failed: retrying with bounded backoff',
+        });
+        work.retryTimer = setTimeout(() => {
+            work.retryTimer = undefined;
+            if(work.done || work.state !== 'sleeping' || this.#latestWorkByPath.get(work.job.path) !== work) {
+                return;
+            }
+            work.state = 'queued';
+            this.#appendWork(work);
+        }, delayMs);
+    }
+
+    #completeWork(work: IndexerWork): void {
+        if(work.done) {
+            return;
+        }
+        work.done = true;
+        work.state = 'complete';
+        if(work.retryTimer !== undefined) {
+            clearTimeout(work.retryTimer);
+            work.retryTimer = undefined;
         }
         this.#pending--;
+        if(this.#latestWorkByPath.get(work.job.path) === work) {
+            this.#latestWorkByPath.delete(work.job.path);
+        }
+        work.resolve();
+    }
+
+    #isBusyError(error: unknown): boolean {
+        return error instanceof Error && /SQLITE_BUSY|database is locked/i.test(error.message);
     }
 }
