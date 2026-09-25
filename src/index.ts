@@ -680,8 +680,9 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         outboxBackend,
         registry:          healthRegistry,
         deliverFn:         createOutboxReplayDeliverFn({ fetchChannel: channelId => discordCapability.fetchChannel(channelId) }),
-        // Config wiring for Resource.TypesafeApiKey is intentionally deferred until its SST secret is added.
-        failureClassifier: createJevOutboxFailureClassifier({}),
+        // Jev classifies known Discord send rejections as retry/abandon when Resource.TypesafeApiKey
+        // is configured; an absent/empty key leaves the classifier on the deterministic retry fallback.
+        failureClassifier: createJevOutboxFailureClassifier({ apiKey: config.typesafe?.apiKey }),
         logger,
     });
     registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });

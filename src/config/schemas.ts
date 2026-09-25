@@ -197,6 +197,11 @@ export const bskyConfigSchema = z.object({
     serviceUrl:  z.url().default('https://bsky.social'),
 });
 
+// TypeSafe (Jev outbox-failure classifier) config
+export const typesafeConfigSchema = z.object({
+    apiKey: z.string().min(1),
+});
+
 // DynamoDB config
 export const dynamoDBConfigSchema = z.object({
     tableName: z.string().min(1),
@@ -364,6 +369,7 @@ export const configSchema = z.object({
     // Planned integrations (optional until implemented):
     email:                 emailConfigSchema.optional(),
     bsky:                  bskyConfigSchema.optional(),
+    typesafe:              typesafeConfigSchema.optional(),
     browser:               browserConfigSchema.optional(),
     vectorIndex:           vectorIndexConfigSchema.optional(),
 });

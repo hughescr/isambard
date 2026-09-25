@@ -38,6 +38,11 @@ export const wildDuckApiUrl = new sst.Secret('WildDuckApiUrl');
 export const bskyHandle = new sst.Secret('BskyHandle');
 export const bskyAppPassword = new sst.Secret('BskyAppPassword');
 
+// TypeSafe (Jev outbox-failure classifier). No default: same optional-secret shape as
+// BskyHandle/BskyAppPassword above — loadConfig treats an empty/unset value as "not configured"
+// and the classifier falls back to the deterministic "retry" policy.
+export const typesafeApiKey = new sst.Secret('TypesafeApiKey');
+
 // // Box
 // export const boxClientId = new sst.Secret('BoxClientId');
 // export const boxClientSecret = new sst.Secret('BoxClientSecret');

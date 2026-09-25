@@ -129,6 +129,13 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's provi
    bunx sst secret set BskyAppPassword <app-password>
    ```
 
+   **TypeSafe (Jev outbox-failure classifier) secret (optional):** when set, Jev classifies known
+   Discord send rejections from the outbox drainer as retry or abandon; without it, the drainer
+   always retries (the deterministic fallback).
+   ```bash
+   bunx sst secret set TypesafeApiKey <api-key>
+   ```
+
    **CalDAV calendar** credentials are managed per-user via Discord `/calendar` slash commands (stored in DynamoDB calendar-registry), not SST secrets.
 
    **Planned integrations (not yet implemented - secrets commented out in `sst/secrets.ts`):**

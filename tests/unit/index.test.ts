@@ -55,6 +55,7 @@ import * as staticBskySetupModule from '@/integrations/discord/setup/bsky-setup'
 import * as staticEmailSetupModule from '@/integrations/discord/setup/email-setup';
 import { createGuildId } from '@/integrations/discord/types';
 import * as staticWildDuckClientModule from '@/integrations/email';
+import * as staticJevModule from '@/integrations/typesafe/jev-outbox-failure-classifier';
 import type { HealthChangeListener } from '@/services';
 import * as staticServicesModule from '@/services';
 import * as staticPersonAllowlistModule from '@/storage';
@@ -130,8 +131,11 @@ const defaultPerchConfig = {
  * `dmPoller`, captured via the returned `dmPollerStart`/`dmPollerStop` mocks) so the bsky
  * composition-root block actually runs. `emailEnabled` (default true) set to false omits
  * `config.email`, so tests can prove the admin review channel wiring does not depend on email.
+ * `typesafeEnabled` (default false) additionally configures `config.typesafe.apiKey`, so tests
+ * can prove the Jev outbox classifier receives it. `jevClassifierSpy` is always returned (spying,
+ * not mocking — the real factory has no side effects) so every test can assert its call args.
  */
-function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false, emailEnabled = true): {
+function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false, emailEnabled = true, typesafeEnabled = false): {
     createBotSpy:       ReturnType<typeof spyOn>
     recordMemoryAccess: ReturnType<typeof mock>
     emailSetupSpy:      ReturnType<typeof spyOn>
@@ -139,6 +143,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
     bskySetupSpy?:      ReturnType<typeof spyOn>
     dmPollerStart:      ReturnType<typeof mock>
     dmPollerStop:       ReturnType<typeof mock>
+    jevClassifierSpy:   ReturnType<typeof spyOn>
 } {
     const mockDocClient = {} as unknown as DynamoDBDocumentClient;
     const recordMemoryAccess = mock(async () => {});
@@ -146,6 +151,10 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
     const createBotSpy = spyOn(staticDiscordModule, 'createDiscordBot').mockReturnValue({
         start: mock(async () => undefined), stop: mock(async () => undefined), triggerCatchUp: mock(async () => undefined), ...pendingSessionHost(),
     });
+    // Spied, not mocked: the real factory is a pure synchronous constructor with no side effects,
+    // so letting it run for real while capturing its call args is cheaper and closer to production
+    // than stubbing it.
+    const jevClassifierSpy = spyOn(staticJevModule, 'createJevOutboxFailureClassifier');
     const emailListenerStop = mock(async () => {});
     const emailSetupSpy = spyOn(staticEmailSetupModule, 'setupEmail').mockResolvedValue({
         listener:                     { start: mock(async () => {}), stop: emailListenerStop } as unknown as Awaited<ReturnType<typeof staticEmailSetupModule.setupEmail>>['listener'],
@@ -184,6 +193,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
     }
 
     spies.push(
+        jevClassifierSpy,
         spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
             client: { destroy: mock(() => undefined) } as unknown as DynamoDBClient, docClient: mockDocClient, tableName: 'IsambardMemory',
         }),
@@ -266,6 +276,9 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
             ...(bskyEnabled
                 ? { bsky: { handle: 'isambard.bsky.social', appPassword: 'app-password', serviceUrl: 'https://bsky.social' } }
                 : {}),
+            ...(typesafeEnabled
+                ? { typesafe: { apiKey: 'test-typesafe-key' } }
+                : {}),
         }),
         spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
             tableName: 'IsambardMemory',
@@ -273,7 +286,7 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
     );
 
     return {
-        createBotSpy, recordMemoryAccess, emailSetupSpy, emailListenerStop, bskySetupSpy, dmPollerStart, dmPollerStop,
+        createBotSpy, recordMemoryAccess, emailSetupSpy, emailListenerStop, bskySetupSpy, dmPollerStart, dmPollerStop, jevClassifierSpy,
     };
 }
 
@@ -494,6 +507,26 @@ describe('createApp', () => {
         finishDestroy?.();
         await expect(building).rejects.toBe(constructionError);
         expect(destroy).toHaveBeenCalledTimes(1);
+    });
+
+    describe('Jev outbox failure classifier wiring (TypesafeApiKey)', () => {
+        test('wires the configured TypesafeApiKey into the Jev outbox failure classifier', async () => {
+            const { jevClassifierSpy } = wireHappyPath(spies, {}, {}, false, true, true);
+
+            const app = await staticIndexModule.createApp();
+            await app.stop();
+
+            expect(jevClassifierSpy).toHaveBeenCalledWith({ apiKey: 'test-typesafe-key' });
+        });
+
+        test('leaves the Jev outbox failure classifier without an API key when TypesafeApiKey is not configured', async () => {
+            const { jevClassifierSpy } = wireHappyPath(spies);
+
+            const app = await staticIndexModule.createApp();
+            await app.stop();
+
+            expect(jevClassifierSpy).toHaveBeenCalledWith({ apiKey: undefined });
+        });
     });
 
     describe('Memory initialization failure handling', () => {

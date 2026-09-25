@@ -135,6 +135,9 @@ export function loadConfig(resources: SstResources = Resource): Config {
                 appPassword: resources.BskyAppPassword.value,
             }
             : undefined,
+        typesafe: resources.TypesafeApiKey.value
+            ? { apiKey: resources.TypesafeApiKey.value }
+            : undefined,
         contactReconciliation: env.get('CONTACT_RECONCILIATION_ENABLED').default('false').asBool()
             ? {
                 enabled:                   true,

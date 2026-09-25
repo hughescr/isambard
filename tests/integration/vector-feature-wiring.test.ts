@@ -97,6 +97,7 @@ describe('Vector feature wiring', () => {
                 WildDuckApiUrl:        { value: undefined },
                 BskyHandle:            { value: undefined },
                 BskyAppPassword:       { value: undefined },
+                TypesafeApiKey:        { value: undefined },
             };
 
             const cfg = configLoaderModule.loadConfig(resources);

@@ -19,7 +19,8 @@ import {
     sessionConfigSchema,
     TaskBoardConfigSchema,
     DEFAULT_TASK_BOARD_CONFIG,
-    guildIdSchema
+    guildIdSchema,
+    typesafeConfigSchema
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
@@ -1408,6 +1409,30 @@ describe.concurrent('bskyConfigSchema', () => {
 
     test('accepts one-character handles and app passwords', () => {
         expect(bskyConfigSchema.safeParse({ handle: 'x', appPassword: 'x' }).success).toBe(true);
+    });
+});
+
+describe.concurrent('typesafeConfigSchema', () => {
+    test('should accept a non-empty apiKey', () => {
+        const result = typesafeConfigSchema.safeParse({ apiKey: 'test-typesafe-key' });
+        expect(result.success).toBe(true);
+        if(result.success) {
+            expect(result.data.apiKey).toBe('test-typesafe-key');
+        }
+    });
+
+    test('should reject an empty apiKey', () => {
+        const result = typesafeConfigSchema.safeParse({ apiKey: '' });
+        expect(result.success).toBe(false);
+    });
+
+    test('should reject a missing apiKey', () => {
+        const result = typesafeConfigSchema.safeParse({});
+        expect(result.success).toBe(false);
+    });
+
+    test('accepts a one-character apiKey', () => {
+        expect(typesafeConfigSchema.safeParse({ apiKey: 'x' }).success).toBe(true);
     });
 });
 

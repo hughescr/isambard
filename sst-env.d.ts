@@ -70,6 +70,10 @@ declare module "sst" {
       "type": "sst.sst.Linkable"
       "value": string
     }
+    "TypesafeApiKey": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
     "WildDuckApiUrl": {
       "type": "sst.sst.Secret"
       "value": string

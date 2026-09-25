@@ -31,6 +31,8 @@ function createMockResources(
         // Bluesky secrets default to undefined (bsky config is optional)
         BskyHandle:            { value: undefined },
         BskyAppPassword:       { value: undefined },
+        // Typesafe secret defaults to undefined (typesafe config is optional)
+        TypesafeApiKey:        { value: undefined },
         // Planned integrations (not yet implemented):
         // CaldavUrl:          { value: 'https://caldav.example.com' },
         // CaldavUsername:     { value: 'user' },
@@ -764,6 +766,30 @@ describe.concurrent('loadConfig - Bsky Config', () => {
         });
         const config = loadConfig(resources);
         expect(config.bsky).toBeUndefined();
+    });
+});
+
+describe.concurrent('loadConfig - Typesafe Config', () => {
+    test('should return typesafe = undefined when TypesafeApiKey is not set', () => {
+        const resources = createMockResources();
+        const config = loadConfig(resources);
+
+        expect(config.typesafe).toBeUndefined();
+    });
+
+    test('should return typesafe = undefined when TypesafeApiKey is an empty string', () => {
+        const resources = createMockResources({ TypesafeApiKey: { value: '' } });
+        const config = loadConfig(resources);
+
+        expect(config.typesafe).toBeUndefined();
+    });
+
+    test('should load typesafe config when TypesafeApiKey is set', () => {
+        const resources = createMockResources({ TypesafeApiKey: { value: 'test-typesafe-key' } });
+        const config = loadConfig(resources);
+
+        expect(config.typesafe).toBeDefined();
+        expect(config.typesafe?.apiKey).toBe('test-typesafe-key');
     });
 });
 
