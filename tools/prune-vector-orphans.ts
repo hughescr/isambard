@@ -335,7 +335,7 @@ function deleteOrphan(
     row:         CandidateRow,
     vectorIndex: Pick<VectorIndex, 'delete'>,
     write:       (message: string) => void,
-    outcome:     DeleteOutcome
+    outcome:     Pick<DeleteOutcome, 'deleted' | 'changed' | 'errors'>
 ): void {
     const { pk, sk, ...generation } = row.snapshot;
     try {
@@ -362,7 +362,10 @@ async function deleteOrphans(
     vectorIndex: Pick<VectorIndex, 'delete'>,
     write:       (message: string) => void
 ): Promise<DeleteOutcome> {
-    const outcome: DeleteOutcome = { deleted: 0, reappeared: 0, changed: 0, errors: 0, rcu: 0 };
+    // `rcu` has no meaningful initial value: it is always overwritten below from the recheck's
+    // consumed read units before this function returns (and never read on an error path), so it
+    // is left out of this object entirely rather than initialized to a dead placeholder.
+    const outcome: Omit<DeleteOutcome, 'rcu'> = { deleted: 0, reappeared: 0, changed: 0, errors: 0 };
     const rowsById = new Map(orphans.map(row => [keyId(rowKey(row)), row]));
     const recheck = await checkExistence(orphans.map(row => rowKey(row)), ctx, (checked) => {
         for(const key of checked.present) {
@@ -373,8 +376,7 @@ async function deleteOrphans(
             deleteOrphan(rowsById.get(keyId(key))!, vectorIndex, write, outcome);
         }
     });
-    outcome.rcu = recheck.consumedReadUnits;
-    return outcome;
+    return { ...outcome, rcu: recheck.consumedReadUnits };
 }
 
 /** Splits the snapshot into canonical rows under the prefix and malformed rows (reported, never touched). */

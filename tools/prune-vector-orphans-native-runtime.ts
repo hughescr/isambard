@@ -29,9 +29,11 @@ export function createBatchGetKeys(
             },
             ReturnConsumedCapacity: 'TOTAL',
         }));
+        // The filter proves every remaining entry's CapacityUnits is defined, so mapping it
+        // straight through (rather than falling back with `?? 0`) has nothing left to fall back on.
         const units = (output.ConsumedCapacity ?? [])
             .filter(entry => entry.TableName === tableName && entry.CapacityUnits !== undefined)
-            .map(entry => entry.CapacityUnits ?? 0);
+            .map(entry => entry.CapacityUnits!);
         return {
             found:             (output.Responses?.[tableName] ?? []).map(item => toKey(item)),
             unprocessed:       (output.UnprocessedKeys?.[tableName]?.Keys ?? []).map(item => toKey(item)),

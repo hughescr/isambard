@@ -75,6 +75,13 @@ describe('createVectorPruneScheduler', () => {
         expect(deps.logger.warn).not.toHaveBeenCalled();
     });
 
+    it('logs a count of exactly one at info, not debug', () => {
+        const deps = makeDeps(() => 1);
+        createVectorPruneScheduler(deps).runOnce();
+        expect(deps.logger.info.mock.calls).toEqual([[{ pruned: 1, msg: 'Pruned expired vector-index rows' }]]);
+        expect(deps.logger.debug).not.toHaveBeenCalled();
+    });
+
     it('logs a failed prune as a warning without rethrowing, and keeps the schedule', () => {
         const failure = new Error('database is locked');
         const deps = makeDeps(() => {

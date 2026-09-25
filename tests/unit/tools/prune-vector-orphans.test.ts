@@ -122,12 +122,22 @@ describe('prune-vector-orphans options', () => {
         expect(parseArgs(['bun', 'script', '--help', '--batch-size=1']).batchSize).toBe(1);
     });
 
+    test('does not split a positional value that merely contains -- and =', () => {
+        expect(parseArgs(['bun', 'script', '--db-path', 'a--b=c']).dbPath).toBe(path.resolve('a--b=c'));
+    });
+
+    test('does not split a positional value that contains = without starting with --', () => {
+        expect(parseArgs(['bun', 'script', '--db-path', 'x=y']).dbPath).toBe(path.resolve('x=y'));
+    });
+
     test.each([
         ['/events/'],
         ['/events/activityx/'],
         ['/events/activity/chat'],
         ['/events/activity//'],
         ['/'],
+        ['x/events/activity/'],
+        ['/events/activity/a//b/'],
     ])('rejects the prefix %p', (prefix) => {
         expect(() => parseArgs(['bun', 'script', '--prefix', prefix])).toThrow(
             new Error(`Invalid --prefix value: ${prefix}. Must be /events/activity/ or a directory below it, ending in '/'.`)
@@ -173,6 +183,7 @@ describe('canonicalPathUnderPrefix', () => {
         ['a non-canonical key split', 'DIR#/events', 'FILE#activity/chat/x'],
         ['a path outside the prefix', 'DIR#/events/other', 'FILE#x'],
         ['a sibling of the prefix', 'DIR#/events/activityx', 'FILE#x'],
+        ['a path containing the prefix but not starting with it', 'DIR#/other/events/activity', 'FILE#x'],
     ])('rejects %s', (_label, pk, sk) => {
         expect(canonicalPathUnderPrefix({ pk, sk }, DEFAULT_PREFIX)).toBeUndefined();
     });
@@ -228,7 +239,7 @@ describe('checkExistence', () => {
         expect(ctx.sleep.mock.calls).toEqual([[STALL_BACKOFF_MS], [500], [500]]);
     });
 
-    test(`aborts after ${MAX_STALLED_ROUNDS} consecutive all-unprocessed rounds, backing off linearly`, async () => {
+    test('aborts after 8 consecutive all-unprocessed rounds, backing off linearly', async () => {
         expect(MAX_STALLED_ROUNDS).toBe(8);
         expect(STALL_BACKOFF_MS).toBe(1000);
         const batchGetKeys = mock(async (keys: ItemKey[]): Promise<BatchGetKeysResult> => ({ found: [], unprocessed: keys, consumedReadUnits: 0 }));
@@ -299,6 +310,83 @@ describe('checkExistence', () => {
         expect(await checkExistence([], context(table.batchGetKeys))).toEqual({ present: [], absent: [], consumedReadUnits: 0 });
         expect(table.batchGetKeys).not.toHaveBeenCalled();
     });
+
+    test('keeps each batch\'s present and absent keys in request order, not reversed', async () => {
+        const D = '/events/activity/chat/2026-08-04T00-00-00-000Z';
+        const table = fakeTable([A, C]);
+        const ctx = context(table.batchGetKeys, { batchSize: 4 });
+        const result = await checkExistence([keysOf(A), keysOf(B), keysOf(C), keysOf(D)], ctx);
+        expect(result.present).toEqual([keysOf(A), keysOf(C)]);
+        expect(result.absent).toEqual([keysOf(B), keysOf(D)]);
+    });
+
+    test('a non-stalled round resets the streak so it takes a fresh 8 stalls to abort', async () => {
+        let round = 0;
+        const batchGetKeys = mock(async (keys: ItemKey[]): Promise<BatchGetKeysResult> => {
+            round++;
+            return round === 1
+                ? { found: keys, unprocessed: [], consumedReadUnits: keys.length }
+                : { found: [], unprocessed: keys, consumedReadUnits: 0 };
+        });
+        const ctx = context(batchGetKeys, { batchSize: 1 });
+        await expect(checkExistence([keysOf(A), keysOf(B)], ctx)).rejects.toThrow(
+            'BatchGetItem returned every key unprocessed 8 times in a row'
+        );
+        expect(batchGetKeys).toHaveBeenCalledTimes(9);
+    });
+
+    test('awaits the pacing sleep before starting the next request', async () => {
+        let resolveFirstSleep: (() => void) | undefined;
+        let sleepCalls = 0;
+        const sleep = mock(() => {
+            sleepCalls++;
+            if(sleepCalls === 1) {
+                return new Promise<void>((resolve) => {
+                    resolveFirstSleep = resolve;
+                });
+            }
+            return Promise.resolve(); // pacing after the last batch is not under test here
+        });
+        const batchGetKeys = mock(async (keys: ItemKey[]): Promise<BatchGetKeysResult> => ({ found: keys, unprocessed: [], consumedReadUnits: 1 }));
+        const ctx = { batchGetKeys, batchSize: 1, rateLimitRcuPerSec: 1, now: () => 0, sleep };
+        const promise = checkExistence([keysOf(A), keysOf(B)], ctx);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(batchGetKeys).toHaveBeenCalledTimes(1);
+        resolveFirstSleep?.();
+        const result = await promise;
+        expect(batchGetKeys).toHaveBeenCalledTimes(2);
+        expect(result.present).toEqual([keysOf(A), keysOf(B)]);
+    });
+
+    test('awaits the stall backoff sleep before the retried request', async () => {
+        let resolveSleep: (() => void) | undefined;
+        const sleep = mock(() => new Promise<void>((resolve) => {
+            resolveSleep = resolve;
+        }));
+        let round = 0;
+        const batchGetKeys = mock(async (keys: ItemKey[]): Promise<BatchGetKeysResult> => {
+            round++;
+            return round === 1
+                ? { found: [], unprocessed: keys, consumedReadUnits: 0 }
+                : { found: keys, unprocessed: [], consumedReadUnits: 0 };
+        });
+        const ctx = { batchGetKeys, batchSize: 1, rateLimitRcuPerSec: 1, now: () => 0, sleep };
+        const promise = checkExistence([keysOf(A)], ctx);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(batchGetKeys).toHaveBeenCalledTimes(1);
+        resolveSleep?.();
+        const result = await promise;
+        expect(batchGetKeys).toHaveBeenCalledTimes(2);
+        expect(result.present).toEqual([keysOf(A)]);
+    });
 });
 
 // ── The run ───────────────────────────────────────────────────────────────────
@@ -358,6 +446,7 @@ Dry run: nothing deleted. Re-run with --execute to delete the 3 orphan(s).
         expect(remainingPaths(index).toSorted((a, b) => a.localeCompare(b))).toEqual([LIVE, '/events/activityx/chat/x', '/events/other/x']);
         // Phase 1 checks all three keys (one batch of 4); phase 2 re-checks the two orphans.
         expect(table.batchGetKeys.mock.calls).toEqual([[[keysOf(A), keysOf(B), keysOf(LIVE)]], [[keysOf(A), keysOf(B)]]]);
+        expect(runtime.output()).toContain('Vector orphan prune (EXECUTE)\n');
         expect(runtime.output()).toContain(`orphan: ${A}\norphan: ${B}\n`);
         expect(runtime.output()).not.toContain('[dry-run]');
         expect(runtime.output()).toContain(`
@@ -590,6 +679,13 @@ Prune complete:
         runtime.deps.now.mockReturnValueOnce(1000).mockReturnValue(3500);
         await main(['bun', 'script'], runtime.deps);
         expect(runtime.output()).toContain('  Elapsed: 2.5s\n');
+    });
+
+    test('computes elapsed seconds by dividing milliseconds by exactly 1000', async () => {
+        const runtime = makeRuntime(openIndex(), fakeTable([]));
+        runtime.deps.now.mockReturnValueOnce(0).mockReturnValue(52_101);
+        await main(['bun', 'script'], runtime.deps);
+        expect(runtime.output()).toContain('  Elapsed: 52.1s\n');
     });
 
     test('the default runtime uses the preloaded in-memory owners', async () => {
