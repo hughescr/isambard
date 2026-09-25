@@ -146,7 +146,7 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's provi
 
 | Command | Description |
 |---------|-------------|
-| `bun run deploy:running` | Update running worktree from origin, install, and clear any stale llama.cpp source build |
+| `bun run deploy:running` | Fast-forward the running worktree to local develop, install, and clear any stale llama.cpp source build |
 | `bun run dev` | Development with hot reload |
 | `bun test` | Run tests |
 | `bun run mutate` | Mutation testing (Stryker), LLM mutator frozen to cached mutants |
@@ -197,17 +197,20 @@ cd running && bun run dev:sst
 
 **Deploying updates:**
 ```bash
-# Merge develop → running, push, then:
 bun run deploy:running
 ```
 
-`deploy:running` resets `running/` to `origin/running`, runs `bun install`, then
-`bunx node-llama-cpp source clear`. The clear matters: an older postinstall built
-llama.cpp from source, and its leftover `node_modules/node-llama-cpp/llama/llama.cpp`
-checkout and `llama.cpp.info.json` survive `bun install`. While they exist,
-node-llama-cpp refuses its own prebuilt binaries and retries the source build at
-every start. With nothing to clear the command is a no-op and exits 0, so it is
-safe on every deploy.
+`running/` is a git worktree of this same repo, on its own local `running` branch;
+there is no `running` branch on GitHub. `deploy:running` fast-forwards `running/`'s
+local branch to local `develop` (`git merge --ff-only develop`), runs `bun install`,
+then `bunx node-llama-cpp source clear`. The `--ff-only` merge refuses instead of
+merging or rewriting history if `running` has diverged from `develop` (e.g. commits
+made directly in `running/`) — resolve that by hand before deploying. The clear
+matters: an older postinstall built llama.cpp from source, and its leftover
+`node_modules/node-llama-cpp/llama/llama.cpp` checkout and `llama.cpp.info.json`
+survive `bun install`. While they exist, node-llama-cpp refuses its own prebuilt
+binaries and retries the source build at every start. With nothing to clear the
+command is a no-op and exits 0, so it is safe on every deploy.
 
 ### TDD Workflow
 
