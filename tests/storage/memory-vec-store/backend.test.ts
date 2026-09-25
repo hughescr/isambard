@@ -11,12 +11,16 @@ import { logger } from '@hughescr/logger';
 import { VectorIndexClosedError, VectorIndexError } from '@/errors';
 import { createLayerName, createMemoryPath, createIndexLayer, createSearchableNamespace } from '@/storage/memory-tool/types';
 import { PRUNE_EXPIRED_BATCH_SIZE, VectorIndex } from '@/storage/memory-vec-store/backend';
-import type { VectorIndexEntry } from '@/storage/memory-vec-store/types';
+import type { PackedBinaryEmbedding1024, VectorIndexEntry } from '@/storage/memory-vec-store/types';
 import { createEpochSeconds } from '@/storage/repositories/types';
 
+type IsExactly<Left, Right> = (<T>() => T extends Left ? 1 : 2) extends (<T>() => T extends Right ? 1 : 2) ? true : false;
+type Assert<T extends true> = T;
+type _VectorIndexEntryUsesPackedEmbedding = Assert<IsExactly<VectorIndexEntry['vector'], PackedBinaryEmbedding1024>>;
+
 /** Create a deterministic 128-byte test vector with all bits set to given pattern byte */
-function makeVector(byte: number): Uint8Array {
-    return new Uint8Array(128).fill(byte);
+function makeVector(byte: number): PackedBinaryEmbedding1024 {
+    return new Uint8Array(128).fill(byte) as PackedBinaryEmbedding1024;
 }
 
 describe('VectorIndex', () => {
@@ -48,11 +52,11 @@ describe('VectorIndex', () => {
 
     describe('embedding byte-length validation', () => {
         it('upsert throws VectorIndexError for a vector shorter than 128 bytes', () => {
-            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1, ttl: null })).toThrow(VectorIndexError);
+            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64) as PackedBinaryEmbedding1024, updatedAt: 1, ttl: null })).toThrow(VectorIndexError);
         });
 
         it('upsert throws VectorIndexError for a vector longer than 128 bytes', () => {
-            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(256), updatedAt: 1, ttl: null })).toThrow(VectorIndexError);
+            expect(() => index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(256) as PackedBinaryEmbedding1024, updatedAt: 1, ttl: null })).toThrow(VectorIndexError);
         });
 
         it('upsert succeeds for exactly 128 bytes', () => {
@@ -62,7 +66,7 @@ describe('VectorIndex', () => {
         it('upsert error message includes the actual length', () => {
             let thrown: unknown;
             try {
-                index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1, ttl: null });
+                index.upsert({ pk: 'pk1', sk: 'sk1', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64) as PackedBinaryEmbedding1024, updatedAt: 1, ttl: null });
             } catch (e) {
                 thrown = e;
             }
@@ -71,11 +75,11 @@ describe('VectorIndex', () => {
         });
 
         it('query throws VectorIndexError for a query vector shorter than 128 bytes', () => {
-            expect(() => index.query(new Uint8Array(64), 5)).toThrow(VectorIndexError);
+            expect(() => index.query(new Uint8Array(64) as PackedBinaryEmbedding1024, 5)).toThrow(VectorIndexError);
         });
 
         it('query throws VectorIndexError for a query vector longer than 128 bytes', () => {
-            expect(() => index.query(new Uint8Array(256), 5)).toThrow(VectorIndexError);
+            expect(() => index.query(new Uint8Array(256) as PackedBinaryEmbedding1024, 5)).toThrow(VectorIndexError);
         });
 
         it('query succeeds for exactly 128 bytes', () => {
@@ -85,7 +89,7 @@ describe('VectorIndex', () => {
         it('query error message includes the actual length', () => {
             let thrown: unknown;
             try {
-                index.query(new Uint8Array(256), 5);
+                index.query(new Uint8Array(256) as PackedBinaryEmbedding1024, 5);
             } catch (e) {
                 thrown = e;
             }
@@ -521,7 +525,7 @@ describe('VectorIndex TTL and prune (#129)', () => {
             const smallDb = new Database(':memory:');
             const small = VectorIndex.openWithDb(smallDb, { now: () => NOW_MS, knnMaxK: 2 });
             try {
-                const vector = (bits: number): Uint8Array => {
+                const vector = (bits: number): PackedBinaryEmbedding1024 => {
                     const v = makeVector(0);
                     v[0] = bits;
                     return v;

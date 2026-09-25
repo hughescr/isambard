@@ -41,6 +41,7 @@ import { configureVectorDbConnection } from './connection.js';
 import { runSchemaMigration } from './schema.js';
 import {
     PACKED_EMBEDDING_BYTES,
+    type PackedBinaryEmbedding1024,
     type VectorIndexEntry,
     type VectorQueryResult,
     type VectorRowSnapshot,
@@ -341,9 +342,6 @@ export class VectorIndex {
         return row?.content_hash;
     }
 
-    /** Expected byte length for 1024-bit packed binary embeddings (1024 bits / 8 = 128 bytes). */
-    static readonly EXPECTED_BYTES = PACKED_EMBEDDING_BYTES;
-
     /**
      * Upserts a vector entry in a single transaction.
      *
@@ -363,9 +361,9 @@ export class VectorIndex {
      */
     upsert(entry: VectorIndexEntry): boolean {
         this.#assertOpen();
-        if(entry.vector.length !== VectorIndex.EXPECTED_BYTES) {
+        if(entry.vector.length !== PACKED_EMBEDDING_BYTES) {
             throw new VectorIndexError(
-                `Embedding must be ${VectorIndex.EXPECTED_BYTES} bytes; got ${entry.vector.length}`,
+                `Embedding must be ${PACKED_EMBEDDING_BYTES} bytes; got ${entry.vector.length}`,
                 undefined,
                 { length: entry.vector.length }
             );
@@ -567,17 +565,17 @@ export class VectorIndex {
      * vec_bit() converts the raw Uint8Array query vector into the bit vector format
      * that sqlite-vec's MATCH operator expects.
      *
-     * @param queryVector - 128-byte packed binary query vector (Uint8Array)
+     * @param queryVector - 128-byte packed binary query vector
      * @param limit - Maximum number of eligible results (candidate k may grow beyond this)
      * @param layer - Optional layer filter (identity, state, events, etc.)
      * @returns Results sorted by Hamming distance ascending (most similar first)
      * @throws {VectorIndexError} If the query vector is not exactly 128 bytes.
      */
-    query(queryVector: Uint8Array, limit: number, layer?: IndexLayer): VectorQueryResult[] {
+    query(queryVector: PackedBinaryEmbedding1024, limit: number, layer?: IndexLayer): VectorQueryResult[] {
         this.#assertOpen();
-        if(queryVector.length !== VectorIndex.EXPECTED_BYTES) {
+        if(queryVector.length !== PACKED_EMBEDDING_BYTES) {
             throw new VectorIndexError(
-                `Embedding must be ${VectorIndex.EXPECTED_BYTES} bytes; got ${queryVector.length}`,
+                `Embedding must be ${PACKED_EMBEDDING_BYTES} bytes; got ${queryVector.length}`,
                 undefined,
                 { length: queryVector.length }
             );

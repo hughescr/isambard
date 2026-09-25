@@ -35,7 +35,7 @@ export interface VectorIndexEntry {
     /** SHA-256 hash of the indexed text (`${path}\n${content}`) */
     contentHash:      string
     /** Packed 1024-bit binary embedding (128 bytes) */
-    vector:           Uint8Array
+    vector:           PackedBinaryEmbedding1024
     /** Unix timestamp (ms) of the last index update */
     updatedAt:        number
     /**

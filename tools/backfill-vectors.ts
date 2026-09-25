@@ -51,7 +51,7 @@ import {
 } from '@/storage';
 import type { MemoryPath } from '@/storage/memory-tool';
 import { storedTtl } from '@/storage/memory-tool/decode-stored-item';
-import { sha256Hex } from '@/storage/memory-vec-store';
+import { sha256Hex, type PackedBinaryEmbedding1024 } from '@/storage/memory-vec-store';
 
 // ── CLI options ───────────────────────────────────────────────────────────────
 
@@ -242,6 +242,11 @@ function errorInfo(err: unknown): Record<string, unknown> {
         : { value: String(err) };
 }
 
+/** Returns one packed embedding after the batch output length has been validated. */
+function packedEmbeddingAt(data: Uint8Array, index: number): PackedBinaryEmbedding1024 {
+    return data.subarray(index * PACKED_EMBEDDING_BYTES, (index + 1) * PACKED_EMBEDDING_BYTES) as PackedBinaryEmbedding1024;
+}
+
 async function writeEmbeddingBatch(
     batch:       PendingEmbedding[],
     embedder:    BatchEmbedder,
@@ -269,7 +274,7 @@ async function writeEmbeddingBatch(
 
     for(const [index, entry] of batch.entries()) {
         try {
-            const vector = data.subarray(index * PACKED_EMBEDDING_BYTES, (index + 1) * PACKED_EMBEDDING_BYTES);
+            const vector = packedEmbeddingAt(data, index);
             const written = vectorIndex.upsert({
                 pk:              entry.keys.PK,
                 sk:              entry.keys.SK,

@@ -13,6 +13,7 @@ import {
     type SQLiteConfigurationDeps,
     type VectorIndexOpenDeps
 } from '@/storage/memory-vec-store/backend';
+import type { PackedBinaryEmbedding1024 } from '@/storage/memory-vec-store/types';
 
 const ARM_PATH = '/opt/homebrew/opt/sqlite3/lib/libsqlite3.dylib';
 const INTEL_PATH = '/usr/local/opt/sqlite3/lib/libsqlite3.dylib';
@@ -238,7 +239,7 @@ describe('VectorIndex validation without native SQLite calls', () => {
         try {
             let writeError: unknown;
             try {
-                index.upsert({ pk: 'pk', sk: 'sk', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64), updatedAt: 1, ttl: null });
+                index.upsert({ pk: 'pk', sk: 'sk', layer: createIndexLayer('identity'), contentHash: 'h', vector: new Uint8Array(64) as PackedBinaryEmbedding1024, updatedAt: 1, ttl: null });
             } catch (error) {
                 writeError = error;
             }
@@ -247,7 +248,7 @@ describe('VectorIndex validation without native SQLite calls', () => {
 
             let queryError: unknown;
             try {
-                index.query(new Uint8Array(256), 5);
+                index.query(new Uint8Array(256) as PackedBinaryEmbedding1024, 5);
             } catch (error) {
                 queryError = error;
             }

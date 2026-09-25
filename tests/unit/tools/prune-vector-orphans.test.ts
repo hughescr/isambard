@@ -18,7 +18,7 @@ import {
 } from '../../../tools/prune-vector-orphans';
 import { mockPruneRuntime } from '../../setup';
 import { MemoryToolKeyGenerator, createIndexLayer, createMemoryPath } from '@/storage/memory-tool';
-import { VectorIndex } from '@/storage/memory-vec-store';
+import { VectorIndex, type PackedBinaryEmbedding1024 } from '@/storage/memory-vec-store';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,11 +43,11 @@ function openIndex(): VectorIndex {
 
 function seed(index: VectorIndex, memoryPath: string, updatedAt = 1): void {
     const keys = keysOf(memoryPath);
-    index.upsert({ pk: keys.PK, sk: keys.SK, layer: createIndexLayer('events'), contentHash: `h:${memoryPath}`, vector: new Uint8Array(128), updatedAt, ttl: null });
+    index.upsert({ pk: keys.PK, sk: keys.SK, layer: createIndexLayer('events'), contentHash: `h:${memoryPath}`, vector: new Uint8Array(128) as PackedBinaryEmbedding1024, updatedAt, ttl: null });
 }
 
 function seedRaw(index: VectorIndex, pk: string, sk: string): void {
-    index.upsert({ pk, sk, layer: createIndexLayer('events'), contentHash: 'raw', vector: new Uint8Array(128), updatedAt: 1, ttl: null });
+    index.upsert({ pk, sk, layer: createIndexLayer('events'), contentHash: 'raw', vector: new Uint8Array(128) as PackedBinaryEmbedding1024, updatedAt: 1, ttl: null });
 }
 
 function remainingPaths(index: VectorIndex): string[] {

@@ -7,7 +7,7 @@ import { createNativeBackfillDependencies, productionBackfillServices, type Back
 import { clientDestroyer, createBackfillDependencies, sleepForRateLimit } from '../../../tools/backfill-vectors-runtime-builder';
 import { mockBackfillRuntime } from '../../setup';
 import { createIndexLayer, createMemoryPath, MemoryToolKeyGenerator } from '@/storage/memory-tool';
-import { sha256Hex, VectorIndex, type VectorIndexEntry, type VectorTtlUpdate } from '@/storage/memory-vec-store';
+import { sha256Hex, VectorIndex, type PackedBinaryEmbedding1024, type VectorIndexEntry, type VectorTtlUpdate } from '@/storage/memory-vec-store';
 import { createEpochSeconds } from '@/storage/repositories/types';
 
 const safeClient = { destroy: mock(() => undefined) };
@@ -595,7 +595,7 @@ describe('vector backfill TTL (#129)', () => {
                 sk:          keys.SK,
                 layer:       createIndexLayer('identity'),
                 contentHash: hash,
-                vector:      new Uint8Array(128).fill(0xFF),
+                vector:      new Uint8Array(128).fill(0xFF) as PackedBinaryEmbedding1024,
                 updatedAt:   1,
                 ttl:         ttl === null ? null : createEpochSeconds(ttl),
                 sourceUpdatedAt,
@@ -610,13 +610,13 @@ describe('vector backfill TTL (#129)', () => {
             const item = ttlItem(0, NOW_S - 5);
             const index = openIndex();
             seedRow(index, item, await sha256Hex(`${item.path}\n${item.content}`), null);
-            expect(index.query(new Uint8Array(128).fill(0xFF), 10)).toHaveLength(1);
+            expect(index.query(new Uint8Array(128).fill(0xFF) as PackedBinaryEmbedding1024, 10)).toHaveLength(1);
 
             const stats = await processPage([item], DEFAULT_OPTIONS, index, embedder(), sha256Hex, clock);
 
             expect(stats).toEqual({ scanned: 1, skipped: 0, indexed: 0, errors: 0, ttlUpdated: 1, expired: 1, superseded: 0 });
             expect(storedTtl(index, item)).toBe(NOW_S - 5);
-            expect(index.query(new Uint8Array(128).fill(0xFF), 10)).toEqual([]);
+            expect(index.query(new Uint8Array(128).fill(0xFF) as PackedBinaryEmbedding1024, 10)).toEqual([]);
             expect(index.pruneExpired()).toBe(1);
         });
 
