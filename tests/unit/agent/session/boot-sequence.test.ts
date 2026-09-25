@@ -13,7 +13,7 @@ import { runBootSequence } from '@/agent/session/boot-sequence';
 import type { UndeliveredEnvelope } from '@/agent/session/recovery';
 
 function undeliveredEnvelope(overrides: Partial<UndeliveredEnvelope> = {}): UndeliveredEnvelope {
-    return { envelopeId: 'env-1', envelopeKind: 'discord', ...overrides };
+    return { envelopeId: 'env-1', envelopeKind: 'discord', responseText: 'a reply', ...overrides };
 }
 
 interface ReplayedItem {

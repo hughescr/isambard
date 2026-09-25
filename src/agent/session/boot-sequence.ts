@@ -12,7 +12,8 @@
  * bundle the handshake already delivered).
  *
  * What's left, run once after `open()` resolves and before ingress reopens:
- *  1. Deliver every undelivered envelope's response once, through the caller's `deliver`
+ *  1. Deliver every undelivered envelope's response once (recovery only lists turns that
+ *     produced a reply, #130), through the caller's `deliver`
  *     (composed from `Conductor.deliver` + the discord-layer `sendEnvelopeResponse`, which this
  *     agent-layer module cannot import directly — see eslint-plugin-boundaries: agent never
  *     imports discord).

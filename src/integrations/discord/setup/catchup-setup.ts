@@ -288,9 +288,6 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
     const redeliveredTexts: string[] = [];
 
     async function deliverUndelivered(item: UndeliveredEnvelope): Promise<void> {
-        if(item.responseText === undefined) {
-            return;
-        }
         try {
             const deliverResult = await conversationConductor.deliver(item.envelopeId, async () => {
                 const target = responseRouter.resolveDeliveryTarget({ kind: item.envelopeKind, channelId: item.channelId === undefined ? undefined : createChannelId(item.channelId) });
@@ -306,7 +303,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                         break;
                     }
                     case 'fallback': {
-                        const fallback = await responseRouter.routeToFallback(item.responseText!);
+                        const fallback = await responseRouter.routeToFallback(item.responseText);
                         channelId = fallback.targetChannelId;
                         break;
                     }
@@ -315,7 +312,7 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                     envelopeId: item.envelopeId,
                     kind:       item.envelopeKind,
                     channelId,
-                    text:       item.responseText!,
+                    text:       item.responseText,
                     responseRouter,
                     client:     readyClient,
                     rateLimiter,

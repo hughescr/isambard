@@ -139,6 +139,39 @@ describe('computeRecovery', () => {
         expect(computeRecovery(entries).undelivered).toEqual([]);
     });
 
+    test.each(['discord', 'catchup', 'task'] as const)('a %s envelope whose turn_completed carries no responseText is not undelivered (#130)', (kind) => {
+        const entries: JournalEntry[] = [
+            { type: 'envelope_submitted', at: AT, envelopeId: 'env-1', kind, channelId: 'chan-1' },
+            { type: 'turn_completed', at: AT, envelopeId: 'env-1', kind },
+        ];
+
+        expect(computeRecovery(entries).undelivered).toEqual([]);
+    });
+
+    test('only the envelope whose turn produced a reply is undelivered when a reply-less one sits beside it', () => {
+        const entries: JournalEntry[] = [
+            { type: 'envelope_submitted', at: AT, envelopeId: 'env-silent', kind: 'discord', channelId: 'chan-1' },
+            { type: 'envelope_submitted', at: AT, envelopeId: 'env-reply', kind: 'discord', channelId: 'chan-2' },
+            { type: 'turn_completed', at: AT, envelopeId: 'env-silent', kind: 'discord' },
+            { type: 'turn_completed', at: AT, envelopeId: 'env-reply', kind: 'discord', responseText: 'hello' },
+        ];
+
+        expect(computeRecovery(entries).undelivered).toEqual([
+            { envelopeId: 'env-reply', envelopeKind: 'discord', channelId: 'chan-2', responseText: 'hello' },
+        ]);
+    });
+
+    test('an empty-string responseText still counts as a reply and is listed undelivered', () => {
+        const entries: JournalEntry[] = [
+            { type: 'envelope_submitted', at: AT, envelopeId: 'env-1', kind: 'discord' },
+            { type: 'turn_completed', at: AT, envelopeId: 'env-1', kind: 'discord', responseText: '' },
+        ];
+
+        expect(computeRecovery(entries).undelivered).toEqual([
+            { envelopeId: 'env-1', envelopeKind: 'discord', channelId: undefined, responseText: '' },
+        ]);
+    });
+
     test.each(['notification', 'perch', 'boot'] as const)('a %s envelope with turn_completed is never undelivered', (kind) => {
         const entries: JournalEntry[] = [
             { type: 'envelope_submitted', at: AT, envelopeId: 'env-1', kind },

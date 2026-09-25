@@ -590,7 +590,7 @@ describe('createConversationConductor', () => {
         h.journal.scriptReadSince([
             { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
             { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-no-text', kind: 'discord' },
-            { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord' },
+            { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord', responseText: 'an unsent reply' },
         ]);
 
         const { conductor } = await createConversationConductor(h.params);
@@ -602,7 +602,7 @@ describe('createConversationConductor', () => {
         const handshake = handshakeOf(h.instances[0]);
         expect(handshake).toContain('[BOOT BUNDLE · conversation · fresh]');
         expect(handshake).not.toContain('Summarize last week');
-        expect(handshake).not.toContain('env-no-text');
+        expect(handshake).not.toContain('an unsent reply');
     });
 
     it('R1: degrades to an empty recovery section (and logs a warning) when the journal readSince read fails', async () => {
@@ -1773,7 +1773,7 @@ describe('createPerchConductor', () => {
         h.journal.scriptReadSince([
             { type: 'task_started', at: new Date(0), taskId: 'task-orphan', description: 'Summarize last week' },
             { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-no-text', kind: 'discord' },
-            { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord' },
+            { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord', responseText: 'an unsent reply' },
         ]);
         (h.contextBuilder.buildPerchContext as ReturnType<typeof jest.fn>).mockImplementation(perchContext);
 
@@ -1789,7 +1789,7 @@ describe('createPerchConductor', () => {
             '[BOOT BUNDLE · perch · fresh · recovery only]',
             'The rest of this boot context could not be loaded in time, so only what was lost at restart is listed here. Use your tools to look up anything else you need.',
             '## Background tasks lost at restart\nSummarize last week',
-            '## Envelopes without a delivered response\ndiscord envelope env-no-text',
+            '## Envelopes without a delivered response\nan unsent reply',
         ].join('\n\n'));
         expect(h.journal.byKind('task_lost').map(entry => entry.taskId)).toEqual(['task-orphan']);
     });
@@ -1848,7 +1848,7 @@ describe('createPerchConductor', () => {
         expect(startupContext).toContain('task-no-description');
     });
 
-    it('falls back to "<kind> envelope <id>" when an undelivered envelope has no completed response text', async () => {
+    it('a reply-less completed turn is not listed as an undelivered response in the perch handshake', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
         h.journal.scriptReadSince([
@@ -1864,10 +1864,11 @@ describe('createPerchConductor', () => {
 
         const startupContext = handshakeOf(h.instances[0]);
 
-        expect(startupContext).toContain('discord envelope env-no-text');
+        expect(startupContext).not.toContain('Envelopes without a delivered response');
+        expect(startupContext).not.toContain('env-no-text');
     });
 
-    it('a compaction bundle\'s own recovery read lists an undelivered envelope with no response text as "<kind> envelope <id>"', async () => {
+    it('a compaction bundle\'s own recovery read lists only the undelivered envelope that has response text', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
 
@@ -1880,10 +1881,13 @@ describe('createPerchConductor', () => {
         h.journal.scriptReadSince([
             { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-no-text', kind: 'discord' },
             { type: 'turn_completed', at: new Date(1), envelopeId: 'env-no-text', kind: 'discord' },
+            { type: 'envelope_submitted', at: new Date(2), envelopeId: 'env-with-text', kind: 'discord' },
+            { type: 'turn_completed', at: new Date(3), envelopeId: 'env-with-text', kind: 'discord', responseText: 'an unsent reply' },
         ]);
         const compactContext = await bootContextOf(h.instances[0], 'compact');
 
-        expect(compactContext?.split('\n\n')).toContain('## Envelopes without a delivered response\ndiscord envelope env-no-text');
+        expect(compactContext?.split('\n\n')).toContain('## Envelopes without a delivered response\nan unsent reply');
+        expect(compactContext).not.toContain('env-no-text');
     });
 
     it('a compaction whose recovery read fails renders neither recovery section, and logs the degrade', async () => {

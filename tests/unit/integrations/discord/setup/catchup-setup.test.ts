@@ -548,7 +548,7 @@ describe('runConductorInboxInit', () => {
         expect(warnSpy).not.toHaveBeenCalled();
     });
 
-    test('an undelivered turn that completed with no response text (interrupted, nothing to say) is skipped, never calling deliver', async () => {
+    test('a turn that completed with no response text (interrupted, nothing to say) is omitted by recovery, never calling deliver', async () => {
         const sendEnvelopeResponseSpy = spyOn(responseSenderModule, 'sendEnvelopeResponse');
         spies.push(sendEnvelopeResponseSpy);
         const conductor = makeFakeConductor();

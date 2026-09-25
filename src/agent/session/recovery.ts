@@ -1,8 +1,10 @@
 /**
  * Pure crash-recovery computation over a journal read (P8). `computeRecovery` takes the entries
  * returned by {@link import('./ports').SessionJournal.readSince} and derives, with no I/O of its
- * own: which background tasks never reached a terminal state (lost), which discord/catchup
- * turns finished but were never confirmed delivered (undelivered, carrying the response text so
+ * own: which background tasks never reached a terminal state (lost), which discord/catchup/task
+ * turns finished WITH a reply but were never confirmed delivered (undelivered — a reply-less
+ * `turn_completed` from an interrupted, shutdown-settled or non-success turn has nothing to
+ * deliver and is omitted, #130 — carrying the response text so
  * the conductor can redeliver it on restart, deduplicated against the delivery guard rather than
  * guaranteed exactly-once — see ./delivery-guard.ts), the full set of envelope ids already
  * confirmed delivered (to seed the P8 delivery guard), and the most recently opened session id.
@@ -18,15 +20,18 @@ export interface LostTask {
 }
 
 /**
- * A discord/catchup envelope whose turn finished (`turn_completed`) but was never confirmed
- * delivered. `channelId` comes from the envelope's own `envelope_submitted` entry (present when
- * the envelope carried one), so a redelivery attempt knows where to send the reply.
+ * A discord/catchup/task envelope whose turn finished (`turn_completed`) WITH a reply but was
+ * never confirmed delivered. A reply-less `turn_completed` (interrupted, shutdown-settled, or a
+ * non-success result) has nothing to deliver and is never an `UndeliveredEnvelope` (#130).
+ * `channelId` comes from the envelope's own `envelope_submitted` entry (present when the
+ * envelope carried one), so a redelivery attempt knows where to send the reply.
  */
 export interface UndeliveredEnvelope {
-    envelopeId:    string
-    envelopeKind:  EnvelopeKind
-    channelId?:    string
-    responseText?: string
+    envelopeId:   string
+    envelopeKind: EnvelopeKind
+    channelId?:   string
+    /** The reply the turn produced; the latest `turn_completed` for the envelope wins. */
+    responseText: string
 }
 
 /** The full recovery computation over a window of journal entries. */
@@ -122,14 +127,15 @@ export function computeRecovery(entries: readonly JournalEntry[]): RecoveryResul
         .filter(([taskId]) => !acc.resolvedTaskIds.has(taskId))
         .map(([taskId, description]) => ({ taskId, description }));
 
-    const undelivered: UndeliveredEnvelope[] = [...acc.submittedEnvelopes]
-        .filter(([envelopeId, kind]) => REPLAYABLE_ENVELOPE_KINDS.has(kind) && acc.completedResponseText.has(envelopeId) && !acc.deliveredIds.has(envelopeId))
-        .map(([envelopeId, kind]) => ({
-            envelopeId,
-            envelopeKind: kind,
-            channelId:    acc.submittedChannelIds.get(envelopeId),
-            responseText: acc.completedResponseText.get(envelopeId),
-        }));
+    const undelivered: UndeliveredEnvelope[] = [...acc.submittedEnvelopes].flatMap(([envelopeId, kind]) => {
+        // `undefined` covers both "no turn_completed yet" and a reply-less one (interrupted,
+        // shutdown-settled or a non-success result, #130): either way there is nothing to deliver.
+        const responseText = acc.completedResponseText.get(envelopeId);
+        if(!REPLAYABLE_ENVELOPE_KINDS.has(kind) || responseText === undefined || acc.deliveredIds.has(envelopeId)) {
+            return [];
+        }
+        return [{ envelopeId, envelopeKind: kind, channelId: acc.submittedChannelIds.get(envelopeId), responseText }];
+    });
 
     return {
         lostTasks,

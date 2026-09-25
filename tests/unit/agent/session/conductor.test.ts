@@ -3898,6 +3898,29 @@ describe('createConductor', () => {
             h.journal.scriptReadSince([
                 { type: 'task_started', at: new Date(0), taskId: 'task-1', description: 'abandoned task' },
                 { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-1', kind: 'discord' },
+                { type: 'turn_completed', at: new Date(0), envelopeId: 'env-1', kind: 'discord', responseText: 'an unsent reply' },
+            ]);
+
+            await openWith(h);
+
+            expect(buildBootBundle.mock.calls).toEqual([[{
+                kind:        'fresh',
+                cause:       'boot',
+                lostTasks:   ['abandoned task'],
+                undelivered: ['an unsent reply'],
+            }]]);
+            expect(h.instances[0].consumedPrompts).toHaveLength(1);
+            expect(handshakeOf(h.instances[0])).toBe('lost:abandoned task|undelivered:an unsent reply');
+        });
+
+        it('leaves a reply-less completed turn out of the boot bundle undelivered list while still listing lost tasks', async () => {
+            const buildBootBundle = jest.fn((input: BootBundleRequest) => `lost:${input.lostTasks.join(',')}|undelivered:${input.undelivered.join(',')}`);
+            const h = build({
+                buildBootBundle,
+            });
+            h.journal.scriptReadSince([
+                { type: 'task_started', at: new Date(0), taskId: 'task-1', description: 'abandoned task' },
+                { type: 'envelope_submitted', at: new Date(0), envelopeId: 'env-1', kind: 'discord' },
                 { type: 'turn_completed', at: new Date(0), envelopeId: 'env-1', kind: 'discord' },
             ]);
 
@@ -3907,10 +3930,9 @@ describe('createConductor', () => {
                 kind:        'fresh',
                 cause:       'boot',
                 lostTasks:   ['abandoned task'],
-                undelivered: ['discord envelope env-1'],
+                undelivered: [],
             }]]);
-            expect(h.instances[0].consumedPrompts).toHaveLength(1);
-            expect(handshakeOf(h.instances[0])).toBe('lost:abandoned task|undelivered:discord envelope env-1');
+            expect(handshakeOf(h.instances[0])).toBe('lost:abandoned task|undelivered:');
         });
 
         it('includes a recovered task with an explicitly empty description in the boot bundle', async () => {

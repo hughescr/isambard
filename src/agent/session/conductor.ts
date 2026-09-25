@@ -1860,7 +1860,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
             return {
                 lostTasks:   recovery.lostTasks.map(task => task.description ?? task.taskId),
                 // Stryker disable next-line llm: an unused shallow copy before this read-only map cannot affect output
-                undelivered: recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
+                undelivered: recovery.undelivered.map(envelope => envelope.responseText),
             };
         } catch (error) {
             logger.error({ error }, 'Conductor boot recovery failed; opening with an empty-seeded delivery guard');

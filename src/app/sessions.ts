@@ -164,7 +164,7 @@ async function loadBootRecovery(
         const recovery = computeRecovery(entries);
         return {
             lostTasks:    recovery.lostTasks.map(task => task.description ?? task.taskId),
-            undelivered:  recovery.undelivered.map(envelope => envelope.responseText ?? `${envelope.envelopeKind} envelope ${envelope.envelopeId}`),
+            undelivered:  recovery.undelivered.map(envelope => envelope.responseText),
             taskLaunches: taskLaunchEntries(entries),
         };
     } catch (err) {
