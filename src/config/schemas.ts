@@ -268,15 +268,28 @@ const reconciliationTestModeSchema = z.object({
  */
 export const reconciliationConfigSchema = z.object({
     /** Whether reconciliation job is enabled */
-    enabled:          z.boolean().default(false),
+    enabled:            z.boolean().default(false),
     /** Interval between runs in milliseconds (default: 24 hours) */
-    intervalMs:       z.number().int().positive().default(24 * 60 * 60 * 1000),
+    intervalMs:         z.number().int().positive().default(24 * 60 * 60 * 1000),
     /** Delay between DynamoDB operations in milliseconds (default: 1000ms) */
-    operationDelayMs: z.number().int().nonnegative().default(1000),
+    operationDelayMs:   z.number().int().nonnegative().default(1000),
     /** DynamoDB page size for scans (default: 25) */
-    scanPageSize:     z.number().int().positive().default(25),
+    scanPageSize:       z.number().int().positive().default(25),
+    /**
+     * Ceiling, in RCU/s, on every reconciler read loop's DynamoDB pagination (GSI1 layer scan,
+     * GSI2 tag-name/tag-count enumeration, base-table tag-index scan and count), paced by each
+     * page's reported ConsumedCapacity. Deliberately NOT `.default()`ed: a zod default makes the
+     * inferred type's field required, breaking every test-file ReconciliationConfig/
+     * ReconcilerOptions object literal that omits it. Left unset, the reconciler applies its own
+     * per-resource default (matching sst/dynamo.ts's provisioned capacity for each of GSI1, GSI2
+     * and the base table); an explicit value here applies to all of them uniformly, but only as a
+     * ceiling that can lower a resource's own provisioned budget, never raise it above it (see
+     * `rcuRateFor` in reconciliation/reconciler.ts) -- the AWS free tier's fixed provisioning is a
+     * hard constraint this setting cannot be used to exceed.
+     */
+    rateLimitRcuPerSec: z.number().positive().optional(),
     /** Exponential backoff config */
-    backoff:          reconciliationBackoffSchema.default({
+    backoff:            reconciliationBackoffSchema.default({
         baseDelayMs: 100,
         maxAttempts: 3,
     }),

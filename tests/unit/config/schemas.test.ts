@@ -1022,6 +1022,7 @@ describe('reconciliationConfigSchema', () => {
             expect(result.data.backoff.baseDelayMs).toBe(100);
             expect(result.data.backoff.maxAttempts).toBe(3);
             expect(result.data.testMode).toBeUndefined();
+            expect(result.data.rateLimitRcuPerSec).toBeUndefined();
         }
     });
 
@@ -1046,6 +1047,25 @@ describe('reconciliationConfigSchema', () => {
         if(result.success) {
             expect(result.data).toEqual(config);
         }
+    });
+
+    test('leaves rateLimitRcuPerSec undefined (no schema-level default) and round-trips an explicit value', () => {
+        const withoutRate = reconciliationConfigSchema.safeParse({ enabled: true });
+        expect(withoutRate.success).toBe(true);
+        if(withoutRate.success) {
+            expect(withoutRate.data.rateLimitRcuPerSec).toBeUndefined();
+        }
+
+        const withRate = reconciliationConfigSchema.safeParse({ enabled: true, rateLimitRcuPerSec: 3.5 });
+        expect(withRate.success).toBe(true);
+        if(withRate.success) {
+            expect(withRate.data.rateLimitRcuPerSec).toBe(3.5);
+        }
+    });
+
+    test('should reject a non-positive rateLimitRcuPerSec', () => {
+        expect(reconciliationConfigSchema.safeParse({ rateLimitRcuPerSec: 0 }).success).toBe(false);
+        expect(reconciliationConfigSchema.safeParse({ rateLimitRcuPerSec: -1 }).success).toBe(false);
     });
 
     test('should accept configuration with partial fields', () => {

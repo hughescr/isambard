@@ -1,5 +1,98 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
-import { delay, retryWithBackoff, isAbortError } from '@/storage/memory-tool/reconciliation/reconciler';
+import {
+    delay, retryWithBackoff, isAbortError, createReconcilerPacers, rcuRateFor, waitBeforeReconcilerRead,
+    type ReconcilerOptions
+} from '@/storage/memory-tool/reconciliation/reconciler';
+
+function baseOptions(overrides: Partial<ReconcilerOptions> = {}): ReconcilerOptions {
+    return {
+        operationDelayMs: 0,
+        scanPageSize:     25,
+        backoff:          { baseDelayMs: 100, maxAttempts: 3 },
+        ...overrides,
+    };
+}
+
+describe('createReconcilerPacers', () => {
+    test('creates three independent pacers, each starting with no debt owed', () => {
+        const pacers = createReconcilerPacers();
+        expect(pacers).toEqual({
+            gsi1: { nextAllowedAtMs: 0 },
+            gsi2: { nextAllowedAtMs: 0 },
+            base: { nextAllowedAtMs: 0 },
+        });
+        pacers.gsi1.nextAllowedAtMs = 5000;
+        expect(pacers.gsi2.nextAllowedAtMs).toBe(0);
+        expect(pacers.base.nextAllowedAtMs).toBe(0);
+    });
+});
+
+describe('rcuRateFor', () => {
+    test('defaults to each resource\'s provisioned RCU/s when options.rateLimitRcuPerSec is unset (sst/dynamo.ts)', () => {
+        const options = baseOptions();
+        expect(rcuRateFor('gsi1', options)).toBe(2);
+        expect(rcuRateFor('gsi2', options)).toBe(1);
+        expect(rcuRateFor('base', options)).toBe(5);
+    });
+
+    test('an override below every resource\'s provisioned RCU/s applies uniformly', () => {
+        const options = baseOptions({ rateLimitRcuPerSec: 0.5 });
+        expect(rcuRateFor('gsi1', options)).toBe(0.5);
+        expect(rcuRateFor('gsi2', options)).toBe(0.5);
+        expect(rcuRateFor('base', options)).toBe(0.5);
+    });
+
+    test('an override above a resource\'s provisioned RCU/s is capped at that resource\'s own budget, never raised', () => {
+        const options = baseOptions({ rateLimitRcuPerSec: 3.5 });
+        expect(rcuRateFor('gsi1', options)).toBe(2);
+        expect(rcuRateFor('gsi2', options)).toBe(1);
+        expect(rcuRateFor('base', options)).toBe(3.5);
+    });
+
+    test('an override exactly equal to a resource\'s provisioned RCU/s passes through unchanged', () => {
+        const options = baseOptions({ rateLimitRcuPerSec: 2 });
+        expect(rcuRateFor('gsi1', options)).toBe(2);
+    });
+});
+
+describe('waitBeforeReconcilerRead', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('sleeps out debt already owed on the pacer', async () => {
+        const pacer = { nextAllowedAtMs: Date.now() + 2000 };
+        let resolved = false;
+        const waiting = waitBeforeReconcilerRead(pacer, undefined).then(() => {
+            resolved = true;
+            return undefined;
+        });
+        await Promise.resolve();
+        expect(resolved).toBe(false);
+        jest.advanceTimersByTime(2000);
+        await waiting;
+        expect(resolved).toBe(true);
+    });
+
+    test('resolves immediately, with no timer, when no debt is owed', async () => {
+        const pacer = { nextAllowedAtMs: 0 };
+        await waitBeforeReconcilerRead(pacer, undefined);
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('rejects with AbortError when the signal aborts mid-wait, instead of resolving', async () => {
+        const controller = new AbortController();
+        const pacer = { nextAllowedAtMs: Date.now() + 1000 };
+        const waiting = waitBeforeReconcilerRead(pacer, controller.signal);
+        controller.abort();
+        await expect(waiting).rejects.toBeInstanceOf(DOMException);
+        await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+    });
+});
 
 describe('isAbortError', () => {
     test('recognizes only a DOMException with the AbortError name', () => {

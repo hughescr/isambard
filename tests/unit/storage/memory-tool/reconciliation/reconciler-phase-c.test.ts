@@ -1,8 +1,15 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { DynamoDBDocumentClient, QueryCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { runTagIndexReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
+
+async function flushMicrotasks(): Promise<void> {
+    for(let i = 0; i < 16; i++) {
+        // eslint-disable-next-line no-await-in-loop -- sequential: draining the microtask queue one tick at a time
+        await Promise.resolve();
+    }
+}
 
 describe('runTagIndexReconciliation - Phase C (META_COUNT verification)', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
@@ -448,6 +455,7 @@ describe('runTagIndexReconciliation - Phase C (META_COUNT verification)', () => 
         }).resolvesOnce({
             Count:            1000,
             LastEvaluatedKey: { PK: 'TAG#large-tag', SK: 'PATH#/state/memory-1000' },
+            ConsumedCapacity: { CapacityUnits: 0 },
         })
         // Second page returns 500 items with no LastEvaluatedKey
             .resolvesOnce({
@@ -465,5 +473,137 @@ describe('runTagIndexReconciliation - Phase C (META_COUNT verification)', () => 
             ExpressionAttributeValues: { ':pk': 'TAG#large-tag', ':skPrefix': 'PATH#' },
         });
         expect(queryCalls).toHaveLength(2);
+    });
+
+    describe('RCU pacing', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('paces between COUNT-query pages by ConsumedCapacity even though there is no per-item work', async () => {
+            ddbMock.on(QueryCommand, { IndexName: 'GSI1' }).resolves({ Items: [] }); // Phase A
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).resolvesOnce({ Items: [] }) // Phase B (no tags)
+                .resolves({
+                    Items: [{ PK: 'TAG#big', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#big', count: 2 }],
+                });
+
+            const countQueryCalls = () => ddbMock.commandCalls(QueryCommand).filter(call =>
+                call.args[0].input.KeyConditionExpression === 'PK = :pk AND begins_with(SK, :skPrefix)'
+                && call.args[0].input.ExpressionAttributeValues?.[':pk'] === 'TAG#big'
+                && call.args[0].input.Select === 'COUNT');
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                ExpressionAttributeValues: { ':pk': 'TAG#big', ':skPrefix': 'PATH#' },
+                Select:                    'COUNT',
+            })
+                .resolvesOnce({
+                    Count:            1,
+                    LastEvaluatedKey: { PK: 'TAG#big', SK: 'PATH#/x' },
+                    ConsumedCapacity: { CapacityUnits: 25 },
+                })
+                .resolvesOnce({ Count: 1 });
+
+            const resultPromise = runTagIndexReconciliation(deps, { ...options, rateLimitRcuPerSec: 5 });
+            for(let i = 0; i < 10 && countQueryCalls().length === 0; i++) {
+                // eslint-disable-next-line no-await-in-loop -- test setup: polling until the pacing timer is registered
+                await flushMicrotasks();
+            }
+
+            expect(countQueryCalls()).toHaveLength(1);
+            jest.advanceTimersByTime(4999);
+            await flushMicrotasks();
+            expect(countQueryCalls()).toHaveLength(1); // still short of the owed 5000ms (25 RCU / 5 RCU/s)
+            jest.advanceTimersByTime(1);
+            const result = await resultPromise;
+
+            expect(countQueryCalls()).toHaveLength(2);
+            expect(result.phaseC.countsVerified).toBe(1);
+            expect(result.phaseC.countsCorrected).toBe(0); // 1 + 1 = 2, matches stored count
+        });
+
+        test('pins down abort-during-pacing-sleep: an abort that fires while a getActualTagCount pacing wait is in flight rejects the run, unlike its ordinary soft per-tag failure', async () => {
+            ddbMock.on(QueryCommand, { IndexName: 'GSI1' }).resolves({ Items: [] });
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).resolvesOnce({ Items: [] })
+                .resolves({
+                    Items: [{ PK: 'TAG#big', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#big', count: 2 }],
+                });
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                ExpressionAttributeValues: { ':pk': 'TAG#big', ':skPrefix': 'PATH#' },
+                Select:                    'COUNT',
+            }).resolvesOnce({
+                Count:            1,
+                LastEvaluatedKey: { PK: 'TAG#big', SK: 'PATH#/x' },
+                ConsumedCapacity: { CapacityUnits: 25 },
+            }).resolvesOnce({ Count: 1 });
+
+            const countQueryCalls = () => ddbMock.commandCalls(QueryCommand).filter(call =>
+                call.args[0].input.Select === 'COUNT');
+            const controller = new AbortController();
+            const rejected = runTagIndexReconciliation(deps, { ...options, rateLimitRcuPerSec: 5, signal: controller.signal });
+            for(let i = 0; i < 10 && countQueryCalls().length === 0; i++) {
+                // eslint-disable-next-line no-await-in-loop -- test setup: polling until the pacing timer is registered
+                await flushMicrotasks();
+            }
+
+            controller.abort(); // fires while getActualTagCount's pacing wait is in flight, not between tags
+            await expect(rejected).rejects.toBeInstanceOf(DOMException);
+            await expect(rejected).rejects.toMatchObject({ name: 'AbortError' });
+        });
+
+        test('paces Phase C\'s own tag-count enumeration (listTagCounts): the second page cannot be issued before the reported-capacity delay', async () => {
+            ddbMock.on(QueryCommand, { IndexName: 'GSI1' }).resolves({ Items: [] }); // Phase A
+            const gsi2QueryCalls = () => ddbMock.commandCalls(QueryCommand).filter(call => call.args[0].input.IndexName === 'GSI2');
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            })
+                .resolvesOnce({ Items: [] }) // Phase B: no tags to process
+                .resolvesOnce({
+                    // Phase C's listTagCounts, page 1 of 2
+                    Items:            [{ PK: 'TAG#tag1', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1', count: 1 }],
+                    LastEvaluatedKey: { PK: 'cursor', SK: 'first' },
+                    ConsumedCapacity: { CapacityUnits: 8 },
+                })
+                .resolvesOnce({
+                    // Phase C's listTagCounts, page 2 (final)
+                    Items: [{ PK: 'TAG#tag2', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag2', count: 1 }],
+                });
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression: 'PK = :pk AND begins_with(SK, :skPrefix)',
+                Select:                 'COUNT',
+            }).resolves({ Count: 1 });
+
+            // rateLimitRcuPerSec left unset so gsi2 uses its own provisioned default (1 RCU/s); an
+            // override here would be capped at that same 1 RCU/s ceiling (see rcuRateFor) anyway.
+            const resultPromise = runTagIndexReconciliation(deps, options);
+            for(let i = 0; i < 10 && gsi2QueryCalls().length < 2; i++) {
+                // eslint-disable-next-line no-await-in-loop -- test setup: polling until Phase C's first listTagCounts page fires and the pacing timer is registered
+                await flushMicrotasks();
+            }
+
+            expect(gsi2QueryCalls()).toHaveLength(2); // Phase B's page + Phase C's page 1; page 2 not yet issued
+            jest.advanceTimersByTime(7999); // owed: 8 RCU / 1 RCU/s = 8000ms
+            await flushMicrotasks();
+            expect(gsi2QueryCalls()).toHaveLength(2);
+            jest.advanceTimersByTime(1);
+            const result = await resultPromise;
+
+            expect(gsi2QueryCalls()).toHaveLength(3);
+            expect(result.phaseC.countsVerified).toBe(2);
+        });
     });
 });

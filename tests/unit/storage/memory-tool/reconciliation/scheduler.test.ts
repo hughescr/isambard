@@ -427,6 +427,57 @@ describe('TagIndexReconciliationScheduler', () => {
             expect(capturedSignal?.aborted).toBe(false);
         });
 
+        test('forwards config.rateLimitRcuPerSec into the reconciler options, set or omitted', async () => {
+            let capturedOptions: ReconcilerOptions | undefined;
+            const mockRunReconciliationCapture = mock(
+                async (_deps: ReconcilerDeps, options: ReconcilerOptions) => {
+                    capturedOptions = options;
+                    return {
+                        success:         true,
+                        phaseA:          { phase: 'phaseA' as const, itemsScanned: 0, indexItemsCreated: 0, indexItemsRefreshed: 0, metadataCleaned: 0, errors: 0, startTime: new Date(), endTime: new Date() },
+                        phaseB:          { phase: 'phaseB' as const, itemsScanned: 0, indexItemsDeleted: 0, errors: 0, startTime: new Date(), endTime: new Date() },
+                        phaseC:          makePhaseC(),
+                        totalDurationMs: 100,
+                    };
+                }
+            );
+
+            const configWithRate: ReconciliationConfig = {
+                enabled:            true,
+                intervalMs:         1000,
+                operationDelayMs:   0,
+                scanPageSize:       25,
+                rateLimitRcuPerSec: 3,
+                backoff:            { baseDelayMs: 100, maxAttempts: 3 },
+            };
+
+            const schedulerWithRate = createTagIndexReconciliationScheduler({
+                config:            configWithRate,
+                runReconciliation: mockRunReconciliationCapture,
+                reconcilerDeps:    mockReconcilerDeps,
+            });
+            await schedulerWithRate.triggerNow();
+            schedulerWithRate.stop();
+            expect(capturedOptions?.rateLimitRcuPerSec).toBe(3);
+
+            const configWithoutRate: ReconciliationConfig = {
+                enabled:          true,
+                intervalMs:       1000,
+                operationDelayMs: 0,
+                scanPageSize:     25,
+                backoff:          { baseDelayMs: 100, maxAttempts: 3 },
+            };
+
+            const schedulerWithoutRate = createTagIndexReconciliationScheduler({
+                config:            configWithoutRate,
+                runReconciliation: mockRunReconciliationCapture,
+                reconcilerDeps:    mockReconcilerDeps,
+            });
+            await schedulerWithoutRate.triggerNow();
+            schedulerWithoutRate.stop();
+            expect(capturedOptions?.rateLimitRcuPerSec).toBeUndefined();
+        });
+
         test('should reset state to not running', async () => {
             const config: ReconciliationConfig = {
                 enabled:          true,

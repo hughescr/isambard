@@ -85,10 +85,11 @@ export function createTagIndexReconciliationScheduler(deps: TagIndexReconciliati
      */
     function buildReconcilerOptions(controller: AbortController): ReconcilerOptions {
         return {
-            operationDelayMs: config.operationDelayMs,
-            scanPageSize:     config.scanPageSize,
-            backoff:          config.backoff,
-            signal:           controller.signal,
+            operationDelayMs:   config.operationDelayMs,
+            scanPageSize:       config.scanPageSize,
+            rateLimitRcuPerSec: config.rateLimitRcuPerSec,
+            backoff:            config.backoff,
+            signal:             controller.signal,
         };
     }
 

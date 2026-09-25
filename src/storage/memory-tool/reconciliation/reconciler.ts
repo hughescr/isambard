@@ -10,6 +10,7 @@
 import { type DynamoDBDocumentClient, QueryCommand, GetCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../../client-holder';
+import { type RcuPacer, createRcuPacer, waitForRcuPacer, recordRcuPage } from '../../utils/rcu-pacing';
 import { MemoryToolKeyGenerator, normalizeTags } from '../key-generator';
 import { type MemoryPath, type MemoryToolItemData, type MemoryToolItem, type TagIndexReadItem, createMemoryPath, classifyMemoryPath, type IndexLayer, SEARCHABLE_NAMESPACES, decodePendingRenameIndexCleanup, type PendingRenameIndexCleanup  } from '../types';
 import type { PhaseAProgress, PhaseBProgress, PhaseCProgress, ReconciliationResult } from './types';
@@ -27,7 +28,16 @@ export interface TagIndexReconciliationOps {
     createTagIndexItems:  (path: MemoryPath, tags: Set<string>, updatedAt: string, contentPreview: string, layer: IndexLayer, allTags: Set<string>) => Promise<void>
     refreshTagIndexItems: (path: MemoryPath, tags: Set<string>, updatedAt: string, contentPreview: string, layer: IndexLayer, allTags: Set<string>) => Promise<void>
     deleteTagIndexItems:  (path: MemoryPath, tags: Set<string>) => Promise<void>
-    listTagCounts:        () => Promise<{ tag: string, count: number }[]>
+    /**
+     * `pacing`, when given, requests `ReturnConsumedCapacity` and paces subsequent pages against
+     * the shared `pacer` at `rateLimitRcuPerSec` (see reconciler.ts's `ReconcilerPacers`), so this
+     * GSI2 enumeration is capacity-paced the same way as the reconciler's own GSI1/GSI2/base-table
+     * reads, and shares the reconciler's GSI2 pacing debt. Omitted, behaviour is unchanged (no
+     * ConsumedCapacity requested, no pacing) -- the live memory-mcp-server list-tags tool call.
+     * `pacing.signal`, when given, cancels the pacing wait promptly and is checked before every
+     * page's query, matching the abort behaviour of the reconciler's own read loops.
+     */
+    listTagCounts:        (pacing?: { pacer: RcuPacer, rateLimitRcuPerSec: number, signal?: AbortSignal }) => Promise<{ tag: string, count: number }[]>
 }
 
 /**
@@ -48,13 +58,71 @@ type ResolvedReconcilerDeps = Omit<ReconcilerDeps, 'docClient'> & { docClient: D
  */
 export interface ReconcilerOptions {
     /** Delay between operations in milliseconds (default 1000) */
-    operationDelayMs: number
+    operationDelayMs:    number
     /** DynamoDB page size (default 25) */
-    scanPageSize:     number
+    scanPageSize:        number
+    /**
+     * Ceiling, in RCU/s, applied uniformly to every reconciler read loop's DynamoDB pagination when
+     * set -- but only ever lowers a resource's own provisioned default, never raises it (see
+     * `rcuRateFor`/`DEFAULT_RATE_LIMIT_RCU_PER_SEC`); a value above a resource's provisioned budget
+     * is silently capped at that budget.
+     */
+    rateLimitRcuPerSec?: number
     /** Backoff configuration */
-    backoff:          { baseDelayMs: number, maxAttempts: number }
+    backoff:             { baseDelayMs: number, maxAttempts: number }
     /** Abort signal for cancellation */
-    signal?:          AbortSignal
+    signal?:             AbortSignal
+}
+
+/**
+ * Per-resource RCU debt carried for the whole reconciliation run (not just within one pagination
+ * loop), so pacing holds across pages, GSI1 layers, tags and phases. `gsi2` is shared by Phase A's
+ * legacy rename-cleanup fallback, Phase B's tag-name enumeration and Phase C's tag-count
+ * enumeration (all three query GSI2's TAG_COUNTS partition); `base` is shared by Phase B's per-tag
+ * index scan and Phase C's per-tag COUNT scan (both query the base table).
+ */
+export interface ReconcilerPacers {
+    gsi1: RcuPacer
+    gsi2: RcuPacer
+    base: RcuPacer
+}
+
+/** @internal - exported for testing */
+export function createReconcilerPacers(): ReconcilerPacers {
+    return { gsi1: createRcuPacer(), gsi2: createRcuPacer(), base: createRcuPacer() };
+}
+
+/**
+ * Default RCU/s ceiling per resource, used when `options.rateLimitRcuPerSec` is unset, and also the
+ * hard upper bound each resource's effective rate can never exceed even when it is set. Matches
+ * sst/dynamo.ts's provisioned capacity for each (base table 5, GSI1 2, GSI2 1) -- the binding
+ * constraint this pacing exists to respect.
+ */
+const DEFAULT_RATE_LIMIT_RCU_PER_SEC: Readonly<Record<keyof ReconcilerPacers, number>> = {
+    gsi1: 2,
+    gsi2: 1,
+    base: 5,
+};
+
+/**
+ * `options.rateLimitRcuPerSec`, when set, is a single operator override applied to every resource --
+ * but only as a ceiling that can lower a resource's own provisioned budget, never raise it: the
+ * result is always `Math.min(override, DEFAULT_RATE_LIMIT_RCU_PER_SEC[resource])`. Each resource's
+ * provisioned capacity (sst/dynamo.ts) is fixed by the AWS free tier, so no config value may pace a
+ * read loop above it.
+ * @internal - exported for testing
+ */
+export function rcuRateFor(resource: keyof ReconcilerPacers, options: ReconcilerOptions): number {
+    const provisioned = DEFAULT_RATE_LIMIT_RCU_PER_SEC[resource];
+    return options.rateLimitRcuPerSec === undefined ? provisioned : Math.min(options.rateLimitRcuPerSec, provisioned);
+}
+
+/**
+ * Waits out any RCU debt already owed on `pacer` by an earlier read of the same resource.
+ * @internal - exported for testing
+ */
+export async function waitBeforeReconcilerRead(pacer: RcuPacer, signal: AbortSignal | undefined): Promise<void> {
+    await waitForRcuPacer(pacer, () => Date.now(), ms => delay(ms, signal));
 }
 
 // ============================================================================
@@ -158,6 +226,7 @@ interface PhaseAContext {
     deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
     progress: PhaseAProgress
+    pacers:   ReconcilerPacers
 }
 
 /**
@@ -265,8 +334,12 @@ async function getAllTagNames(
     let lastEvaluatedKey: Record<string, unknown> | undefined;
     const allTags: string[] = [];
 
+    const rate = rcuRateFor('gsi2', ctx.options);
+
     do {
         const currentKey = lastEvaluatedKey;
+        // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
+        await waitBeforeReconcilerRead(ctx.pacers.gsi2, ctx.options.signal);
         // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
         const result = await retryWithBackoff(
 
@@ -277,7 +350,8 @@ async function getAllTagNames(
                 ExpressionAttributeValues: {
                     ':gsi2pk': 'TAG_COUNTS',
                 },
-                ExclusiveStartKey: currentKey,
+                ExclusiveStartKey:      currentKey,
+                ReturnConsumedCapacity: 'TOTAL',
             })),
             ctx.options.backoff,
             'getAllTagNames',
@@ -298,6 +372,16 @@ async function getAllTagNames(
         }
 
         lastEvaluatedKey = result.LastEvaluatedKey;
+        const paced = recordRcuPage(
+            ctx.pacers.gsi2,
+            result.ConsumedCapacity?.CapacityUnits,
+            rate,
+            Boolean(lastEvaluatedKey),
+            () => logger.warn({ msg: 'getAllTagNames omitted ConsumedCapacity; stopping pagination without pacing' })
+        );
+        if(!paced) {
+            return undefined;
+        }
     } while(lastEvaluatedKey);
 
     return allTags;
@@ -350,7 +434,10 @@ async function checkOldPathIndicesClean(
     const allTags = await getAllTagNames(ctx);
 
     if(!allTags) {
-        // Failed to enumerate tags - assume not clean (conservative)
+        // Failed to enumerate tags (including a page that omitted ConsumedCapacity mid-pagination)
+        // - assume not clean (conservative) and count it, so a stalled cleanup is distinguishable
+        // from a genuinely-not-clean result rather than silently looking like ordinary unfinished work.
+        ctx.progress.errors++;
         return false;
     }
 
@@ -465,11 +552,15 @@ async function scanLayer(
     layer: IndexLayer
 ): Promise<void> {
     let lastEvaluatedKey: Record<string, unknown> | undefined;
+    const rate = rcuRateFor('gsi1', ctx.options);
 
     do {
         if(ctx.options.signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
+
+        // eslint-disable-next-line no-await-in-loop -- sequential: pacing wait depends on the previous page's reported capacity
+        await waitBeforeReconcilerRead(ctx.pacers.gsi1, ctx.options.signal);
 
         const currentKey = lastEvaluatedKey;
         // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
@@ -483,8 +574,9 @@ async function scanLayer(
                 ExpressionAttributeValues: {
                     ':gsi1pk': `LAYER#${layer}`,
                 },
-                Limit:             ctx.options.scanPageSize,
-                ExclusiveStartKey: currentKey,
+                Limit:                  ctx.options.scanPageSize,
+                ExclusiveStartKey:      currentKey,
+                ReturnConsumedCapacity: 'TOTAL',
             })),
             // Stryker disable next-line llm: backoff is a required object and therefore cannot activate an || fallback.
             ctx.options.backoff,
@@ -507,6 +599,17 @@ async function scanLayer(
         }
 
         lastEvaluatedKey = result.LastEvaluatedKey;
+        const paced = recordRcuPage(
+            ctx.pacers.gsi1,
+            result.ConsumedCapacity?.CapacityUnits,
+            rate,
+            Boolean(lastEvaluatedKey),
+            () => logger.warn({ layer, msg: 'scanLayer omitted ConsumedCapacity; stopping pagination without pacing' })
+        );
+        if(!paced) {
+            ctx.progress.errors++;
+            break;
+        }
     } while(lastEvaluatedKey);
 }
 
@@ -515,7 +618,8 @@ async function scanLayer(
  */
 async function runPhaseA(
     deps: ResolvedReconcilerDeps,
-    options: ReconcilerOptions
+    options: ReconcilerOptions,
+    pacers: ReconcilerPacers
 ): Promise<PhaseAProgress> {
     const progress: PhaseAProgress = {
         phase:               'phaseA',
@@ -527,7 +631,7 @@ async function runPhaseA(
         startTime:           new Date(),
     };
 
-    const ctx: PhaseAContext = { deps, options, progress };
+    const ctx: PhaseAContext = { deps, options, progress, pacers };
 
     // The three cognitive GSI1 partitions plus LAYER#users, so /users rows (whose legacy tag rows say 'unknown') are repaired too.
     for(const layer of SEARCHABLE_NAMESPACES) {
@@ -552,6 +656,7 @@ interface PhaseBContext {
     deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
     progress: PhaseBProgress
+    pacers:   ReconcilerPacers
 }
 
 /**
@@ -604,11 +709,15 @@ async function scanTagItems(
     tag: string
 ): Promise<void> {
     let lastEvaluatedKey: Record<string, unknown> | undefined;
+    const rate = rcuRateFor('base', ctx.options);
 
     do {
         if(ctx.options.signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
+
+        // eslint-disable-next-line no-await-in-loop -- sequential: pacing wait depends on the previous page's reported capacity
+        await waitBeforeReconcilerRead(ctx.pacers.base, ctx.options.signal);
 
         const currentKey = lastEvaluatedKey;
         // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
@@ -621,8 +730,9 @@ async function scanTagItems(
                     ':pk':       `TAG#${tag}`,
                     ':skPrefix': 'PATH#',
                 },
-                Limit:             ctx.options.scanPageSize,
-                ExclusiveStartKey: currentKey,
+                Limit:                  ctx.options.scanPageSize,
+                ExclusiveStartKey:      currentKey,
+                ReturnConsumedCapacity: 'TOTAL',
             })),
             ctx.options.backoff,
             `scanTagItems:${tag}`,
@@ -644,6 +754,17 @@ async function scanTagItems(
 
         // Stryker disable next-line llm: null and undefined both terminate this truthiness-controlled pagination loop.
         lastEvaluatedKey = result.LastEvaluatedKey;
+        const paced = recordRcuPage(
+            ctx.pacers.base,
+            result.ConsumedCapacity?.CapacityUnits,
+            rate,
+            Boolean(lastEvaluatedKey),
+            () => logger.warn({ tag, msg: 'scanTagItems omitted ConsumedCapacity; stopping pagination without pacing' })
+        );
+        if(!paced) {
+            ctx.progress.errors++;
+            break;
+        }
     } while(lastEvaluatedKey);
 }
 
@@ -652,7 +773,8 @@ async function scanTagItems(
  */
 async function runPhaseB(
     deps: ResolvedReconcilerDeps,
-    options: ReconcilerOptions
+    options: ReconcilerOptions,
+    pacers: ReconcilerPacers
 ): Promise<PhaseBProgress> {
     const progress: PhaseBProgress = {
         phase:             'phaseB',
@@ -662,7 +784,7 @@ async function runPhaseB(
         startTime:         new Date(),
     };
 
-    const ctx: PhaseBContext = { deps, options, progress };
+    const ctx: PhaseBContext = { deps, options, progress, pacers };
 
     // Enumerate all tags from GSI2 TAG_COUNTS partition
     const allTags = await getAllTagNames(ctx);
@@ -692,6 +814,7 @@ interface PhaseCContext {
     deps:     ResolvedReconcilerDeps
     options:  ReconcilerOptions
     progress: PhaseCProgress
+    pacers:   ReconcilerPacers
 }
 
 /**
@@ -704,11 +827,17 @@ async function getActualTagCount(
 ): Promise<number | undefined> {
     let totalCount = 0;
     let lastEvaluatedKey: Record<string, unknown> | undefined;
+    const rate = rcuRateFor('base', ctx.options);
 
     do {
         if(ctx.options.signal?.aborted) {
             return undefined;
         }
+
+        // Note: unlike the abort check just above, an abort that fires during this sleep throws (delay()'s
+        // AbortError), not a soft `undefined` -- processMetaCount's isAbortError check rethrows it as usual.
+        // eslint-disable-next-line no-await-in-loop -- sequential: pacing wait depends on the previous page's reported capacity
+        await waitBeforeReconcilerRead(ctx.pacers.base, ctx.options.signal);
 
         const currentKey = lastEvaluatedKey;
         // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
@@ -721,8 +850,9 @@ async function getActualTagCount(
                     ':pk':       `TAG#${tag}`,
                     ':skPrefix': 'PATH#',
                 },
-                Select:            'COUNT',
-                ExclusiveStartKey: currentKey,
+                Select:                 'COUNT',
+                ExclusiveStartKey:      currentKey,
+                ReturnConsumedCapacity: 'TOTAL',
             })),
             ctx.options.backoff,
             `getActualTagCount:${tag}`,
@@ -735,6 +865,16 @@ async function getActualTagCount(
 
         totalCount += result.Count ?? 0;
         lastEvaluatedKey = result.LastEvaluatedKey;
+        const paced = recordRcuPage(
+            ctx.pacers.base,
+            result.ConsumedCapacity?.CapacityUnits,
+            rate,
+            Boolean(lastEvaluatedKey),
+            () => logger.warn({ tag, msg: 'getActualTagCount omitted ConsumedCapacity; stopping pagination without pacing' })
+        );
+        if(!paced) {
+            return undefined;
+        }
     } while(lastEvaluatedKey);
 
     return totalCount;
@@ -850,7 +990,8 @@ async function processMetaCount(
  */
 async function runPhaseC(
     deps: ResolvedReconcilerDeps,
-    options: ReconcilerOptions
+    options: ReconcilerOptions,
+    pacers: ReconcilerPacers
 ): Promise<PhaseCProgress> {
     const progress: PhaseCProgress = {
         phase:           'phaseC',
@@ -861,10 +1002,16 @@ async function runPhaseC(
         startTime:       new Date(),
     };
 
-    const ctx: PhaseCContext = { deps, options, progress };
+    const ctx: PhaseCContext = { deps, options, progress, pacers };
 
     try {
-        const tagCounts = await deps.tagIndex.listTagCounts();
+        // Shares the run's GSI2 pacer with Phase A's legacy rename-cleanup fallback and Phase B's
+        // tag-name enumeration, so this enumeration's pacing debt carries across phase boundaries too.
+        const tagCounts = await deps.tagIndex.listTagCounts({
+            pacer:              pacers.gsi2,
+            rateLimitRcuPerSec: rcuRateFor('gsi2', options),
+            signal:             options.signal,
+        });
 
         for(const { tag, count } of tagCounts) {
             if(options.signal?.aborted) {
@@ -909,7 +1056,12 @@ export async function runTagIndexReconciliation(
 
     logger.info({ msg: 'Starting tag index reconciliation' });
 
-    const phaseA = await runPhaseA(resolvedDeps, options);
+    // One set of pacers for the whole run, so RCU pacing debt carries across phases (Phase A's
+    // legacy GSI2 fallback / Phase B share `gsi2`; Phase B / Phase C share `base`), not just within
+    // a single pagination loop.
+    const pacers = createReconcilerPacers();
+
+    const phaseA = await runPhaseA(resolvedDeps, options, pacers);
     logger.info({
         phase:               'A',
         itemsScanned:        phaseA.itemsScanned,
@@ -920,7 +1072,7 @@ export async function runTagIndexReconciliation(
         msg:                 'Phase A complete',
     });
 
-    const phaseB = await runPhaseB(resolvedDeps, options);
+    const phaseB = await runPhaseB(resolvedDeps, options, pacers);
     logger.info({
         phase:             'B',
         itemsScanned:      phaseB.itemsScanned,
@@ -929,7 +1081,7 @@ export async function runTagIndexReconciliation(
         msg:               'Phase B complete',
     });
 
-    const phaseC = await runPhaseC(resolvedDeps, options);
+    const phaseC = await runPhaseC(resolvedDeps, options, pacers);
     logger.info({
         phase:           'C',
         countsVerified:  phaseC.countsVerified,

@@ -3,6 +3,7 @@ import { logger } from '@hughescr/logger';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
+import { type RcuPacer, waitForRcuPacer, recordRcuPage, sleepRespectingSignal } from '../utils/rcu-pacing';
 import type { ListOptions, ListResult } from './backend-query';
 import { normalizeTags } from './key-generator';
 import { type IndexLayer, type TagIndexItem, type TagIndexReadItem, type MemoryPath  } from './types';
@@ -292,17 +293,36 @@ export class MemoryToolBackendTagIndex {
     /**
      * Lists all tag counts by querying GSI2.
      * Returns tags sorted by name.
+     *
+     * `pacing`, when given, requests `ReturnConsumedCapacity` and paces a continuing page against
+     * the shared `pacer` at `rateLimitRcuPerSec` (the memory-tool reconciler's Phase C uses this to
+     * share its GSI2 pacing debt with Phase A/B's own GSI2 reads). Omitted (the default, used by
+     * the live list-tags MCP tool), behaviour is unchanged: no ConsumedCapacity requested, no pacing.
+     * `pacing.signal`, when given, cancels promptly: it aborts the pacing sleep itself (rather than
+     * waiting out the full owed delay) and is also checked immediately before every page's query,
+     * including the first, so cancellation during a page with no debt owed still takes effect.
+     * @throws {Error} When `pacing` is given and a continuing page omits ConsumedCapacity.
+     * @throws {DOMException} Named `AbortError`, when `pacing.signal` aborts before or during a page.
      */
-    async listTagCounts(): Promise<{ tag: string, count: number }[]> {
+    async listTagCounts(pacing?: { pacer: RcuPacer, rateLimitRcuPerSec: number, signal?: AbortSignal }): Promise<{ tag: string, count: number }[]> {
         const results: { tag: string, count: number }[] = [];
         let exclusiveStartKey: Record<string, unknown> | undefined;
 
         do {
+            if(pacing) {
+                // eslint-disable-next-line no-await-in-loop -- sequential: pacing wait depends on the previous page's reported capacity
+                await waitForRcuPacer(pacing.pacer, () => Date.now(), ms => sleepRespectingSignal(ms, pacing.signal));
+                if(pacing.signal?.aborted) {
+                    throw new DOMException('Aborted', 'AbortError');
+                }
+            }
+
             const queryParams: Record<string, unknown> = {
                 IndexName:                 'GSI2',
                 KeyConditionExpression:    'GSI2PK = :gsi2pk',
                 ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
                 ExclusiveStartKey:         exclusiveStartKey,
+                ...(pacing ? { ReturnConsumedCapacity: 'TOTAL' as const } : {}),
             };
 
             // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
@@ -323,6 +343,18 @@ export class MemoryToolBackendTagIndex {
             }
 
             exclusiveStartKey = result.LastEvaluatedKey;
+
+            if(pacing) {
+                recordRcuPage(
+                    pacing.pacer,
+                    result.ConsumedCapacity?.CapacityUnits,
+                    pacing.rateLimitRcuPerSec,
+                    Boolean(exclusiveStartKey),
+                    () => {
+                        throw new Error('listTagCounts reported no ConsumedCapacity on a continuing page; refusing to continue without RCU pacing');
+                    }
+                );
+            }
         } while(exclusiveStartKey);
 
         // Sort by tag name

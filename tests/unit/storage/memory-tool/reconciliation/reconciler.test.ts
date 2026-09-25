@@ -1027,6 +1027,51 @@ describe('runTagIndexReconciliation', () => {
             // Should NOT clean previouslyKnownAs since we couldn't confirm old indices are gone
             expect(result.phaseA.metadataCleaned).toBe(0);
             expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+            // A failed enumeration is counted as a Phase A error, distinguishing "couldn't confirm"
+            // from an ordinary "confirmed not clean yet" result.
+            expect(result.phaseA.errors).toBeGreaterThan(0);
+        });
+
+        test('counts a Phase A error (without cleaning up) when the legacy tag enumeration stops mid-pagination for omitting ConsumedCapacity', async () => {
+            const memoryItem = {
+                PK:             'DIR#/identity',
+                SK:             'FILE#core.md',
+                GSI1PK:         'LAYER#identity',
+                GSI1SK:         'UPDATED#2024-01-01T00:00:00.000Z',
+                path:           '/identity/core.md',
+                content:        'test content',
+                contentType:    'text/markdown',
+                metadata:       { previouslyKnownAs: '/identity/old-name.md' },
+                createdAt:      '2024-01-01T00:00:00.000Z',
+                updatedAt:      '2024-01-01T00:00:00.000Z',
+                tags:           new Set(['test']),
+                contentPreview: 'test content',
+            };
+
+            mockLayerQuery('identity', [memoryItem]);
+            mockLayerQuery('state', []);
+            mockLayerQuery('events', []);
+
+            ddbMock.on(QueryCommand, {
+                KeyConditionExpression:    'PK = :pk AND SK = :sk',
+                ExpressionAttributeValues: { ':pk': 'TAG#test', ':sk': 'PATH#/identity/core.md' },
+            }).resolves({ Items: [{ PK: 'TAG#test', SK: 'PATH#/identity/core.md' }] });
+
+            // checkOldPathIndicesClean's legacy GSI2 fallback: a continuing page omits ConsumedCapacity
+            ddbMock.on(QueryCommand, {
+                IndexName:                 'GSI2',
+                KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+            }).resolvesOnce({ Items: [{ GSI2SK: 'TAG#kept' }], LastEvaluatedKey: { PK: 'cursor', SK: 'first' } });
+
+            const result = await runTagIndexReconciliation(deps, options);
+
+            expect(result.phaseA.metadataCleaned).toBe(0);
+            expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+            expect(result.phaseA.errors).toBeGreaterThan(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                msg: 'getAllTagNames omitted ConsumedCapacity; stopping pagination without pacing',
+            }));
         });
 
         test('should handle pagination (multiple pages per layer)', async () => {
@@ -1070,6 +1115,7 @@ describe('runTagIndexReconciliation', () => {
                 .resolvesOnce({
                     Items:            page1Items,
                     LastEvaluatedKey: { PK: 'test', SK: 'test' },
+                    ConsumedCapacity: { CapacityUnits: 0 },
                 })
                 .resolvesOnce({
                     Items: page2Items,
@@ -1082,6 +1128,162 @@ describe('runTagIndexReconciliation', () => {
             expect(result.phaseA.itemsScanned).toBeGreaterThanOrEqual(2);
             const layerCalls = ddbMock.commandCalls(QueryCommand).filter(call => call.args[0].input.IndexName === 'GSI1');
             expect(layerCalls[1]?.args[0].input.ExclusiveStartKey).toEqual({ PK: 'test', SK: 'test' });
+        });
+
+        describe('RCU pacing (GSI1)', () => {
+            beforeEach(() => {
+                jest.useFakeTimers();
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            const identityGsi1Calls = () => ddbMock.commandCalls(QueryCommand).filter(call =>
+                call.args[0].input.IndexName === 'GSI1' && call.args[0].input.ExpressionAttributeValues?.[':gsi1pk'] === 'LAYER#identity');
+
+            test('paces before the next GSI1 page using the page\'s reported ConsumedCapacity, even when every item is tagless with no rename tombstone', async () => {
+                const taglessItem = {
+                    PK:             'DIR#/identity',
+                    SK:             'FILE#a.md',
+                    GSI1PK:         'LAYER#identity',
+                    path:           '/identity/a.md',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    contentPreview: 'a',
+                    metadata:       {},
+                    tags:           new Set<string>(),
+                };
+                ddbMock.on(QueryCommand, { IndexName: 'GSI1', ExpressionAttributeValues: { ':gsi1pk': 'LAYER#identity' } })
+                    .resolvesOnce({ Items: [taglessItem], LastEvaluatedKey: { PK: 'x', SK: 'y' }, ConsumedCapacity: { CapacityUnits: 4 } })
+                    .resolvesOnce({ Items: [] });
+                mockLayerQuery('state', []);
+                mockLayerQuery('events', []);
+                mockEmptyPhaseB();
+
+                const resultPromise = runTagIndexReconciliation(deps, { ...options, rateLimitRcuPerSec: 2 });
+                await flushMicrotasks();
+
+                expect(identityGsi1Calls()).toHaveLength(1);
+                expect(jest.getTimerCount()).toBeGreaterThan(0);
+
+                jest.advanceTimersByTime(2000);
+                const result = await resultPromise;
+
+                expect(identityGsi1Calls()).toHaveLength(2);
+                expect(result.phaseA.itemsScanned).toBe(1);
+                expect(result.phaseA.errors).toBe(0);
+            });
+
+            test('paces proportionally longer for a page reporting a large item\'s read cost', async () => {
+                const largeItem = {
+                    PK:             'DIR#/identity',
+                    SK:             'FILE#big.md',
+                    GSI1PK:         'LAYER#identity',
+                    path:           '/identity/big.md',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    contentPreview: 'big',
+                    metadata:       {},
+                    tags:           new Set<string>(),
+                };
+                ddbMock.on(QueryCommand, { IndexName: 'GSI1', ExpressionAttributeValues: { ':gsi1pk': 'LAYER#identity' } })
+                    .resolvesOnce({ Items: [largeItem], LastEvaluatedKey: { PK: 'x', SK: 'y' }, ConsumedCapacity: { CapacityUnits: 37 } })
+                    .resolvesOnce({ Items: [] });
+                mockLayerQuery('state', []);
+                mockLayerQuery('events', []);
+                mockEmptyPhaseB();
+
+                const resultPromise = runTagIndexReconciliation(deps, { ...options, rateLimitRcuPerSec: 2 });
+                await flushMicrotasks();
+
+                expect(identityGsi1Calls()).toHaveLength(1);
+                jest.advanceTimersByTime(18_499);
+                await flushMicrotasks();
+                expect(identityGsi1Calls()).toHaveLength(1);
+                jest.advanceTimersByTime(1);
+                const result = await resultPromise;
+
+                expect(identityGsi1Calls()).toHaveLength(2);
+                expect(result.phaseA.errors).toBe(0);
+            });
+
+            test('does not pace after the final GSI1 page of a layer', async () => {
+                mockLayerQuery('identity', []); // single page, no LastEvaluatedKey, no ConsumedCapacity
+                mockLayerQuery('state', []);
+                mockLayerQuery('events', []);
+                mockEmptyPhaseB();
+
+                const result = await runTagIndexReconciliation(deps, { ...options, rateLimitRcuPerSec: 2 });
+
+                expect(identityGsi1Calls()).toHaveLength(1);
+                expect(result.phaseA.errors).toBe(0);
+                expect(mockLogger.warn).not.toHaveBeenCalledWith(expect.objectContaining({
+                    msg: expect.stringContaining('omitted ConsumedCapacity'),
+                }));
+            });
+
+            test('stops the layer scan and counts an error, without pacing, when a continuing GSI1 page omits ConsumedCapacity', async () => {
+                const item = {
+                    PK:             'DIR#/identity',
+                    SK:             'FILE#a.md',
+                    GSI1PK:         'LAYER#identity',
+                    path:           '/identity/a.md',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    contentPreview: 'a',
+                    metadata:       {},
+                    tags:           new Set<string>(),
+                };
+                ddbMock.on(QueryCommand, { IndexName: 'GSI1', ExpressionAttributeValues: { ':gsi1pk': 'LAYER#identity' } })
+                    .resolvesOnce({ Items: [item], LastEvaluatedKey: { PK: 'x', SK: 'y' } }) // no ConsumedCapacity
+                    .resolvesOnce({ Items: [] });
+                mockLayerQuery('state', []);
+                mockLayerQuery('events', []);
+                mockEmptyPhaseB();
+
+                const result = await runTagIndexReconciliation(deps, options);
+
+                expect(identityGsi1Calls()).toHaveLength(1); // second page never queried
+                expect(result.phaseA.errors).toBeGreaterThan(0);
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
+                    layer: 'identity',
+                    msg:   'scanLayer omitted ConsumedCapacity; stopping pagination without pacing',
+                }));
+            });
+
+            test('carries pacing debt from one GSI1 layer\'s high-cost terminal page into the next layer\'s first page', async () => {
+                const item = {
+                    PK:             'DIR#/identity',
+                    SK:             'FILE#a.md',
+                    GSI1PK:         'LAYER#identity',
+                    path:           '/identity/a.md',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    contentPreview: 'a',
+                    metadata:       {},
+                    tags:           new Set<string>(),
+                };
+                // identity: a single (terminal) page, but a large reported cost -- no further page
+                // of ITS OWN follows, yet the debt it reports must still gate 'state''s first page.
+                ddbMock.on(QueryCommand, { IndexName: 'GSI1', ExpressionAttributeValues: { ':gsi1pk': 'LAYER#identity' } })
+                    .resolves({ Items: [item], ConsumedCapacity: { CapacityUnits: 37 } });
+                mockLayerQuery('state', []);
+                mockLayerQuery('events', []);
+                mockEmptyPhaseB();
+
+                const stateGsi1Calls = () => ddbMock.commandCalls(QueryCommand).filter(call =>
+                    call.args[0].input.IndexName === 'GSI1' && call.args[0].input.ExpressionAttributeValues?.[':gsi1pk'] === 'LAYER#state');
+
+                const resultPromise = runTagIndexReconciliation(deps, { ...options, rateLimitRcuPerSec: 2 });
+                await flushMicrotasks();
+
+                expect(identityGsi1Calls()).toHaveLength(1);
+                expect(stateGsi1Calls()).toHaveLength(0); // gated by identity's terminal-page debt
+                expect(jest.getTimerCount()).toBeGreaterThan(0);
+
+                jest.advanceTimersByTime(18_500);
+                const result = await resultPromise;
+
+                expect(stateGsi1Calls()).toHaveLength(1);
+                expect(result.phaseA.errors).toBe(0);
+            });
         });
 
         test('should respect abort signal before Phase A starts', async () => {
@@ -1992,6 +2194,7 @@ describe('runTagIndexReconciliation', () => {
                 .resolvesOnce({
                     Items:            [page1Item],
                     LastEvaluatedKey: { PK: 'TAG#test1', SK: 'PATH#/identity/file1.md' },
+                    ConsumedCapacity: { CapacityUnits: 0 },
                 })
                 .resolvesOnce({
                     Items: [page2Item],
@@ -2012,6 +2215,91 @@ describe('runTagIndexReconciliation', () => {
             const result = await runTagIndexReconciliation(deps, options);
 
             expect(result.phaseB.itemsScanned).toBeGreaterThanOrEqual(2);
+        });
+
+        describe('RCU pacing', () => {
+            beforeEach(() => {
+                jest.useFakeTimers();
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            test('paces between per-tag index pages using the page\'s reported ConsumedCapacity', async () => {
+                const page1Item: TagIndexReadItem = {
+                    PK:             'TAG#test1',
+                    SK:             'PATH#/identity/file1.md',
+                    memoryPath:     '/identity/file1.md',
+                    layer:          'identity',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    tags:           new Set(['test1']),
+                    contentPreview: 'content',
+                };
+                const page2Item: TagIndexReadItem = {
+                    PK:             'TAG#test1',
+                    SK:             'PATH#/identity/file2.md',
+                    memoryPath:     '/identity/file2.md',
+                    layer:          'identity',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    tags:           new Set(['test1']),
+                    contentPreview: 'content',
+                };
+                ddbMock.on(QueryCommand, { IndexName: 'GSI1' }).resolves({ Items: [] }); // Phase A
+                ddbMock.on(QueryCommand, {
+                    IndexName:                 'GSI2',
+                    KeyConditionExpression:    'GSI2PK = :gsi2pk',
+                    ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
+                }).resolves({
+                    Items: [{ PK: 'TAG#test1', SK: 'META_COUNT', GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#test1', count: 2 }],
+                });
+                const tagQueryCalls = () => ddbMock.commandCalls(QueryCommand).filter(call =>
+                    call.args[0].input.KeyConditionExpression === 'PK = :pk AND begins_with(SK, :skPrefix)'
+                    && call.args[0].input.ExpressionAttributeValues?.[':pk'] === 'TAG#test1'
+                    && call.args[0].input.Select === undefined); // exclude Phase C's Select:'COUNT' query for the same tag
+                ddbMock.on(QueryCommand, {
+                    KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                    ExpressionAttributeValues: { ':pk': 'TAG#test1', ':skPrefix': 'PATH#' },
+                })
+                    .resolvesOnce({
+                        Items:            [page1Item],
+                        LastEvaluatedKey: { PK: 'TAG#test1', SK: 'PATH#/identity/file1.md' },
+                        ConsumedCapacity: { CapacityUnits: 10 },
+                    })
+                    .resolvesOnce({ Items: [page2Item] });
+                // Phase C's getActualTagCount, a distinct Select:'COUNT' query for the same tag/prefix
+                ddbMock.on(QueryCommand, {
+                    KeyConditionExpression:    'PK = :pk AND begins_with(SK, :skPrefix)',
+                    ExpressionAttributeValues: { ':pk': 'TAG#test1', ':skPrefix': 'PATH#' },
+                    Select:                    'COUNT',
+                }).resolves({ Count: 2 });
+                getMemory.mockResolvedValue({
+                    path:           '/identity/file1.md' as MemoryPath,
+                    content:        'content',
+                    contentType:    'text/markdown',
+                    metadata:       {},
+                    createdAt:      '2024-01-01T00:00:00.000Z',
+                    updatedAt:      '2024-01-01T00:00:00.000Z',
+                    tags:           new Set(['test1']),
+                    contentPreview: 'content',
+                });
+
+                const resultPromise = runTagIndexReconciliation(deps, { ...options, rateLimitRcuPerSec: 5 });
+                for(let i = 0; i < 10 && tagQueryCalls().length === 0; i++) {
+                    // eslint-disable-next-line no-await-in-loop -- test setup: polling until the pacing timer is registered
+                    await flushMicrotasks();
+                }
+
+                expect(tagQueryCalls()).toHaveLength(1);
+                jest.advanceTimersByTime(1999);
+                await flushMicrotasks();
+                expect(tagQueryCalls()).toHaveLength(1);
+                jest.advanceTimersByTime(1);
+                const result = await resultPromise;
+
+                expect(tagQueryCalls()).toHaveLength(2);
+                expect(result.phaseB.itemsScanned).toBeGreaterThanOrEqual(2);
+            });
         });
 
         test('should respect abort signal before Phase B starts', async () => {
@@ -2542,6 +2830,7 @@ describe('runTagIndexReconciliation', () => {
                 .resolvesOnce({
                     Items:            [{ GSI2SK: 'OTHER#ignored' }],
                     LastEvaluatedKey: { PK: 'cursor', SK: 'first' },
+                    ConsumedCapacity: { CapacityUnits: 0 },
                 })
                 .resolves({ Items: [{ GSI2SK: 'TAG#kept' }] });
             ddbMock.on(QueryCommand, {

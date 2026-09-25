@@ -2124,6 +2124,115 @@ describe('MemoryToolBackendTagIndex', () => {
 
             expect(result).toEqual([]);
         });
+
+        describe('pacing', () => {
+            beforeEach(() => {
+                jest.useFakeTimers();
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            test('does not request ConsumedCapacity or pace when called with no pacing option (the live list-tags tool call)', async () => {
+                ddbMock.on(QueryCommand).resolves({ Items: [{ GSI2SK: 'TAG#tag1', count: 1 }] });
+
+                await backend.listTagCounts();
+
+                const calls = ddbMock.commandCalls(QueryCommand);
+                expect(calls).toHaveLength(1);
+                expect(calls[0].args[0].input.ReturnConsumedCapacity).toBeUndefined();
+                expect(jest.getTimerCount()).toBe(0);
+            });
+
+            test('requests ReturnConsumedCapacity and paces the second page by the first page\'s reported cost', async () => {
+                const cursor = { GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1' };
+                ddbMock.on(QueryCommand)
+                    .resolvesOnce({
+                        Items:            [{ GSI2SK: 'TAG#tag1', count: 1 }],
+                        LastEvaluatedKey: cursor,
+                        ConsumedCapacity: { CapacityUnits: 3 },
+                    })
+                    .resolvesOnce({ Items: [{ GSI2SK: 'TAG#tag2', count: 1 }] });
+
+                const pacer = { nextAllowedAtMs: 0 };
+                const resultPromise = backend.listTagCounts({ pacer, rateLimitRcuPerSec: 1 });
+
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(1);
+                expect(ddbMock.commandCalls(QueryCommand)[0]?.args[0].input.ReturnConsumedCapacity).toBe('TOTAL');
+
+                jest.advanceTimersByTime(2999);
+                await Promise.resolve();
+                expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(1);
+                jest.advanceTimersByTime(1);
+                const result = await resultPromise;
+
+                expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(2);
+                expect(result).toEqual([{ tag: 'tag1', count: 1 }, { tag: 'tag2', count: 1 }]);
+            });
+
+            test('throws, naming the omission, when pacing is requested and a continuing page omits ConsumedCapacity', async () => {
+                ddbMock.on(QueryCommand).resolvesOnce({
+                    Items:            [{ GSI2SK: 'TAG#tag1', count: 1 }],
+                    LastEvaluatedKey: { GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1' },
+                }); // no ConsumedCapacity
+
+                const pacer = { nextAllowedAtMs: 0 };
+                await expect(backend.listTagCounts({ pacer, rateLimitRcuPerSec: 1 })).rejects.toThrow(
+                    new Error('listTagCounts reported no ConsumedCapacity on a continuing page; refusing to continue without RCU pacing')
+                );
+            });
+
+            test('tolerates a missing ConsumedCapacity on a single (terminal) page when paced', async () => {
+                ddbMock.on(QueryCommand).resolves({ Items: [{ GSI2SK: 'TAG#tag1', count: 1 }] }); // no LastEvaluatedKey, no ConsumedCapacity
+
+                const pacer = { nextAllowedAtMs: 0 };
+                const result = await backend.listTagCounts({ pacer, rateLimitRcuPerSec: 1 });
+
+                expect(result).toEqual([{ tag: 'tag1', count: 1 }]);
+                expect(pacer.nextAllowedAtMs).toBe(0); // untouched -- nothing to record
+            });
+
+            test('rejects with an AbortError and never issues the next page\'s query when the signal fires during the pacing wait', async () => {
+                const cursor = { GSI2PK: 'TAG_COUNTS', GSI2SK: 'TAG#tag1' };
+                ddbMock.on(QueryCommand).resolvesOnce({
+                    Items:            [{ GSI2SK: 'TAG#tag1', count: 1 }],
+                    LastEvaluatedKey: cursor,
+                    ConsumedCapacity: { CapacityUnits: 3 },
+                });
+
+                const pacer = { nextAllowedAtMs: 0 };
+                const controller = new AbortController();
+                const resultPromise = backend.listTagCounts({ pacer, rateLimitRcuPerSec: 1, signal: controller.signal });
+
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+                expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(1);
+
+                jest.advanceTimersByTime(1500); // mid-way through the 3000ms debt owed on the first page
+                controller.abort();
+
+                await expect(resultPromise).rejects.toEqual(new DOMException('Aborted', 'AbortError'));
+                expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(1); // no second page was ever queried
+            });
+
+            test('rejects with an AbortError before issuing a page\'s query when the signal is already aborted and no pacing debt is owed', async () => {
+                ddbMock.on(QueryCommand).resolves({ Items: [{ GSI2SK: 'TAG#tag1', count: 1 }] });
+
+                const pacer = { nextAllowedAtMs: 0 };
+                const controller = new AbortController();
+                controller.abort();
+
+                await expect(backend.listTagCounts({ pacer, rateLimitRcuPerSec: 1, signal: controller.signal })).rejects.toEqual(
+                    new DOMException('Aborted', 'AbortError')
+                );
+                expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
+            });
+        });
     });
 
     describe('onDriftDetected callback', () => {
