@@ -32,7 +32,8 @@ function messageChunksFor(item: OutboxItem): string[] {
     }
     // The six-character chunk suffix makes every delivery token (and therefore every
     // invisible code) the same size, so this budget safely applies to every chunk.
-    const maxContentLength = maxContentLengthForDeliveryCode(deliveryTokenFor(item, 0), DISCORD_MAX_LENGTH);
+    // Any part index gives the same budget: the part suffix is fixed-width, so every delivery code has the same length.
+    const maxContentLength = maxContentLengthForDeliveryCode(deliveryTokenFor(item, item.progress.attemptCount), DISCORD_MAX_LENGTH);
     return splitMessage(item.payload.text, maxContentLength);
 }
 
@@ -42,7 +43,7 @@ async function hasPriorDelivery(channel: TextChannel, item: OutboxItem): Promise
     }
     const chunks = messageChunksFor(item);
     const hasRichPayload = (item.payload.embeds ?? []).length > 0 || (item.payload.components ?? []).length > 0;
-    const parts = Math.max(1, chunks.length + Number(hasRichPayload));
+    const parts = chunks.length + Number(hasRichPayload);
     try {
         const history = await channel.messages.fetch({ limit: 100 });
         const messages = [...history.values()];

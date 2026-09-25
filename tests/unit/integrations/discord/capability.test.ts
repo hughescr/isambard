@@ -1,4 +1,4 @@
-import { describe, test, expect, mock } from 'bun:test';
+import { afterEach, describe, test, expect, mock, spyOn } from 'bun:test';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, type Client, type Message, type TextChannel } from 'discord.js';
 import { createChannelId } from '../../../../src/agent/types';
 import { ChannelNotFoundByIdError } from '../../../../src/errors';
@@ -8,6 +8,10 @@ import { createOutboxReplayDeliverFn, DELIVERY_TOKEN_MAX_LENGTH, deliveryTokenFo
 import { appendDeliveryCode, decodeDeliveryCode, maxContentLengthForDeliveryCode } from '../../../../src/integrations/discord/zero-width-delivery-code';
 import type { ServiceHealthRegistry } from '../../../../src/services/health-registry';
 import type { OutboxBackend, OutboxItem } from '../../../../src/services/outbox';
+
+afterEach(() => {
+    mock.restore();
+});
 
 describe('DiscordCapability ID contracts', () => {
     test('rejects unvalidated strings for both send and fetch', () => {
@@ -111,6 +115,12 @@ describe('deliveryTokenFor', () => {
 
         expect(deliveryTokenFor(item, 35)).toHaveLength(25);
         expect(deliveryTokenFor(item, 35).length).toBeLessThanOrEqual(25);
+    });
+
+    test('falls back to the first sixteen hyphen-free id characters when delivery token is absent', () => {
+        const item = makeOutboxItem({ progress: { attemptCount: 0 } });
+
+        expect(deliveryTokenFor(item, 35)).toBe('izaaaaaaaa1111422200000z');
     });
 });
 
@@ -219,6 +229,24 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         expect(result.status).toBe('queued');
         expect(channel.send).not.toHaveBeenCalled();
         expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+    });
+
+    test('sends outboxable text exactly at the delivery-code budget instead of queuing it', async () => {
+        const randomUuid = spyOn(crypto, 'randomUUID');
+        randomUuid.mockReturnValueOnce('11111111-2222-4333-8444-555555555555');
+        randomUuid.mockReturnValueOnce('22222222-3333-4444-8555-666666666666');
+        randomUuid.mockReturnValueOnce('12345678-90ab-cdef-1234-567890abcdef');
+        const channel = makeChannel();
+        const outbox = makeOutboxBackend();
+        const { cap } = makeCapability(true, outbox);
+        cap.setClient(makeClient(channel));
+        const token = 'iz1234567890abcdef000000';
+
+        const result = await cap.sendToChannel(createChannelId('channel-1'), 'a'.repeat(maxContentLengthForDeliveryCode(token)));
+
+        expect(result.status).toBe('sent');
+        expect(channel.send).toHaveBeenCalledWith({ content: appendDeliveryCode('a'.repeat(maxContentLengthForDeliveryCode(token)), token), nonce: token, enforceNonce: true });
+        expect(outbox.enqueue).not.toHaveBeenCalled();
     });
 
     test('when ready but send throws: falls back to outbox, returns {status: queued}', async () => {
@@ -341,6 +369,25 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
         expect(item.id).toMatch(/^[0-9a-f-]{36}$/u);
         expect(new Date(item.createdAt).toISOString()).toBe(item.createdAt);
+    });
+
+    test('uses exactly sixteen hyphen-free UUID characters as the generated delivery token', async () => {
+        const randomUuid = spyOn(crypto, 'randomUUID');
+        randomUuid.mockReturnValueOnce('11111111-2222-4333-8444-555555555555');
+        randomUuid.mockReturnValueOnce('22222222-3333-4444-8555-666666666666');
+        randomUuid.mockReturnValueOnce('12345678-90ab-cdef-1234-567890abcdef');
+        const outbox = makeOutboxBackend();
+        const { cap } = makeCapability(false, outbox);
+
+        await cap.sendToChannel(createChannelId('ch-1'), 'Hello');
+
+        const item = (outbox.enqueue as ReturnType<typeof mock>).mock.calls[0][0] as OutboxItem;
+        expect(item).toMatchObject({
+            id:        '11111111-2222-4333-8444-555555555555',
+            dedupeKey: '22222222-3333-4444-8555-666666666666',
+            progress:  { attemptCount: 0, deliveryToken: '1234567890abcdef' },
+        });
+        expect(randomUuid).toHaveBeenCalledTimes(3);
     });
 
     test('outbox item custom epoch overrides default 0', async () => {
@@ -624,6 +671,26 @@ describe('createOutboxReplayDeliverFn', () => {
         });
 
         await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toThrow('Discord delivery verification remains indeterminate');
+    });
+
+    test('marks status 500 as indeterminate but preserves a status 499 error', async () => {
+        const serverChannel = makeChannel(async () => {
+            throw Object.assign(new Error('Discord server error'), { status: 500 });
+        });
+        const clientChannel = makeChannel(async () => {
+            throw Object.assign(new Error('Discord client error'), { status: 499 });
+        });
+
+        await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => serverChannel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toThrow('Discord delivery verification remains indeterminate');
+        await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => clientChannel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toThrow('Discord client error');
+    });
+
+    test('preserves a null send rejection without trying to read a status from it', async () => {
+        const channel = makeChannel(async () => {
+            throw null;
+        });
+
+        await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toBeNull();
     });
 });
 

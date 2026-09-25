@@ -123,11 +123,12 @@ function sendPayloadWithDeliveryToken(content: ChannelContent, item: OutboxItem)
 
 function exceedsOutboxDeliveryBudget(content: ChannelContent, item: OutboxItem): boolean {
     const text = typeof content === 'string' ? content : content.content;
-    return text !== undefined && text.length > maxContentLengthForDeliveryCode(deliveryTokenFor(item, 0), DISCORD_MAX_LENGTH);
+    // Any part index gives the same budget: the part suffix is fixed-width, so every delivery code has the same length.
+    return text !== undefined && text.length > maxContentLengthForDeliveryCode(deliveryTokenFor(item, item.progress.attemptCount), DISCORD_MAX_LENGTH);
 }
 
-function canAttemptImmediateSend(content: ChannelContent, item: OutboxItem | undefined, ready: boolean, hasClient: boolean): boolean {
-    return (item === undefined || !exceedsOutboxDeliveryBudget(content, item)) && ready && hasClient;
+function canAttemptImmediateSend(content: ChannelContent, item: OutboxItem | undefined, ready: boolean): boolean {
+    return (item === undefined || !exceedsOutboxDeliveryBudget(content, item)) && ready;
 }
 
 export class DiscordCapabilityImpl implements DiscordCapability {
@@ -149,7 +150,7 @@ export class DiscordCapabilityImpl implements DiscordCapability {
             ? buildOutboxItem(channelId, content, options)
             : undefined;
         const client = this.client;
-        if(canAttemptImmediateSend(content, outboxItem, this.isReady(), client !== undefined)) {
+        if(canAttemptImmediateSend(content, outboxItem, this.isReady())) {
             try {
                 const channel = await client!.channels.fetch(channelId);
                 if(!isTextSendable(channel)) {
