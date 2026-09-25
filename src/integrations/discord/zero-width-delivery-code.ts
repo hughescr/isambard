@@ -38,12 +38,18 @@ export function deliveryCodeFor(token: string): string {
     return START_SENTINEL + Array.from(token, character => encodeTokenCharacter(character)).join('') + END_SENTINEL;
 }
 
-/** Appends one complete invisible delivery code after visible message content. */
+/**
+ * Appends one complete invisible delivery code after visible message content, separated by a
+ * single ASCII space. A space (not an empty string) keeps the invisible characters from gluing
+ * onto a trailing URL, which Discord's link detection could otherwise swallow into the link and
+ * break; a space is whitespace that ends the URL and is invisible at the end of a line. A newline
+ * is avoided because Discord renders it as a visible blank line.
+ */
 export function appendDeliveryCode(content: string, token: string): string {
-    return `${content}\n${deliveryCodeFor(token)}`;
+    return `${content} ${deliveryCodeFor(token)}`;
 }
 
-/** Returns the visible-content budget whose tagged form is at most Discord's 2,000 UTF-16 code-unit limit. */
+/** Returns the visible-content budget whose tagged form is at most Discord's 2,000 UTF-16 code-unit limit (the `- 1` reserves one code unit for the single-space separator). */
 export function maxContentLengthForDeliveryCode(token: string, maxLength = 2000): number {
     return maxLength - 1 - deliveryCodeFor(token).length;
 }

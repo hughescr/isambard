@@ -14,6 +14,20 @@ describe('zero-width delivery code', () => {
         expect(decodeDeliveryCode(appendDeliveryCode('Visible content', token))).toBe(token);
     });
 
+    test('separates the delivery code from visible content with exactly one ASCII space, not a newline', () => {
+        const token = 'iz0';
+        expect(appendDeliveryCode('Visible content', token)).toBe(`Visible content ${deliveryCodeFor(token)}`);
+    });
+
+    test('separates the delivery code from a trailing URL with a space so link detection is not broken', () => {
+        const token = 'iz0';
+        const tagged = appendDeliveryCode('See https://example.com/path', token);
+        expect(tagged).toBe(`See https://example.com/path ${deliveryCodeFor(token)}`);
+        // The character immediately after the URL is a plain ASCII space, which terminates
+        // Discord's URL autolinking; it is not part of the invisible zero-width payload.
+        expect(tagged.charAt('See https://example.com/path'.length)).toBe(' ');
+    });
+
     test('finds the final delivery code despite unrelated zero-width characters', () => {
         const token = 'izabc0';
         const unrelated = zeroWidth('200B', '200C', '200D', '2060', 'FEFF');
