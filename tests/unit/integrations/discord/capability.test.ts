@@ -169,6 +169,7 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         if(result.status === 'sent') {
             expect(result.message).toBe(sentMessage);
         }
+        expect(channel.send).toHaveBeenCalledWith('Hello world');
     });
 
     test('when ready and channel found: sends object content (embeds/components)', async () => {
@@ -627,6 +628,7 @@ describe('createOutboxReplayDeliverFn', () => {
 
         await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel) })(item);
 
+        expect(fetch).toHaveBeenCalledWith({ limit: 100 });
         expect(send).toHaveBeenCalledTimes(2);
         expect(send).toHaveBeenNthCalledWith(1, { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)), nonce: deliveryTokenFor(item, 0), enforceNonce: true });
         expect(send).toHaveBeenNthCalledWith(2, { embeds: undefined, components, content: appendDeliveryCode('', deliveryTokenFor(item, 1)), nonce: deliveryTokenFor(item, 1), enforceNonce: true });
@@ -683,6 +685,7 @@ describe('createOutboxReplayDeliverFn', () => {
 
         await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => serverChannel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toThrow('Discord delivery verification remains indeterminate');
         await expect(createOutboxReplayDeliverFn({ fetchChannel: mock(async () => clientChannel) })(makeOutboxItem({ payload: { text: 'Hello' } }))).rejects.toThrow('Discord client error');
+        expect(clientChannel.send).toHaveBeenCalledTimes(1);
     });
 
     test('preserves a null send rejection without trying to read a status from it', async () => {

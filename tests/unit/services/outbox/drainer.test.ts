@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest, mock, spyOn } from 'bun:test';
 import { createChannelId } from '@/agent/types';
 import { ChannelNotFoundByIdError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
@@ -90,6 +90,7 @@ describe('createOutboxDrainer', () => {
 
     afterEach(() => {
         drainer.stop();
+        jest.restoreAllMocks();
         jest.useRealTimers();
     });
 
@@ -113,6 +114,9 @@ describe('createOutboxDrainer', () => {
         expect(result.failed).toBe(0);
         expect(outboxBackend.markFailed).not.toHaveBeenCalled();
         expect(jest.getTimerCount()).toBe(0);
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
     });
 
     describe('drain() — stopped guard', () => {
@@ -258,6 +262,7 @@ describe('createOutboxDrainer', () => {
             await drainer.drain(SERVICE);
 
             expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'null', expect.objectContaining({ retryable: true, nextAttemptAt: expect.any(String) }));
+            expect(logger.error).toHaveBeenCalledWith({ service: SERVICE, itemId: item.id, error: 'null' }, 'Failed to deliver outbox item');
         });
 
         test('logs error when delivery fails', async () => {
@@ -276,6 +281,29 @@ describe('createOutboxDrainer', () => {
         });
     });
 
+    test('schedules an already-past failed-delivery retry with zero delay', async () => {
+        const item = makeItem();
+        let clock = 1000;
+        outboxBackend.dequeue.mockImplementationOnce(async (): Promise<OutboxItem[]> => [item]);
+        outboxBackend.markFailed.mockImplementationOnce(async (): Promise<void> => {
+            clock = 2000;
+        });
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new Error('offline');
+        });
+        const retrying = createOutboxDrainer({ ...deps, now: () => clock });
+        const setTimeoutSpy = spyOn(globalThis, 'setTimeout');
+
+        await retrying.drain(SERVICE);
+
+        expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'offline', { retryable: true, nextAttemptAt: '1970-01-01T00:00:01.100Z' });
+        expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 0);
+        jest.advanceTimersByTime(0);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        retrying.stop();
+    });
+
     test('persists a verification-pending failure as unknown with a scheduled retry', async () => {
         const item = makeItem({ progress: { attemptCount: 1, outcome: 'unknown' } });
         outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
@@ -288,6 +316,29 @@ describe('createOutboxDrainer', () => {
         expect(outboxBackend.markUnknown).toHaveBeenCalledWith(item, 'history unavailable', '1970-01-01T00:00:01.200Z');
         expect(outboxBackend.markFailed).not.toHaveBeenCalled();
         expect(jest.getTimerCount()).toBe(1);
+        retrying.stop();
+    });
+
+    test('schedules an already-past unknown-outcome retry with zero delay', async () => {
+        const item = makeItem();
+        let clock = 1000;
+        outboxBackend.dequeue.mockImplementationOnce(async (): Promise<OutboxItem[]> => [item]);
+        outboxBackend.markUnknown.mockImplementationOnce(async (): Promise<void> => {
+            clock = 2000;
+        });
+        deliverFn.mockImplementationOnce(async (): Promise<void> => {
+            throw new OutboxVerificationPendingError('unverified');
+        });
+        const retrying = createOutboxDrainer({ ...deps, now: () => clock });
+        const setTimeoutSpy = spyOn(globalThis, 'setTimeout');
+
+        await retrying.drain(SERVICE);
+
+        expect(outboxBackend.markUnknown).toHaveBeenCalledWith(item, 'unverified', '1970-01-01T00:00:01.100Z');
+        expect(setTimeoutSpy).toHaveBeenLastCalledWith(expect.any(Function), 0);
+        jest.advanceTimersByTime(0);
+        await Promise.resolve();
+        expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
         retrying.stop();
     });
 

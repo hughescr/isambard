@@ -2073,6 +2073,7 @@ describe('createDiscordBot', () => {
             const coordinatorFailure = new Error('coordinator stop failed');
             const ingressFailure = new Error('ingress stop failed');
             const warningFailure = new Error('warning logger failed');
+            const info = spyOn(loggerModule.logger, 'info');
             const warn = spyOn(loggerModule.logger, 'warn').mockImplementation((...args: unknown[]) => {
                 const entry = args[0] as { msg?: string };
                 if(entry.msg === 'Conductor shutdown() failed — continuing with the rest of stop()') {
@@ -2081,13 +2082,16 @@ describe('createDiscordBot', () => {
                 return loggerModule.logger;
             });
             spies.push(
+                info,
                 warn,
                 spyOn(coordinatorSetupModule, 'setupCoordinatorIntegration').mockReturnValue({ stop: mock(() => { throw coordinatorFailure; }) } as unknown as MessageCoordinator),
                 spyOn(ingressGateModule, 'createIngressGate').mockReturnValue({ admit: mock(() => 'pass'), open: mock(() => undefined), state: mock(() => 'buffering'), stop: mock(() => { throw ingressFailure; }) } as unknown as ReturnType<typeof ingressGateModule.createIngressGate>)
             );
             const bot = createDiscordBot({ config: mockConfig, client, channelRegistry: mockChannelRegistry, ...conductorDeps() });
             await triggerReady(client);
+            const coordinatorStoppedCallsBeforeStop = info.mock.calls.filter(([entry]) => (entry as { msg?: string }).msg === 'Coordinator stopped').length;
             await expect(bot.stop()).rejects.toBe(coordinatorFailure);
+            expect(info.mock.calls.filter(([entry]) => (entry as { msg?: string }).msg === 'Coordinator stopped')).toHaveLength(coordinatorStoppedCallsBeforeStop);
             expect(warn).toHaveBeenCalledWith({ error: 'ingress stop failed', msg: 'Ingress gate stop failed after an earlier bot shutdown error' });
             expect(warn).toHaveBeenCalledWith({ error: 'ingress stop failed', msg: 'Conductor shutdown() failed — continuing with the rest of stop()' });
             expect(warn).toHaveBeenCalledWith({ error: 'warning logger failed', msg: 'Conductor shutdown warning failed after an earlier bot shutdown error' });

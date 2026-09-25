@@ -60,16 +60,15 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
 
     function schedule(service: OutboxService, delay: number): void {
         const scheduledAt = now() + delay;
-        if(pendingAt !== undefined && pendingAt <= scheduledAt) {
-            return;
+        if(pendingAt === undefined || scheduledAt < pendingAt) {
+            clearTimeout(pendingTimer);
+            pendingAt = scheduledAt;
+            pendingTimer = setTimeout(() => {
+                pendingTimer = undefined;
+                pendingAt = undefined;
+                void drain(service);
+            }, delay);
         }
-        clearTimeout(pendingTimer);
-        pendingAt = scheduledAt;
-        pendingTimer = setTimeout(() => {
-            pendingTimer = undefined;
-            pendingAt = undefined;
-            void drain(service);
-        }, delay);
     }
 
     // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- sequential send, retry, discard and acknowledgement have distinct failure contracts
