@@ -88,6 +88,43 @@ describe('retryTransientFailures', () => {
         );
     });
 
+    test('waits for an unverified write before approving the next action', async () => {
+        const first = failedAction('00000000-0000-4000-8000-000000000001', 'email_send', 'transient', null);
+        const second = failedAction('00000000-0000-4000-8000-000000000002', 'email_send', 'transient');
+        listByState.mockImplementation(async () => [first, second]);
+        const entered = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        updateState.mockImplementation(async (id) => {
+            if(id === first.id) {
+                entered.resolve();
+                await release.promise;
+            }
+        });
+
+        const pass = retryTransientFailures({ backend, logger }, 'email');
+        await entered.promise;
+        expect(updateState.mock.calls).toEqual([[first.id, 'unverified']]);
+        release.resolve();
+        await pass;
+        expect(updateState.mock.calls).toEqual([[first.id, 'unverified'], [second.id, 'approved']]);
+    });
+
+    test('stops after an unverified write rejects without approving later actions', async () => {
+        const first = failedAction('00000000-0000-4000-8000-000000000001', 'email_send', 'transient', null);
+        const second = failedAction('00000000-0000-4000-8000-000000000002', 'email_send', 'transient');
+        listByState.mockImplementation(async () => [first, second]);
+        updateState.mockImplementation(async () => {
+            throw new Error('unverified write failed');
+        });
+
+        await retryTransientFailures({ backend, logger }, 'email');
+        expect(updateState.mock.calls).toEqual([[first.id, 'unverified']]);
+        expect(logger.warn).toHaveBeenCalledWith(
+            { service: 'email', error: 'unverified write failed' },
+            'Failed to reset approved outbound actions on reconnect'
+        );
+    });
+
     test('never resets a permanent failure on reconnect', async () => {
         listByState.mockImplementation(async () => [failedAction('00000000-0000-4000-8000-000000000001', 'bsky_reply', 'permanent')]);
 

@@ -375,6 +375,12 @@ describe('checkDmDelivered', () => {
         expect(await check()).toEqual({ verdict: 'not-delivered' });
     });
 
+    test('an identical DM exactly at the clock-margin floor remains unplaceable', async () => {
+        pages = [{ messages: [message(FLOOR_MS), message(FLOOR_MS - 1)] }];
+
+        expect(await check()).toEqual({ verdict: 'undetermined', reason: 'an identical DM could not be placed inside or outside the delivery window' });
+    });
+
     test('a deleted DM of ours inside the scan cannot be compared, so the check is undetermined', async () => {
         pages = [{ messages: [message(SINCE_MS + 300, { deleted: true, text: undefined })] }];
 

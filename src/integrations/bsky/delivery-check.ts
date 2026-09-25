@@ -89,11 +89,11 @@ interface Noun {
 /** The identical messages a scan has seen so far. */
 interface Tally {
     matches: number
-    unclear: number
+    unclear: boolean
 }
 
 function verdictOf(tally: Tally, noun: Noun): DeliveryCheck {
-    if(tally.unclear > 0) {
+    if(tally.unclear) {
         return undetermined(`an identical ${noun.one} could not be placed inside or outside the delivery window`);
     }
     if(tally.matches > 1) {
@@ -113,7 +113,7 @@ function scanPage<T>(items: T[], inspect: (item: T) => Inspection, tally: Tally,
             return verdictOf(tally, noun);
         }
         tally.matches += seen === 'match' ? 1 : 0;
-        tally.unclear += seen === 'unclear' ? 1 : 0;
+        tally.unclear ||= seen === 'unclear';
     }
     return undefined;
 }
@@ -129,7 +129,7 @@ async function scanNewestFirst<T>(
     inspect: (item: T) => Inspection,
     noun: Noun
 ): Promise<DeliveryCheck> {
-    const tally: Tally = { matches: 0, unclear: 0 };
+    const tally: Tally = { matches: 0, unclear: false };
     let cursor: string | undefined;
     for(let page = 0; page < DELIVERY_CHECK_MAX_PAGES; page++) {
         // eslint-disable-next-line no-await-in-loop -- each page's cursor comes from the one before.

@@ -1844,6 +1844,8 @@ describe('createDiscordBot', () => {
         });
 
         test('stop order: coordinator.stop -> conductor.shutdown -> ring-buffer unsubscribe', async () => {
+            const info = spyOn(loggerModule.logger, 'info');
+            spies.push(info);
             const client = makeMockClientForConductor();
             spies.push(spyOn(clientModule, 'createDiscordClient').mockReturnValue(client));
 
@@ -1880,6 +1882,7 @@ describe('createDiscordBot', () => {
             // all subscribe to the same underlying ledger store, so the fake's shared unsubscribe
             // fires three times — after conductor.shutdown in every case.
             expect(callOrder).toEqual(['coordinator.stop', 'conductor.shutdown', 'ring-buffer unsubscribe', 'ring-buffer unsubscribe', 'ring-buffer unsubscribe']);
+            expect(info).toHaveBeenCalledWith({ msg: 'Coordinator stopped' });
             expect(ledgerUnsubscribe).toHaveBeenCalledTimes(3);
         });
 

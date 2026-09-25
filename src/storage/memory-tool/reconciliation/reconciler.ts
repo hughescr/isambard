@@ -675,10 +675,7 @@ async function runPhaseB(
     }
 
     for(const tag of allTags) {
-        if(options.signal?.aborted) {
-            throw new DOMException('Aborted', 'AbortError');
-        }
-
+        // scanTagItems checks the signal before issuing its first query and on each page.
         // eslint-disable-next-line no-await-in-loop -- sequential: rate-limited DynamoDB scan per tag
         await scanTagItems(ctx, tag);
     }

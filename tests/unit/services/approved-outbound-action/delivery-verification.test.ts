@@ -173,6 +173,18 @@ describe('createDeliveryVerification', () => {
             expect(logger.info).toHaveBeenCalledWith({ actionId: ROW_ID, type: 'bsky_dm' }, 'Approved outbound action found at its destination; recorded as sent');
         });
 
+        test('returns several not-delivered rows in backend resolution order', async () => {
+            const first = unverified();
+            const second = unverified({ id: ROW_ID_2 });
+            checks.bsky_dm.mockImplementation(async () => ({ verdict: 'not-delivered' }));
+
+            expect(await build().verify([first, second])).toEqual({
+                delivered: [],
+                requeued:  [{ ...first, state: 'approved' }, { ...second, state: 'approved' }],
+            });
+            expect(resolveUnverified.mock.calls.map(([row]) => row.id)).toEqual([ROW_ID, ROW_ID_2]);
+        });
+
         test('a not-delivered verdict resolves the row to approved and returns it to resend', async () => {
             const row = unverified();
             checks.bsky_dm.mockImplementation(async () => ({ verdict: 'not-delivered' }));

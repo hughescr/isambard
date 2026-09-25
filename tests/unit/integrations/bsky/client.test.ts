@@ -3599,6 +3599,17 @@ describe('BlueskyClient — delivery-check reads', () => {
 
     describe('getMessageLog()', () => {
         const MESSAGE = { $type: 'chat.bsky.convo.defs#messageView', id: 'm1', rev: 'r1', text: 'Thanks!', sender: { did: 'did:plc:testaccount' }, sentAt: '2026-09-24T10:00:00.000Z' };
+
+        test('preserves three conversation log entries in newest-first order', async () => {
+            const middle = { ...MESSAGE, id: 'm2', sentAt: '2026-09-24T09:30:00.000Z' };
+            const deleted = { $type: 'chat.bsky.convo.defs#deletedMessageView', id: 'm0', rev: 'r0', sender: { did: 'did:plc:testaccount' }, sentAt: '2026-09-24T09:00:00.000Z' };
+            mockGetMessages.mockResolvedValueOnce({ data: { messages: [MESSAGE, middle, deleted] } });
+            const client = new BlueskyClient(CLIENT_OPTIONS);
+            await client.login();
+
+            const result = await client.getMessageLog('convo-1');
+            expect(result.messages.map(entry => entry.id)).toEqual(['m1', 'm2', 'm0']);
+        });
         const DELETED = { $type: 'chat.bsky.convo.defs#deletedMessageView', id: 'm0', rev: 'r0', sender: { did: 'did:plc:testaccount' }, sentAt: '2026-09-24T09:00:00.000Z' };
         const SYSTEM = { $type: 'chat.bsky.convo.defs#systemMessageView', id: 's1', rev: 'rs', sentAt: '2026-09-24T08:00:00.000Z' };
 

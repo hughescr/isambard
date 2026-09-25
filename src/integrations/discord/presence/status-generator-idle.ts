@@ -9,7 +9,6 @@ import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import type { ActivitiesOptions, ActivityType } from 'discord.js';
 import { renderPrefixedText } from './presence-view.js';
 import { generateTextWithSystemPrompt, type Signal } from '@/agent';
-import { truncateToWordBoundary } from '@/utils';
 
 /**
  * Interface for generating idle status text using AI.
@@ -129,9 +128,6 @@ Output the thought ONLY - no quotes, no framing. Keep it SHORT.`;
  */
 const USER_PROMPT_WITHOUT_CONTEXT = 'Status text (first person, under 50 chars):';
 
-/** Discord's custom-status length limit, in UTF-16 code units (`.length`). */
-const PRESENCE_BUDGET = 128;
-
 /**
  * The status text used when a generation produced nothing and there is no previous status to keep
  * showing. Matches the text of the hardcoded `'💤 Idle'` thrown-error fallback below, so the two
@@ -213,15 +209,9 @@ export function rejectIdleStatusText(text: string): string | null {
     return null;
 }
 
-/** Unchanged pre-P11 behaviour: a bare `'💤 '` prefix and a 128-code-unit budget for the whole thing. */
+/** A validated digest is at most 80 code units; with the emoji it is always below Discord's 128-unit limit. */
 function composeDefaultIdleStatus(rawText: string): ComposedIdleStatus {
-    // Reserve space for emoji prefix
-    // Discord limit is 128 code units (.length property)
-    // "💤 " is 3 code units (2 for emoji surrogate pair + 1 for space)
-    const emojiPrefix = '💤 ';
-    const maxLength = PRESENCE_BUDGET - emojiPrefix.length;
-    const statusText = truncateToWordBoundary(rawText, maxLength);
-    return { name: `${emojiPrefix}${statusText}`, digestText: statusText };
+    return { name: `💤 ${rawText}`, digestText: rawText };
 }
 
 /** The composed prefix plus, when compacting, the `'compacting'` marker — never truncated. */
