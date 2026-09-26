@@ -525,6 +525,22 @@ describe('OutboxBackend', () => {
             expect(stored.outboxRowGeneration).toEqual(expect.any(String));
             expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
         });
+
+        test('waits for the deferred persistence write to finish', async () => {
+            const persisted = Promise.withResolvers<Record<string, never>>();
+            ddbMock.on(PutCommand).callsFake(() => persisted.promise);
+            let settled = false;
+            const pending = backend.defer(makeItem(), 'Izzy not yet notified', '2030-01-01T00:00:30.000Z').then(() => {
+                settled = true;
+                return undefined;
+            });
+
+            await Promise.resolve();
+            expect(settled).toBe(false);
+            persisted.resolve({});
+            await pending;
+            expect(settled).toBe(true);
+        });
     });
 
     describe('markFailed()', () => {

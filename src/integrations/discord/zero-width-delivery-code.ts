@@ -23,9 +23,11 @@ function encodeTokenCharacter(character: string): string {
 }
 
 function decodeTokenCharacter(encoded: string): string | undefined {
-    // encoded.length is always exactly 3 here: the sole caller below only ever slices 3-character
-    // chunks, so a length check would be dead code — an undefined digit (from too few/many
-    // characters or an unmapped character) already reports via the checks below.
+    // The decoder must consume exactly one three-digit group. This guards the boundary even if a
+    // future caller passes a wider slice, rather than silently ignoring excess encoded digits.
+    if(encoded.length !== 3) {
+        return undefined;
+    }
     const [first, second, third] = Array.from(encoded, digit => ZERO_WIDTH_DIGIT_INDEX.get(digit as typeof ZERO_WIDTH_DIGITS[number]));
     if(first === undefined || second === undefined || third === undefined) {
         return undefined;

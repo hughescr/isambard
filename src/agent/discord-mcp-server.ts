@@ -857,7 +857,7 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
                         }
                     }
 
-                    if((validatedFiles?.length ?? 0) > 0 || args.createThread === true) {
+                    if((validatedFiles !== undefined && validatedFiles.length > 0) || args.createThread === true) {
                         return sendDirect(args, validatedFiles, options);
                     }
                     return sendViaOutbox(args, options);

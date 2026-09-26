@@ -1547,31 +1547,36 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
             });
         });
 
-        test('should report a sent message whose thread could not be created', async () => {
+        test('should report every sent message whose thread could not be created', async () => {
             const sentMessage = {
-                id:          'sent-message-id',
+                id:          'first-message-id',
                 startThread: mock(async () => {
                     throw new Error('Missing Permissions');
                 }),
             };
+            let sends = 0;
             mockClient.channels.fetch = mock(async () => ({
                 id:          '123456789012345678',
                 isTextBased: () => true,
                 isThread:    () => false,
                 isDMBased:   () => false,
                 threads:     {},
-                send:        mock(async () => sentMessage),
+                send:        mock(async () => {
+                    sends += 1;
+                    return sends === 1 ? sentMessage : { id: 'follow-up-message-id' };
+                }),
             }));
+            mockMessageSplitter.splitMessage = mock(() => ['Thread starter', 'Follow-up']);
 
             const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
                 channelId:    '123456789012345678',
-                content:      'Thread starter',
+                content:      'Thread starter Follow-up',
                 createThread: true,
                 threadName:   'New thread',
             });
 
             expect(result).toEqual({
-                content: [{ type: 'text', text: 'Error: the message was sent (messageIds: sent-message-id) but the thread could not be created: Missing Permissions. Do not send the message again.' }],
+                content: [{ type: 'text', text: 'Error: the message was sent (messageIds: first-message-id, follow-up-message-id) but the thread could not be created: Missing Permissions. Do not send the message again.' }],
                 isError: true,
             });
         });
@@ -2031,6 +2036,18 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
             });
             expect(mockDMTracker.getOrCreateDMByUsername).not.toHaveBeenCalled();
             expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+        });
+
+        test('queues a channel alias containing @ when Discord is unavailable', async () => {
+            mockOutboundSender.isReady = mock(() => false);
+            mockOutboundSender.sendText = mock(async () => ({ status: 'queued', outboxId: 'outbox-4', sentMessageIds: [], chunkCount: 1 }));
+            mockChannelRegistry.resolveChannelId = mock(() => '999888777666555444' as ChannelId);
+
+            const result = await send({ channelId: '#alerts@ops' });
+
+            expect((JSON.parse(textContent(result.content[0])) as { status: string }).status).toBe('queued');
+            expect(mockChannelRegistry.resolveChannelId).toHaveBeenCalledWith('#alerts@ops');
+            expect(mockOutboundSender.sendText).toHaveBeenCalledWith('999888777666555444', 'Queued words', { replyToMessageId: undefined });
         });
 
         test('reports an unknown @username without sending', async () => {
