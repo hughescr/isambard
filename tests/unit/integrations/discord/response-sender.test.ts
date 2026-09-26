@@ -21,10 +21,10 @@ import { ResponseRouter } from '@/integrations/discord/channel-registry/response
 import { DISCORD_MAX_LENGTH, DISCORD_SAFE_LENGTH } from '@/integrations/discord/messages';
 import { DELIVERY_TOKEN_MAX_LENGTH } from '@/integrations/discord/outbox-replay';
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
-import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '@/integrations/discord/response-sender';
+import { sendEnvelopeResponse } from '@/integrations/discord/response-sender';
 import type { ChannelId } from '@/integrations/discord/types';
 import { decodeDeliveryCode, maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
-import type { OutboxBackend } from '@/services';
+import type { OutboxBackend, OutboxItem } from '@/services';
 
 describe('sendEnvelopeResponse', () => {
     let mockResponseRouter: ResponseRouter;
@@ -348,9 +348,9 @@ describe('sendEnvelopeResponse', () => {
             shouldSend:      true,
             content:         'Digest text',
         });
-        const mockSendToChannelCapability = mock(async () => ({ status: 'queued' as const, outboxId: 'outbox-1' }));
+        const mockSendText = mock(async () => ({ status: 'queued' as const, outboxId: 'outbox-1', sentMessageIds: [], chunkCount: 1 }));
         const mockDiscordCapability = {
-            sendToChannel: mockSendToChannelCapability,
+            sendText: mockSendText,
         } as unknown as DiscordCapability;
 
         const result = await sendEnvelopeResponse({
@@ -364,20 +364,15 @@ describe('sendEnvelopeResponse', () => {
         });
 
         expect(result).toEqual({ status: 'queued', channelId: 'target-channel-456' as ChannelId, outboxIds: ['outbox-1'] });
-        expect(mockSendToChannelCapability).toHaveBeenCalledWith('target-channel-456', 'Digest text', { priority: 'high', type: 'catch_up_output' });
+        expect(mockSendText).toHaveBeenCalledWith('target-channel-456', 'Digest text', { priority: 'high', type: 'catch_up_output', queueOnDefinitiveFailure: true });
         expect(mockClient.channels.fetch).not.toHaveBeenCalled();
-        expect(mockLogger.info).toHaveBeenCalledTimes(1);
-        expect(mockLogger.info).toHaveBeenCalledWith({
-            envelopeId:  'env-11', kind:        'catchup', chunkIndex:  0, totalChunks: 1,
-            msg:         'Envelope response chunk sent via capability facade',
-        });
     });
 
     test('with a real discordCapability, splits against the delivery-code budget before appending one complete code', async () => {
-        const largestDeliveryToken = '0'.repeat(DELIVERY_TOKEN_MAX_LENGTH);
-        const content = 'a'.repeat(maxContentLengthForDeliveryCode(largestDeliveryToken, DISCORD_MAX_LENGTH));
+        const content = 'a'.repeat(2500);
+        let id = 0;
         const channel = {
-            send: mock(async () => ({ id: 'message-with-code' })),
+            send: mock(async () => ({ id: `message-${id++}` })),
         } as unknown as TextChannel;
         const capabilityClient = {
             channels: { fetch: mock(async () => channel) },
@@ -404,36 +399,36 @@ describe('sendEnvelopeResponse', () => {
             discordCapability: capability,
         });
 
-        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['message-with-code'] });
-        expect(channel.send).toHaveBeenCalledTimes(1);
-        const payload = (channel.send as ReturnType<typeof mock>).mock.calls[0]?.[0] as { content: string, nonce: string };
-        expect(payload.content.slice(0, content.length)).toBe(content);
-        expect(payload.content.length).toBeLessThanOrEqual(DISCORD_MAX_LENGTH);
-        expect(decodeDeliveryCode(payload.content)).toBe(payload.nonce);
+        expect(result).toStrictEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['message-0', 'message-1'] });
+        expect(channel.send).toHaveBeenCalledTimes(2);
+        const payloads = (channel.send as ReturnType<typeof mock>).mock.calls.map(call => call[0] as { content: string, nonce: string, enforceNonce: boolean });
+        expect(payloads.every(payload => payload.content.length <= DISCORD_MAX_LENGTH && payload.enforceNonce)).toBe(true);
+        expect(payloads.map(payload => decodeDeliveryCode(payload.content))).toEqual(payloads.map(payload => payload.nonce));
+        expect(new Set(payloads.map(payload => payload.nonce)).size).toBe(2);
     });
 
-    test('with a discordCapability, splits content that exceeds the worst-case delivery-code budget by one character into two chunks', async () => {
-        const worstCaseBudget = maxContentLengthForDeliveryCode('0'.repeat(DELIVERY_TOKEN_MAX_LENGTH), DISCORD_MAX_LENGTH);
-        const content = 'a'.repeat(worstCaseBudget + 1);
-        mockResolveEnvelopeTarget.mockResolvedValue({
-            targetChannelId: 'target-channel-456' as ChannelId,
-            shouldSend:      true,
-            content,
+    test('a multi-part offline response persists one complete text row and returns one outbox ID', async () => {
+        const content = 'a'.repeat(maxContentLengthForDeliveryCode('0'.repeat(DELIVERY_TOKEN_MAX_LENGTH), DISCORD_MAX_LENGTH) + 1);
+        const enqueue = mock(async (_item: OutboxItem) => undefined);
+        const capability = new DiscordCapabilityImpl({
+            registry:      { isAvailable: mock(() => false) } as never,
+            logger:        { warn: mock(), error: mock(), info: mock() },
+            outboxBackend: { enqueue } as unknown as OutboxBackend,
         });
-        const mockSendToChannelCapability = mock(async () => ({ status: 'sent' as const }));
-        const mockDiscordCapability = { sendToChannel: mockSendToChannelCapability } as unknown as DiscordCapability;
-
-        await sendEnvelopeResponse({
+        mockResolveEnvelopeTarget.mockResolvedValue({ targetChannelId: 'target-channel-456' as ChannelId, shouldSend: true, content });
+        const result = await sendEnvelopeResponse({
             envelopeId:        'env-worst-case-budget',
             kind:              'catchup',
-            text:              content,
+            text:              'original text',
             responseRouter:    mockResponseRouter,
             client:            mockClient,
             rateLimiter:       mockRateLimiter,
-            discordCapability: mockDiscordCapability,
+            discordCapability: capability,
         });
-
-        expect(mockSendToChannelCapability).toHaveBeenCalledTimes(2);
+        expect(enqueue).toHaveBeenCalledTimes(1);
+        expect(result).toStrictEqual({ status: 'queued', channelId: 'target-channel-456' as ChannelId, outboxIds: [enqueue.mock.calls[0][0].id] });
+        expect(enqueue.mock.calls[0][0]).toMatchObject({ payload: { text: content }, priority: 'high', type: 'catch_up_output' });
+        expect(mockClient.channels.fetch).not.toHaveBeenCalled();
     });
 
     test('without a discordCapability, splits at the default safe length rather than the delivery-code budget', async () => {
@@ -464,9 +459,9 @@ describe('sendEnvelopeResponse', () => {
             shouldSend:      true,
             content:         'reply text',
         });
-        const mockSendToChannelCapability = mock(async () => ({ status: 'sent' as const }));
+        const mockSendText = mock(async () => ({ status: 'sent' as const, messageIds: ['message-1'], chunkCount: 1 }));
         const mockDiscordCapability = {
-            sendToChannel: mockSendToChannelCapability,
+            sendText: mockSendText,
         } as unknown as DiscordCapability;
 
         const result = await sendEnvelopeResponse({
@@ -480,8 +475,8 @@ describe('sendEnvelopeResponse', () => {
             discordCapability: mockDiscordCapability,
         });
 
-        expect(result).toEqual({ status: 'sent', channelId: 'origin-channel-123' as ChannelId, messageIds: [] });
-        expect(mockSendToChannelCapability).toHaveBeenCalledWith('origin-channel-123', 'reply text', { priority: 'high', type: 'agent_response' });
+        expect(result).toStrictEqual({ status: 'sent', channelId: 'origin-channel-123' as ChannelId, messageIds: ['message-1'] });
+        expect(mockSendText).toHaveBeenCalledWith('origin-channel-123', 'reply text', { priority: 'high', type: 'agent_response', queueOnDefinitiveFailure: true });
     });
 
     test('with a discordCapability, an "unavailable" status also reports sent:false queued:true (no outbox configured)', async () => {
@@ -490,9 +485,9 @@ describe('sendEnvelopeResponse', () => {
             shouldSend:      true,
             content:         'Perch report',
         });
-        const mockSendToChannelCapability = mock(async () => ({ status: 'unavailable' as const }));
+        const mockSendText = mock(async () => ({ status: 'unavailable' as const, sentMessageIds: [], chunkCount: 1 }));
         const mockDiscordCapability = {
-            sendToChannel: mockSendToChannelCapability,
+            sendText: mockSendText,
         } as unknown as DiscordCapability;
 
         const result = await sendEnvelopeResponse({
@@ -506,13 +501,10 @@ describe('sendEnvelopeResponse', () => {
         });
 
         expect(result).toEqual({ status: 'unavailable' });
-        expect(mockSendToChannelCapability).toHaveBeenCalledWith('perch-channel-1', 'Perch report', { priority: 'high', type: 'perch_output' });
+        expect(mockSendText).toHaveBeenCalledWith('perch-channel-1', 'Perch report', { priority: 'high', type: 'perch_output', queueOnDefinitiveFailure: true });
     });
 
-    test('with a discordCapability, multiple chunks are sent in original order, not reversed', async () => {
-        // Kills llm mutant: chunks.entries() -> chunks.reverse().entries()
-        // Build content that splits into exactly two chunks, distinguishable by content, so a
-        // reversed send order is observable via the call order on the capability mock.
+    test('passes full routed text to one capability send without pre-splitting', async () => {
         const firstChunkWord  = 'A'.repeat(1200);
         const secondChunkWord = 'B'.repeat(1200);
         mockResolveEnvelopeTarget.mockResolvedValue({
@@ -520,9 +512,9 @@ describe('sendEnvelopeResponse', () => {
             shouldSend:      true,
             content:         `${firstChunkWord} ${secondChunkWord}`,
         });
-        const mockSendToChannelCapability = mock(async () => ({ status: 'sent' as const }));
+        const mockSendText = mock(async () => ({ status: 'sent' as const, messageIds: ['message-1'], chunkCount: 1 }));
         const mockDiscordCapability = {
-            sendToChannel: mockSendToChannelCapability,
+            sendText: mockSendText,
         } as unknown as DiscordCapability;
 
         await sendEnvelopeResponse({
@@ -535,77 +527,22 @@ describe('sendEnvelopeResponse', () => {
             discordCapability: mockDiscordCapability,
         });
 
-        expect(mockSendToChannelCapability).toHaveBeenCalledTimes(2);
-        expect((mockSendToChannelCapability.mock.calls[0] as unknown[])[1]).toBe(firstChunkWord);
-        expect((mockSendToChannelCapability.mock.calls[1] as unknown[])[1]).toBe(secondChunkWord);
+        expect(mockSendText).toHaveBeenCalledWith('target-channel-456', `${firstChunkWord} ${secondChunkWord}`, { priority: 'high', type: 'catch_up_output', queueOnDefinitiveFailure: true });
     });
 
-    test.each([
-        ['all sent', [{ status: 'sent', message: { id: 'message-1' } }, { status: 'sent', message: { id: 'message-2' } }], { status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['message-1', 'message-2'] }],
-        ['all queued', [{ status: 'queued', outboxId: 'outbox-1' }, { status: 'queued', outboxId: 'outbox-2' }], { status: 'queued', channelId: 'target-channel-456' as ChannelId, outboxIds: ['outbox-1', 'outbox-2'] }],
-        ['mixed sent and queued', [{ status: 'sent', message: { id: 'message-1' } }, { status: 'queued', outboxId: 'outbox-2' }], { status: 'partial', channelId: 'target-channel-456' as ChannelId, chunks: [{ status: 'sent', message: { id: 'message-1' } }, { status: 'queued', outboxId: 'outbox-2' }] }],
-        ['an unavailable chunk', [{ status: 'sent', message: { id: 'message-1' } }, { status: 'unavailable' }], { status: 'unavailable' }],
-    ])('with a discordCapability, multi-chunk %s outcomes use the documented aggregate precedence', async (_description, statuses, expected) => {
-        const firstChunk = 'A'.repeat(1200);
-        const secondChunk = 'B'.repeat(1200);
-        mockResolveEnvelopeTarget.mockResolvedValue({
-            targetChannelId: 'target-channel-456' as ChannelId,
-            shouldSend:      true,
-            content:         `${firstChunk} ${secondChunk}`,
-        });
-        const mockSendToChannelCapability = mock(async () => statuses.shift());
-        const mockDiscordCapability = { sendToChannel: mockSendToChannelCapability } as unknown as DiscordCapability;
-
+    test('maps a failed text send to unavailable without an outbox commitment', async () => {
+        mockResolveEnvelopeTarget.mockResolvedValue({ targetChannelId: 'target-channel-456' as ChannelId, shouldSend: true, content: 'response' });
+        const sendText = mock(async () => ({ status: 'failed' as const, error: 'rejected', sentMessageIds: [], chunkCount: 1 }));
         const result = await sendEnvelopeResponse({
-            envelopeId:        'env-aggregation',
+            envelopeId:        'env-failed',
             kind:              'catchup',
-            text:              `${firstChunk} ${secondChunk}`,
+            text:              'response',
             responseRouter:    mockResponseRouter,
             client:            mockClient,
             rateLimiter:       mockRateLimiter,
-            discordCapability: mockDiscordCapability,
+            discordCapability: { sendText } as unknown as DiscordCapability,
         });
-
-        expect(result).toEqual(expected as SendEnvelopeResponseResult);
-        expect(mockSendToChannelCapability).toHaveBeenCalledTimes(2);
-    });
-
-    test('returns message IDs from a multi-chunk capability send in send order', async () => {
-        const firstChunk = 'A'.repeat(1200);
-        const secondChunk = 'B'.repeat(1200);
-        mockResolveEnvelopeTarget.mockResolvedValue({
-            targetChannelId: 'target-channel-456' as ChannelId,
-            shouldSend:      true,
-            content:         `${firstChunk} ${secondChunk}`,
-        });
-        const mockSendToChannelCapability = mock()
-            .mockResolvedValueOnce({ status: 'sent' as const, message: { id: 'message-1' } })
-            .mockResolvedValueOnce({ status: 'sent' as const, message: { id: 'message-2' } });
-
-        const result = await sendEnvelopeResponse({
-            envelopeId:        'env-message-id-order',
-            kind:              'catchup',
-            text:              `${firstChunk} ${secondChunk}`,
-            responseRouter:    mockResponseRouter,
-            client:            mockClient,
-            rateLimiter:       mockRateLimiter,
-            discordCapability: { sendToChannel: mockSendToChannelCapability } as unknown as DiscordCapability,
-        });
-
-        expect(result).toEqual({ status: 'sent', channelId: 'target-channel-456' as ChannelId, messageIds: ['message-1', 'message-2'] });
-    });
-
-    test('extracts only queued outbox IDs from a partial response, in chunk order', () => {
-        expect(queuedOutboxIdsFromPartialResponse({
-            status:    'partial',
-            channelId: 'target-channel-456' as ChannelId,
-            chunks:    [
-                { status: 'sent' },
-                { status: 'queued', outboxId: 'outbox-2' },
-                { status: 'sent' },
-                { status: 'queued', outboxId: 'outbox-4' },
-            ],
-        })).toEqual(['outbox-2', 'outbox-4']);
+        expect(result).toStrictEqual({ status: 'unavailable' });
     });
 
     test('does not thread replies: always sends to the target channel directly, never message.reply', async () => {

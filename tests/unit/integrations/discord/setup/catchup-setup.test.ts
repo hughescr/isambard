@@ -927,7 +927,7 @@ describe('runConductorInboxInit', () => {
             }), { priority: 'normal' });
         });
 
-        test('commits only queued chunks when a boot-time redelivery is partial', async () => {
+        test('commits one queued response row on boot-time redelivery', async () => {
             let deliveredResult: SendOutcome | undefined;
             const conductor = makeFakeConductor({
                 deliver: mock(async (_envelopeId: string, send: () => Promise<SendOutcome>) => {
@@ -936,12 +936,9 @@ describe('runConductorInboxInit', () => {
                 }),
             });
             spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({
-                status:    'partial',
+                status:    'queued',
                 channelId: 'channel-1' as never,
-                chunks:    [
-                    { status: 'sent' },
-                    { status: 'queued', outboxId: 'outbox-2' },
-                ],
+                outboxIds: ['outbox-2'],
             }));
             const journal = makeFakeJournal({
                 readSince: mock(async () => [

@@ -21,10 +21,7 @@ const DELIVERY_TOKEN_PREFIX = 'iz';
 const DELIVERY_TOKEN_BASE_MAX_LENGTH = 17;
 const DELIVERY_TOKEN_PART_LENGTH = 6;
 
-/**
- * `deliveryTokenFor` bounds tokens to its prefix, base token, and part suffix. Consumers that
- * split before a code is appended must reserve space for this largest possible token.
- */
+/** Upper bound on delivery-token length, used by tests to assert the token and chunk budgets. */
 export const DELIVERY_TOKEN_MAX_LENGTH = DELIVERY_TOKEN_PREFIX.length + DELIVERY_TOKEN_BASE_MAX_LENGTH + DELIVERY_TOKEN_PART_LENGTH;
 
 /** A compact token that is both a Discord nonce and invisible history correlation code. */

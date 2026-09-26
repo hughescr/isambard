@@ -8,6 +8,7 @@ import { createOutboxReplayDeliverFn, deliveryTokenFor, describeDroppedReply, me
 import { appendDeliveryCode, decodeDeliveryCode, deliveryCodeFor, maxContentLengthForDeliveryCode } from '../../../../src/integrations/discord/zero-width-delivery-code';
 import type { ServiceHealthRegistry } from '../../../../src/services/health-registry';
 import { OutboxDeliveryDeferredError, OutboxDiscardRequestedError, OutboxVerificationPendingError, type OutboxBackend, type OutboxItem } from '../../../../src/services/outbox';
+import { outboxItemSchema } from '../../../../src/services/outbox/types';
 
 afterEach(() => {
     mock.restore();
@@ -202,6 +203,21 @@ describe('outbox replay resumes after partial delivery', () => {
         await replay(channel)(item);
 
         expect(channel.send).not.toHaveBeenCalled();
+    });
+});
+
+describe('legacy per-chunk response rows', () => {
+    test('parses and drains two independently queued old-format chunks', async () => {
+        const first = outboxItemSchema.parse(makeItem({ dedupeKey: 'random-b', payload: { text: 'first' }, progress: { attemptCount: 0, deliveryToken: 'oldtoken1' } }));
+        const second = outboxItemSchema.parse(makeItem({ dedupeKey: 'random-a', payload: { text: 'second' }, progress: { attemptCount: 0, deliveryToken: 'oldtoken2' } }));
+        const channel = makeReplayChannel(ok);
+        await replay(channel)(first);
+        await replay(channel)(second);
+        expect(sentPayloads(channel)).toStrictEqual([
+            textPartPayload(first, 0, 'first'), textPartPayload(second, 0, 'second'),
+        ]);
+        expect(first.progress.deliveredParts).toBe(1);
+        expect(second.progress.deliveredParts).toBe(1);
     });
 });
 
@@ -466,6 +482,43 @@ describe('DiscordCapabilityImpl.sendText', () => {
 
         expect(result).toEqual({ status: 'failed', error: 'Missing Permissions', sentMessageIds: ['m0'], chunkCount: 2 });
         expect(outbox.enqueue).not.toHaveBeenCalled();
+    });
+
+    test('response-only definitive failure queues one whole row and replays after the confirmed prefix', async () => {
+        let calls = 0;
+        const channel = makeSendChannel(async () => {
+            calls += 1;
+            if(calls === 2) {
+                throw Object.assign(new Error('Missing Permissions'), { code: 50_013, status: 403 });
+            }
+            return { id: 'm0' } as Message;
+        });
+        const outbox = makeOutbox();
+        const { cap } = makeTextCapability({ ready: true, channel, outbox });
+        const text = 'e'.repeat(2500);
+        const result = await cap.sendText(createChannelId('ch-1'), text, { queueOnDefinitiveFailure: true });
+        const item = enqueued(outbox);
+        expect(outbox.enqueue).toHaveBeenCalledTimes(1);
+        expect(result).toStrictEqual({ status: 'queued', outboxId: item.id, sentMessageIds: ['m0'], chunkCount: 2 });
+        expect(item.payload).toStrictEqual({ text });
+        expect(item.progress).toStrictEqual({ attemptCount: 0, deliveryToken: expect.any(String), outcome: 'unknown', lastError: 'Missing Permissions', lastAttemptAt: expect.any(String), deliveredParts: 1 });
+        const nonce = (sentPayloads(channel)[1] as { nonce: string }).nonce;
+        expect(nonce).toBe(deliveryTokenFor(item, 1));
+        const replayChannel = makeReplayChannel(ok);
+        await replay(replayChannel)(item);
+        expect(sentPayloads(replayChannel)).toStrictEqual([textPartPayload(item, 1, messageChunksFor(item)[1])]);
+    });
+
+    test('response-only definitive first-part failure queues with no prefix', async () => {
+        const outbox = makeOutbox();
+        const channel = makeSendChannel(async () => {
+            throw Object.assign(new Error('Forbidden'), { status: 403 });
+        });
+        const { cap } = makeTextCapability({ ready: true, channel, outbox });
+        const result = await cap.sendText(createChannelId('ch-1'), 'Hello', { queueOnDefinitiveFailure: true });
+        const item = enqueued(outbox);
+        expect(result).toStrictEqual({ status: 'queued', outboxId: item.id, sentMessageIds: [], chunkCount: 1 });
+        expect(item.progress).toStrictEqual({ attemptCount: 0, deliveryToken: expect.any(String), outcome: 'unknown', lastError: 'Forbidden', lastAttemptAt: expect.any(String), deliveredParts: 0 });
     });
 
     test('reports a non-Error rejection by its string form', async () => {

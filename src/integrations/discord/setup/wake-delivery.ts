@@ -3,7 +3,7 @@ import type { Client } from 'discord.js';
 import type { DiscordCapability } from '../capability';
 import type { ResponseRouter } from '../channel-registry';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse, type SendEnvelopeResponseResult } from '../response-sender';
+import { sendEnvelopeResponse, type SendEnvelopeResponseResult } from '../response-sender';
 import type { Conductor, DeliverableEnvelope, TurnResult } from '@/agent';
 import { ResponseUnavailableError } from '@/errors';
 
@@ -58,8 +58,6 @@ export function createWakeTurnDelivery(params: CreateWakeTurnDeliveryParams): Wa
                     case 'sent': { return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
                     }
                     case 'queued': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
-                    }
-                    case 'partial': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: queuedOutboxIdsFromPartialResponse(sendResult) };
                     }
                     case 'skipped': { return { kind: 'skipped', reason: sendResult.reason };
                     }

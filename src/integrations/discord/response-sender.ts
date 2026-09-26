@@ -1,20 +1,14 @@
 import { logger } from '@hughescr/logger';
 import type { TextChannel, Client } from 'discord.js';
-import type { DiscordCapability, SendResult } from './capability';
+import type { DiscordCapability } from './capability';
 import { type ResponseRouter, WellKnownChannelNotFoundError  } from './channel-registry';
-import { DISCORD_MAX_LENGTH, splitMessage } from './messages';
-import { DELIVERY_TOKEN_MAX_LENGTH } from './outbox-replay';
+import { splitMessage } from './messages';
 import type { DiscordRateLimiter } from './rate-limiter';
 import { withDiscordRetry } from './retry';
 import { type ChannelId } from './types';
-import { maxContentLengthForDeliveryCode } from './zero-width-delivery-code';
 import type { EnvelopeKind } from '@/agent';
 import { ChannelNotAccessibleError, InvariantViolationError } from '@/errors';
 import type { OutboxItemType } from '@/services';
-
-// Every capability send appends a delivery code. Reserve the largest token-shaped code before
-// splitting so the code remains whole and no tagged chunk crosses Discord's content limit.
-const MAX_CONTENT_LENGTH_WITH_DELIVERY_CODE = maxContentLengthForDeliveryCode('0'.repeat(DELIVERY_TOKEN_MAX_LENGTH), DISCORD_MAX_LENGTH);
 
 /**
  * Maps an envelope kind to the outbox item type used when queuing through a
@@ -31,40 +25,23 @@ function outboxTypeForEnvelopeKind(kind: EnvelopeKind): OutboxItemType {
     return 'agent_response';
 }
 
-/**
- * Chunk-sending branch of {@link sendEnvelopeResponse} when a {@link DiscordCapability} is
- * available: every chunk routes through its outbox fallback. Split out purely to keep
- * `sendEnvelopeResponse` under the project's complexity threshold — no behavioural difference
- * from being inlined.
- */
-async function sendChunksViaCapability(
+/** One response is one outbox row; sendText owns ordered chunking and prefix progress. */
+async function sendViaCapability(
     discordCapability: DiscordCapability,
     targetChannelId:   ChannelId,
-    chunks:            string[],
-    envelopeId:        string,
+    content:           string,
     kind:              EnvelopeKind
 ): Promise<SendEnvelopeResponseResult> {
-    const results: SendResult[] = [];
-    for(const [i, chunk] of chunks.entries()) {
-        // Stryker disable llm: targetChannelId is a ChannelId (string), so `targetChannelId || ''` is the identity.
-        // eslint-disable-next-line no-await-in-loop -- sequential: Discord message ordering, outbox writes must preserve order
-        const result = await discordCapability.sendToChannel(targetChannelId, chunk, {
-            priority: 'high', type: outboxTypeForEnvelopeKind(kind),
-        });
-        // Stryker restore llm
-        results.push(result);
-        logger.info({ envelopeId, kind, chunkIndex: i, totalChunks: chunks.length, msg: 'Envelope response chunk sent via capability facade' });
+    const result = await discordCapability.sendText(targetChannelId, content, {
+        priority: 'high', type: outboxTypeForEnvelopeKind(kind), queueOnDefinitiveFailure: true,
+    });
+    if(result.status === 'sent') {
+        return { status: 'sent', channelId: targetChannelId, messageIds: result.messageIds };
     }
-    if(results.some(result => result.status === 'unavailable')) {
-        return { status: 'unavailable' };
+    if(result.status === 'queued') {
+        return { status: 'queued', channelId: targetChannelId, outboxIds: [result.outboxId] };
     }
-    if(results.every(result => result.status === 'sent')) {
-        return { status: 'sent', channelId: targetChannelId, messageIds: results.flatMap(result => (result.message === undefined ? [] : [result.message.id])) };
-    }
-    if(results.every(result => result.status === 'queued')) {
-        return { status: 'queued', channelId: targetChannelId, outboxIds: results.map(result => result.outboxId) };
-    }
-    return { status: 'partial', channelId: targetChannelId, chunks: results };
+    return { status: 'unavailable' };
 }
 
 /**
@@ -121,38 +98,26 @@ interface SendEnvelopeResponseConfig {
     /** Rate limiter for Discord API calls. */
     rateLimiter:        DiscordRateLimiter
     /**
-     * Optional Discord capability facade. When provided, every chunk routes through it with an
-     * outbox fallback when Discord is offline. Every production call site wires this; omitting it
+     * Optional Discord capability facade. When provided, the whole response routes through its
+     * outbox-backed ordered text send. Every production call site wires this; omitting it
      * is a test-only convenience, and a send failure with no facade is reported honestly as the
      * tagged `unavailable` result rather than as an outbox commitment.
      */
     discordCapability?: DiscordCapability
 }
 
-/**
- * Tagged result of {@link sendEnvelopeResponse}. Multi-chunk capability sends use this precedence:
- * any unavailable chunk wins; otherwise all sent is sent, all queued is queued, and a sent/queued
- * mix is partial. Unavailable is not committed because boot recovery may safely redeliver it.
- */
+/** Tagged result of {@link sendEnvelopeResponse}; unavailable is not committed for boot replay. */
 export type SendEnvelopeResponseResult
     = | { status: 'sent', channelId: ChannelId, messageIds: string[] }
       | { status: 'queued', channelId: ChannelId, outboxIds: string[] }
-      | { status: 'partial', channelId: ChannelId, chunks: SendResult[] }
       | { status: 'unavailable' }
       | { status: 'skipped', reason: string };
 
 /**
- * Extracts outbox IDs for the queued chunks of a partial response, preserving chunk order.
- * Sent chunks already have a durable Discord message and must not be committed to the outbox.
- */
-export function queuedOutboxIdsFromPartialResponse(response: Extract<SendEnvelopeResponseResult, { status: 'partial' }>): string[] {
-    return response.chunks.flatMap(chunk => (chunk.status === 'queued' ? [chunk.outboxId] : []));
-}
-
-/**
  * Sends a conductor-mode envelope's response, client-based (P10): no `botStateManager` read (the
  * caller already knows the envelope's `kind`) and no discord.js `Message` to reply to or thread
- * through — every chunk goes directly to the resolved target channel via
+ * through — responses go directly to the resolved target channel. With a capability, the
+ * full response is one outbox-backed ordered text send; without one, chunks send via
  * {@link withDiscordRetry}. Used for the boot sequence's replay/catch-up deliveries and any other
  * envelope-kind response that has no triggering `Message` object.
  *
@@ -161,10 +126,9 @@ export function queuedOutboxIdsFromPartialResponse(response: Extract<SendEnvelop
  * response. An origin wins even for mapped kinds; a missing well-known channel for
  * `catchup`/`perch`/`wrapup` has no channel to fall back to, so
  * it resolves to `skipped`; `@@NO_RESPONSE@@` also resolves to `skipped` with reason `no-response`.
- * With `config.discordCapability` (wired at every production call site), all queued chunks resolve
- * to `queued`, a sent/queued mix resolves to `partial`, and any unavailable chunk resolves to
- * `unavailable`. The conductor commits only sent/queued/partial outcomes; skipped and unavailable
- * outcomes are deliberately left for a later boot replay. Without a `discordCapability`, a channel
+ * With `config.discordCapability` (wired at every production call site), one persisted response
+ * resolves to `queued` with one outbox ID. The conductor commits sent/queued outcomes; skipped
+ * and unavailable are left for a later boot replay. Without a `discordCapability`, a channel
  * that cannot be fetched or a chunk send that fails after retries is likewise `unavailable`.
  *
  * @param config - See {@link SendEnvelopeResponseConfig}.
@@ -204,11 +168,7 @@ export async function sendEnvelopeResponse(config: SendEnvelopeResponseConfig): 
         return { status: 'skipped', reason: 'no-response' };
     }
 
-    const chunks = discordCapability === undefined
-        ? splitMessage(resolved.content)
-        : splitMessage(resolved.content, MAX_CONTENT_LENGTH_WITH_DELIVERY_CODE);
-
     return discordCapability
-        ? sendChunksViaCapability(discordCapability, resolved.targetChannelId, chunks, envelopeId, kind)
-        : sendChunksViaClient(client, rateLimiter, resolved.targetChannelId, chunks, envelopeId, kind);
+        ? sendViaCapability(discordCapability, resolved.targetChannelId, resolved.content, kind)
+        : sendChunksViaClient(client, rateLimiter, resolved.targetChannelId, splitMessage(resolved.content), envelopeId, kind);
 }

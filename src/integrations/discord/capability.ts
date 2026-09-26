@@ -36,17 +36,20 @@ export interface SendOptions {
 /** Options for {@link DiscordCapability.sendText}. */
 export interface TextSendOptions extends SendOptions {
     /** Message the first part replies to; the reply is never posted without its reference. */
-    replyToMessageId?: string
+    replyToMessageId?:         string
+    /** Response-only: queue a definitive rejection as an unknown outcome so replay verifies history. */
+    queueOnDefinitiveFailure?: boolean
 }
 
 /**
  * Result of {@link DiscordCapability.sendText}. `sentMessageIds` lists the parts Discord confirmed
  * before the send stopped, in order.
  * - sent: every part was delivered
- * - queued: Discord was unavailable or the outcome was indeterminate; the whole message (with the
- *   confirmed prefix recorded) is in the outbox and the rest will be delivered by the drainer
- * - failed: Discord definitively rejected a part (or the channel cannot receive messages); nothing
- *   was queued
+ * - queued: Discord was unavailable, the outcome was indeterminate, or a definitive rejection
+ *   was queued with queueOnDefinitiveFailure; the whole message (with the confirmed prefix
+ *   recorded) is in the outbox for history-verified replay, but may be discarded rather than delivered
+ * - failed: Discord definitively rejected a part (unless queueOnDefinitiveFailure was set), or
+ *   the channel cannot receive messages; nothing was queued
  * - unavailable: Discord was unavailable and no outbox is configured (or skipOutbox was set)
  */
 export type TextSendResult
@@ -84,7 +87,8 @@ export interface DiscordCapability {
      * Send text as one outbox-backed message: it is split within the delivery-code budget and
      * every part carries its own complete delivery code and nonce, exactly as a replay would
      * send it. Indeterminate failures and an unavailable Discord queue the whole message;
-     * definitive rejections are reported as failed and never queued.
+     * definitive rejections fail by default, or queue for history-verified replay when
+     * queueOnDefinitiveFailure is set for envelope responses.
      */
     sendText(channelId: ChannelId, text: string, options?: TextSendOptions): Promise<TextSendResult>
     /**
@@ -168,6 +172,10 @@ function canAttemptImmediateSend(content: ChannelContent, item: OutboxItem | und
     return (item === undefined || !exceedsOutboxDeliveryBudget(content, item)) && ready;
 }
 
+function shouldQueueTextFailure(err: unknown, options?: TextSendOptions): boolean {
+    return isIndeterminateDiscordError(err) || options?.queueOnDefinitiveFailure === true;
+}
+
 export class DiscordCapabilityImpl implements DiscordCapability {
     private client: Client | undefined;
 
@@ -239,9 +247,11 @@ export class DiscordCapabilityImpl implements DiscordCapability {
             } catch (err: unknown) {
                 const error = err instanceof Error ? err.message : String(err);
                 this.deps.logger.warn({ error, channelId, sentParts: sentMessageIds.length }, 'Discord text send failed');
-                if(!isIndeterminateDiscordError(err)) {
+                if(!shouldQueueTextFailure(err, options)) {
                     return { status: 'failed', error, sentMessageIds, chunkCount };
                 }
+                // A retry may have delivered a part before the final definitive error.
+                // Keep the outcome unknown so replay checks history before resending.
                 item.progress = { ...item.progress, outcome: 'unknown', lastError: error, lastAttemptAt: new Date().toISOString(), deliveredParts: sentMessageIds.length };
             }
         }

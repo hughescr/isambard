@@ -5,7 +5,7 @@ import type { ResponseRouter } from '../channel-registry';
 import type { InboxManager } from '../inbox';
 import type { IngressGate } from '../ingress-gate';
 import type { DiscordRateLimiter } from '../rate-limiter';
-import { queuedOutboxIdsFromPartialResponse, sendEnvelopeResponse } from '../response-sender';
+import { sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, createUserId, isDmScope, type ChannelId, type ChannelScope } from '../types';
 import {
     type PerchConfig, type Conductor, type QueryEnvelope, type UndeliveredEnvelope, type ContextPolicy,
@@ -120,9 +120,6 @@ export async function submitAndDeliverConductorEnvelope(envelope: QueryEnvelope,
                 }
                 case 'queued': {
                     return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
-                }
-                case 'partial': {
-                    return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: queuedOutboxIdsFromPartialResponse(sendResult) };
                 }
                 case 'skipped': {
                     return { kind: 'skipped', reason: sendResult.reason };
@@ -322,8 +319,6 @@ export async function runConductorInboxInit(params: RunConductorInboxInitParams)
                     case 'sent': { return { kind: 'committed', disposition: 'sent', channelId: sendResult.channelId, messageIds: sendResult.messageIds };
                     }
                     case 'queued': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: sendResult.outboxIds };
-                    }
-                    case 'partial': { return { kind: 'committed', disposition: 'queued', channelId: sendResult.channelId, outboxIds: queuedOutboxIdsFromPartialResponse(sendResult) };
                     }
                     case 'skipped': { return { kind: 'skipped', reason: sendResult.reason };
                     }
