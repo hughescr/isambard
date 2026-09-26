@@ -772,6 +772,33 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
         });
 
+        test('a late success whose unverified row cannot be resolved is logged as an error and left for destination checking', async () => {
+            listed = [BSKY];
+            const send = Promise.withResolvers<undefined>();
+            const unverified = unverifiedOf(BSKY, { lastError: sendTimedOutError(1000), updatedAt: '2026-03-30T10:05:01.000Z' });
+            settleClaim.mockImplementation(async () => unverified);
+            resolveUnverified.mockImplementation(async () => {
+                throw new Error('throughput exceeded');
+            });
+            executors.bsky_reply.mockImplementation(async () => send.promise);
+            const pass = build({ sendTimeoutMs: 1000 }).executeOnce();
+            await flush();
+            jest.advanceTimersByTime(1000);
+            await pass;
+
+            send.resolve(undefined);
+            await flush();
+
+            expect(resolveUnverified.mock.calls).toEqual([[unverified, 'executed']]);
+            expect(logger.error).toHaveBeenCalledTimes(1);
+            expect(logger.error).toHaveBeenCalledWith(
+                { actionId: BSKY_ID, error: 'throughput exceeded' },
+                'Approved outbound action late success could not resolve its unverified row; destination checking will decide it'
+            );
+            expect(activityLog).not.toHaveBeenCalled();
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+        });
+
         test('a hung send holds later rows of the same service until it times out', async () => {
             listed = [BSKY, BSKY_2];
             executors.bsky_reply.mockImplementationOnce(hang);

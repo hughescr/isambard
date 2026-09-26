@@ -441,8 +441,15 @@ describe('generateText', () => {
                 yield { type: 'result', subtype: 'success' };
             }
             mockQuery.mockImplementation(() => delayedGenerator());
-            expect(await generateText('Test prompt', { timeoutMs: 0 })).toBe('ready');
-            expect(await generateText('Test prompt', { timeoutMs: -1 })).toBe('ready');
+            // An already-fired deadline: were a nonpositive timeout ever to arm one, the query would abort.
+            const timeoutSpy = spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort());
+            try {
+                expect(await generateText('Test prompt', { timeoutMs: 0 })).toBe('ready');
+                expect(await generateText('Test prompt', { timeoutMs: -1 })).toBe('ready');
+                expect(timeoutSpy).not.toHaveBeenCalled();
+            } finally {
+                timeoutSpy.mockRestore();
+            }
         });
 
         test('uses a 15-second deadline when no timeout is provided', async () => {

@@ -138,7 +138,9 @@ describe('reconciler public progress and producer contracts', () => {
             refresh.start();
             return refresh.promise;
         });
+        const commands: unknown[] = [];
         const deps = makeDeps(async (command) => {
+            commands.push(command);
             const input = commandInput(command);
             const values = input.ExpressionAttributeValues as Record<string, unknown> | undefined;
             if(input.IndexName === 'GSI1') {
@@ -161,10 +163,15 @@ describe('reconciler public progress and producer contracts', () => {
         });
         try {
             await refresh.started;
-            await drainMicrotasks();
+            const sentBeforeRefreshSettled = commands.length;
+            await drainMicrotasks(100);
+            // Nothing after the refresh (the next layer's scan, Phase B) may start until it settles.
+            expect(commands).toHaveLength(sentBeforeRefreshSettled);
             expect(completed).toBe(false);
             refresh.resolve();
-            await completion;
+            const result = await completion;
+            expect(commands.length).toBeGreaterThan(sentBeforeRefreshSettled);
+            expect(result.phaseA.indexItemsRefreshed).toBe(1);
         } finally {
             refresh.resolve();
             await completion;
@@ -214,10 +221,16 @@ describe('reconciler public progress and producer contracts', () => {
     });
 
     test.each(['metadata-cleanup', 'phase-b-item'] as const)('waits for the configured operation delay after %s', async (scenario) => {
+        jest.useFakeTimers();
         const item = scenario === 'metadata-cleanup'
             ? { ...memoryItem, tags: new Set<string>(), metadata: { previouslyKnownAs: '/identity/old.md', previouslyKnownAsTags: [] } }
             : undefined;
+        const commands: unknown[] = [];
+        const getMemory = mock(async () => ({ ...memoryItem, tags: new Set(['alpha']) }));
+        // Phase C opens with listTagCounts, so its first call marks everything before it as done.
+        const listTagCounts = mock(async () => []);
         const deps = makeDeps(async (command) => {
+            commands.push(command);
             const input = commandInput(command);
             const values = input.ExpressionAttributeValues as Record<string, unknown> | undefined;
             if(input.IndexName === 'GSI1') {
@@ -227,15 +240,36 @@ describe('reconciler public progress and producer contracts', () => {
                 return { Items: scenario === 'phase-b-item' ? [{ GSI2SK: 'TAG#alpha' }] : [] };
             }
             return { Items: [{ PK: 'TAG#alpha', SK: 'PATH#/identity/memory.md' }] };
-        }, { getMemory: mock(async () => ({ ...memoryItem, tags: new Set(['alpha']) })) });
-
-        let completed = false;
-        const completion = runTagIndexReconciliation(deps, { ...options, operationDelayMs: 20 }).finally(() => {
-            completed = true;
+        }, {
+            getMemory,
+            tagIndex: {
+                createTagIndexItems:  mock(async () => {}), refreshTagIndexItems: mock(async () => {}),
+                deleteTagIndexItems:  mock(async () => {}), listTagCounts,
+            },
         });
-        await drainMicrotasks();
-        expect(completed).toBe(false);
-        await completion;
+
+        const completion = runTagIndexReconciliation(deps, { ...options, operationDelayMs: 20 });
+        await drainMicrotasks(100);
+        // The paced operation has run, and the run is parked on its 20ms delay.
+        if(scenario === 'metadata-cleanup') {
+            expect(commands.filter(command => command instanceof UpdateCommand)).toHaveLength(1);
+        } else {
+            expect(getMemory).toHaveBeenCalledTimes(1);
+        }
+        expect(listTagCounts).not.toHaveBeenCalled();
+
+        jest.advanceTimersByTime(19);
+        await drainMicrotasks(100);
+        expect(listTagCounts).not.toHaveBeenCalled();
+
+        jest.advanceTimersByTime(1);
+        const result = await completion;
+        expect(listTagCounts).toHaveBeenCalledTimes(1);
+        if(scenario === 'metadata-cleanup') {
+            expect(result.phaseA.metadataCleaned).toBe(1);
+        } else {
+            expect(result.phaseB.itemsScanned).toBe(1);
+        }
     });
 
     test('counts a failed Phase B tag enumeration as exactly one error', async () => {
