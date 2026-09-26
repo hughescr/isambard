@@ -895,14 +895,43 @@ describe('VectorIndex TTL and prune (#129)', () => {
         });
     });
 
+    describe('generation-checked orphan-prune delete tombstone (#143)', () => {
+        const PK = 'DIR#/events/activity/chat';
+        const generation = { contentHash: 'hash-a', updatedAt: 1000, ttl: NOW_S + 60, sourceUpdatedAt: 100 };
+
+        it('deletes an unchanged row, writes a delete-time tombstone, and refuses a stale backfill upsert', () => {
+            index.upsert(entry('a', NOW_S + 60, { sourceUpdatedAt: 100 }));
+
+            expect(index.deleteIfSameGenerationAndTombstone(PK, 'FILE#a', generation, 200)).toBe(true);
+            expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
+            expect(db.query<{ source_updated_at: number, created_at: number }, [string, string]>('SELECT source_updated_at, created_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?').get(PK, 'FILE#a')).toEqual({ source_updated_at: 200, created_at: NOW_MS });
+            expect(index.upsert(entry('a', NOW_S + 60, { sourceUpdatedAt: 100 }))).toBe(false);
+            expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
+        });
+
+        it('keeps a changed row and writes no tombstone', () => {
+            index.upsert(entry('a', NOW_S + 60, { contentHash: 'reindexed', sourceUpdatedAt: 101 }));
+
+            expect(index.deleteIfSameGenerationAndTombstone(PK, 'FILE#a', generation, 200)).toBe(false);
+            expect(rowCounts()).toEqual({ meta: 1, vec: 1 });
+            expect(db.query<{ source_updated_at: number, created_at: number }, [string, string]>('SELECT source_updated_at, created_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?').get(PK, 'FILE#a')).toBeNull();
+            expect(index.getHash(PK, 'FILE#a')).toBe('reindexed');
+        });
+
+        it('leaves a missing row untombstoned', () => {
+            expect(index.deleteIfSameGenerationAndTombstone(PK, 'FILE#missing', generation, 200)).toBe(false);
+            expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
+            expect(db.query<{ source_updated_at: number, created_at: number }, [string, string]>('SELECT source_updated_at, created_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?').get(PK, 'FILE#missing')).toBeNull();
+        });
+
+        it('throws once closed', () => {
+            index.close();
+            expect(() => index.deleteIfSameGenerationAndTombstone(PK, 'FILE#a', generation, 200)).toThrow(VectorIndexClosedError);
+        });
+    });
+
     describe('deleteAndTombstone (#134)', () => {
         const PK = 'DIR#/events/activity/chat';
-
-        function tombstoneRow(sk: string) {
-            return db.query<{ source_updated_at: number, created_at: number }, [string, string]>(
-                'SELECT source_updated_at, created_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?'
-            ).get(PK, `FILE#${sk}`);
-        }
 
         it('removes an existing row from both tables and returns true', () => {
             index.upsert(entry('a', null, { sourceUpdatedAt: 100 }));
@@ -925,7 +954,7 @@ describe('VectorIndex TTL and prune (#129)', () => {
 
         it('returns false and still records a tombstone when no row exists', () => {
             expect(index.deleteAndTombstone(PK, 'FILE#missing', 100)).toBe(false);
-            expect(tombstoneRow('missing')).toEqual({ source_updated_at: 100, created_at: NOW_MS });
+            expect(db.query<{ source_updated_at: number, created_at: number }, [string, string]>('SELECT source_updated_at, created_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?').get(PK, 'FILE#missing')).toEqual({ source_updated_at: 100, created_at: NOW_MS });
             // The tombstone landed: a stale upsert for that key is now refused.
             expect(index.upsert(entry('missing', null, { sourceUpdatedAt: 50 }))).toBe(false);
             expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
@@ -951,11 +980,11 @@ describe('VectorIndex TTL and prune (#129)', () => {
         it('keeps the maximum source_updated_at across repeated tombstones for the same key', () => {
             index.deleteAndTombstone(PK, 'FILE#a', 100);
             index.deleteAndTombstone(PK, 'FILE#a', 50); // out-of-order duplicate: must not regress the tombstone
-            expect(tombstoneRow('a')?.source_updated_at).toBe(100);
+            expect(db.query<{ source_updated_at: number, created_at: number }, [string, string]>('SELECT source_updated_at, created_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?').get(PK, 'FILE#a')?.source_updated_at).toBe(100);
             expect(index.upsert(entry('a', null, { sourceUpdatedAt: 75 }))).toBe(false);
 
             index.deleteAndTombstone(PK, 'FILE#a', 200);
-            expect(tombstoneRow('a')?.source_updated_at).toBe(200);
+            expect(db.query<{ source_updated_at: number, created_at: number }, [string, string]>('SELECT source_updated_at, created_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?').get(PK, 'FILE#a')?.source_updated_at).toBe(200);
             expect(index.upsert(entry('a', null, { sourceUpdatedAt: 150 }))).toBe(false);
             expect(index.upsert(entry('a', null, { sourceUpdatedAt: 200 }))).toBe(true);
         });

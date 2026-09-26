@@ -4,7 +4,7 @@
  * DynamoDB deletes auto-logged /events/activity/* memories silently when their 30-day TTL passes;
  * before #129 the vector index never learned of it, leaving orphan rows. This tool finds the rows
  * under a prefix of /events/activity/ whose DynamoDB item is gone and deletes them locally through
- * VectorIndex.delete. It never writes to DynamoDB.
+ * VectorIndex.deleteIfSameGenerationAndTombstone. It never writes to DynamoDB.
  *
  * Usage:
  *   sst shell -- bun tools/prune-vector-orphans.ts --db-path <live db> [--execute]
@@ -224,7 +224,7 @@ export interface PruneStorage {
 
 export interface PruneDependencies {
     openStorage:     () => PruneStorage
-    openVectorIndex: (dbPath: string) => Promise<Pick<VectorIndex, 'listRowsByPathPrefix' | 'delete' | 'close'>>
+    openVectorIndex: (dbPath: string) => Promise<Pick<VectorIndex, 'listRowsByPathPrefix' | 'deleteIfSameGenerationAndTombstone' | 'close'>>
     now:             () => number
     sleep:           (ms: number) => Promise<void>
     write:           (message: string) => void
@@ -332,14 +332,15 @@ interface DeleteOutcome {
 
 /** Deletes one orphan the re-check just found absent, if it is unchanged, recording what happened. */
 function deleteOrphan(
-    row:         CandidateRow,
-    vectorIndex: Pick<VectorIndex, 'delete'>,
-    write:       (message: string) => void,
-    outcome:     Pick<DeleteOutcome, 'deleted' | 'changed' | 'errors'>
+    row:                     CandidateRow,
+    vectorIndex:             Pick<VectorIndex, 'deleteIfSameGenerationAndTombstone'>,
+    tombstoneSourceUpdatedAt: number,
+    write:                   (message: string) => void,
+    outcome:                 Pick<DeleteOutcome, 'deleted' | 'changed' | 'errors'>
 ): void {
     const { pk, sk, ...generation } = row.snapshot;
     try {
-        if(vectorIndex.delete(pk, sk, generation)) {
+        if(vectorIndex.deleteIfSameGenerationAndTombstone(pk, sk, generation, tombstoneSourceUpdatedAt)) {
             outcome.deleted++;
         } else {
             outcome.changed++;
@@ -352,14 +353,15 @@ function deleteOrphan(
 }
 
 /**
- * Re-checks the orphans and deletes each still-absent row if it is unchanged. The deletes for a
- * request run synchronously as soon as it returns, before its pacing pause, so the gap between
- * the authoritative read and the delete never includes a sleep or a retry.
+ * Re-checks the orphans and deletes each still-absent row if it is unchanged. A successful delete
+ * records a delete-time tombstone in its same SQLite transaction, so an older backfill page cannot
+ * reinsert it. The deletes for a request run synchronously as soon as it returns, before its pacing
+ * pause, so the gap between the authoritative read and the delete never includes a sleep or retry.
  */
 async function deleteOrphans(
     orphans:     CandidateRow[],
     ctx:         ExistenceContext,
-    vectorIndex: Pick<VectorIndex, 'delete'>,
+    vectorIndex: Pick<VectorIndex, 'deleteIfSameGenerationAndTombstone'>,
     write:       (message: string) => void
 ): Promise<DeleteOutcome> {
     // `rcu` has no meaningful initial value: it is always overwritten below from the recheck's
@@ -373,7 +375,7 @@ async function deleteOrphans(
             write(`kept (reappeared in DynamoDB): ${rowsById.get(keyId(key))!.path}\n`);
         }
         for(const key of checked.absent) {
-            deleteOrphan(rowsById.get(keyId(key))!, vectorIndex, write, outcome);
+            deleteOrphan(rowsById.get(keyId(key))!, vectorIndex, ctx.now(), write, outcome);
         }
     });
     return { ...outcome, rcu: recheck.consumedReadUnits };
@@ -408,7 +410,7 @@ export async function main(argv: string[] = process.argv, deps: PruneDependencie
 
     const startedAtMs = deps.now();
     const storage = deps.openStorage();
-    let vectorIndex: Pick<VectorIndex, 'listRowsByPathPrefix' | 'delete' | 'close'> | undefined;
+    let vectorIndex: Pick<VectorIndex, 'listRowsByPathPrefix' | 'deleteIfSameGenerationAndTombstone' | 'close'> | undefined;
     try {
         deps.write(`Vector orphan prune (${opts.execute ? 'EXECUTE' : 'dry run'})
   Table: ${storage.tableName}

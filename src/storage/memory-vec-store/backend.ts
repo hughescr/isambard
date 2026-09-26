@@ -10,11 +10,12 @@
  *   are excluded from queries and removed by `pruneExpired()` with zero DynamoDB reads
  * - Source-version guard (#129): each row carries the DynamoDB item's `updatedAt` it reflects, and
  *   `upsert`/`setTtls` never replace a row with a newer one, so a stale read cannot roll it back
- * - Delete tombstones (#134): `deleteAndTombstone()` records the version of every live delete in
- *   `vector_delete_tombstones`, and `upsert()` refuses to recreate a row at an older version than
- *   the delete it would resurrect — closing the gap where a backfill page read before a live
- *   delete could otherwise re-insert an orphan row. `pruneExpiredTombstones()` bounds the table's
- *   size with zero DynamoDB reads, mirroring `pruneExpired()`.
+ * - Delete tombstones (#134, #143): `deleteAndTombstone()` records every live delete, and
+ *   `deleteIfSameGenerationAndTombstone()` records a successful generation-checked orphan prune,
+ *   in `vector_delete_tombstones`. `upsert()` refuses to recreate a row at an older version than
+ *   the delete it would resurrect — closing the gap where a backfill page read before a deletion
+ *   could otherwise re-insert an orphan row. `pruneExpiredTombstones()` bounds the table's size
+ *   with zero DynamoDB reads, mirroring `pruneExpired()`.
  *
  * Architecture: two tables share a rowid:
  *   memory_vectors  — metadata (pk, sk, layer, content_hash, updated_at, ttl, source_updated_at)
@@ -456,13 +457,15 @@ export class VectorIndex {
     }
 
     /**
-     * Deletes the vector entry for (pk, sk).
+     * Deletes the vector entry for (pk, sk) without recording a delete tombstone.
      * Removes from both `memory_vectors` and `vec_memory` in a single IMMEDIATE transaction.
      * No-op if the entry does not exist.
      *
      * With `expected`, the row is deleted only if it is still that generation (same content hash,
-     * updated_at, ttl and source_updated_at): the orphan-prune tool uses this so a vector
-     * re-indexed or re-stamped after its snapshot survives.
+     * updated_at, ttl and source_updated_at). This remains the general-purpose non-tombstoning
+     * primitive for callers that do not race a stale source-backed upsert. Callers deleting a
+     * DynamoDB-backed row must instead use {@link deleteAndTombstone} or
+     * {@link deleteIfSameGenerationAndTombstone}.
      *
      * @returns true when a row was deleted.
      */
@@ -521,27 +524,73 @@ export class VectorIndex {
                 )
                 .get(pk, sk);
 
-            let deleted = false;
             // Stryker disable next-line llm: SQLite returns null for a miss and RowIdAndVersionRow is an object, so a falsiness check has identical results.
             if(row !== null && (row.source_updated_at === null || row.source_updated_at <= sourceUpdatedAt)) {
-                this.#db.run('DELETE FROM memory_vectors WHERE rowid = ?', [row.rowid]);
-                this.#db.run('DELETE FROM vec_memory WHERE rowid = ?', [row.rowid]);
-                deleted = true;
+                this.#deleteRowAndRecordTombstone(row.rowid, pk, sk, sourceUpdatedAt, now);
+                return true;
             }
 
-            this.#db.run(
-                `INSERT INTO vector_delete_tombstones (pk, sk, source_updated_at, created_at)
-                 VALUES (?, ?, ?, ?)
-                 ON CONFLICT(pk, sk) DO UPDATE SET
-                     source_updated_at = MAX(source_updated_at, excluded.source_updated_at),
-                     created_at        = excluded.created_at`,
-                [pk, sk, sourceUpdatedAt, now]
-            );
-
-            return deleted;
+            this.#recordTombstone(pk, sk, sourceUpdatedAt, now);
+            return false;
         });
 
         return tx.immediate();
+    }
+
+    /**
+     * Orphan-prune path (#143): deletes (pk, sk) and records a delete-time tombstone only when
+     * the stored row is exactly `expected` (content hash, updated_at, ttl, and source_updated_at).
+     * A changed or missing row is left untouched and gets no tombstone, so a current re-index is
+     * never masked by a prune snapshot. On success the tombstone's source marker blocks an older
+     * backfill page from recreating this orphan; ties intentionally remain valid in {@link upsert}.
+     *
+     * @returns true when the matching row was deleted and tombstoned; false when it was absent or
+     *   changed since the snapshot.
+     */
+    deleteIfSameGenerationAndTombstone(
+        pk: string,
+        sk: string,
+        expected: Omit<VectorRowSnapshot, 'pk' | 'sk'>,
+        tombstoneSourceUpdatedAt: number
+    ): boolean {
+        this.#assertOpen();
+        const now = this.#now();
+
+        const tx = this.#db.transaction((): boolean => {
+            const row = this.#db
+                .query<GenerationRow, [string, string]>(
+                    'SELECT rowid, content_hash, updated_at, ttl, source_updated_at FROM memory_vectors WHERE pk = ? AND sk = ?'
+                )
+                .get(pk, sk);
+            // Stryker disable next-line llm: SQLite returns null for a miss and GenerationRow is an object, so a falsiness check has identical results.
+            if(row === null || !isSameGeneration(row, expected)) {
+                return false;
+            }
+
+            this.#deleteRowAndRecordTombstone(row.rowid, pk, sk, tombstoneSourceUpdatedAt, now);
+            return true;
+        });
+
+        return tx.immediate();
+    }
+
+    /** Low-level SQL only; callers hold the surrounding IMMEDIATE transaction. */
+    #deleteRowAndRecordTombstone(rowId: number, pk: string, sk: string, sourceUpdatedAt: number, now: number): void {
+        this.#db.run('DELETE FROM memory_vectors WHERE rowid = ?', [rowId]);
+        this.#db.run('DELETE FROM vec_memory WHERE rowid = ?', [rowId]);
+        this.#recordTombstone(pk, sk, sourceUpdatedAt, now);
+    }
+
+    /** Low-level SQL only; never call outside the caller's IMMEDIATE transaction. */
+    #recordTombstone(pk: string, sk: string, sourceUpdatedAt: number, now: number): void {
+        this.#db.run(
+            `INSERT INTO vector_delete_tombstones (pk, sk, source_updated_at, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(pk, sk) DO UPDATE SET
+                 source_updated_at = MAX(source_updated_at, excluded.source_updated_at),
+                 created_at        = excluded.created_at`,
+            [pk, sk, sourceUpdatedAt, now]
+        );
     }
 
     /**

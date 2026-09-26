@@ -75,8 +75,8 @@ function makeRuntime(index: VectorIndex, table: ReturnType<typeof fakeTable>) {
     const deps = {
         openStorage:     mock(() => ({ tableName: 'isambard-test', batchGetKeys: table.batchGetKeys, destroy })),
         openVectorIndex: mock(async (_dbPath: string) => ({
-            listRowsByPathPrefix: (prefix: string) => index.listRowsByPathPrefix(prefix),
-            'delete':             mock((pk: string, sk: string, expected?: Parameters<VectorIndex['delete']>[2]) => index.delete(pk, sk, expected)),
+            listRowsByPathPrefix:               (prefix: string) => index.listRowsByPathPrefix(prefix),
+            deleteIfSameGenerationAndTombstone: mock((pk: string, sk: string, expected: Parameters<VectorIndex['deleteIfSameGenerationAndTombstone']>[2], tombstoneSourceUpdatedAt: number) => index.deleteIfSameGenerationAndTombstone(pk, sk, expected, tombstoneSourceUpdatedAt)),
             close,
         })),
         now:   mock(() => 0),
@@ -460,6 +460,20 @@ Prune complete:
 `);
     });
 
+    test('writes a delete-time tombstone that rejects a stale backfill upsert after pruning', async () => {
+        const index = openIndex();
+        const keys = keysOf(A);
+        index.upsert({ pk: keys.PK, sk: keys.SK, layer: createIndexLayer('events'), contentHash: `h:${A}`, vector: new Uint8Array(128) as PackedBinaryEmbedding1024, updatedAt: 1, ttl: null, sourceUpdatedAt: 100 });
+        seed(index, LIVE);
+        const runtime = makeRuntime(index, fakeTable([LIVE]));
+        runtime.deps.now.mockReturnValue(200);
+
+        await main(['bun', 'script', '--execute'], runtime.deps);
+
+        expect(index.upsert({ pk: keys.PK, sk: keys.SK, layer: createIndexLayer('events'), contentHash: `h:${A}`, vector: new Uint8Array(128) as PackedBinaryEmbedding1024, updatedAt: 1, ttl: null, sourceUpdatedAt: 100 })).toBe(false);
+        expect(remainingPaths(index)).toEqual([LIVE]);
+    });
+
     test('re-checks in batch-size chunks and keeps a key that reappeared in DynamoDB', async () => {
         const index = openIndex();
         for(const memoryPath of [A, B, C, LIVE]) {
@@ -625,11 +639,11 @@ Prune complete:
             const real = await opened(dbPath);
             return {
                 ...real,
-                'delete': mock((pk: string, sk: string, expected?: Parameters<VectorIndex['delete']>[2]) => {
+                deleteIfSameGenerationAndTombstone: mock((pk: string, sk: string, expected: Parameters<VectorIndex['deleteIfSameGenerationAndTombstone']>[2], tombstoneSourceUpdatedAt: number) => {
                     if(sk === keysOf(A).SK) {
                         throw new Error('database is locked');
                     }
-                    return real.delete(pk, sk, expected);
+                    return real.deleteIfSameGenerationAndTombstone(pk, sk, expected, tombstoneSourceUpdatedAt);
                 }),
             };
         });
@@ -649,7 +663,7 @@ Prune complete:
         const opened = runtime.deps.openVectorIndex.getMockImplementation()!;
         runtime.deps.openVectorIndex.mockImplementation(async (dbPath: string) => ({
             ...(await opened(dbPath)),
-            'delete': mock(() => {
+            deleteIfSameGenerationAndTombstone: mock(() => {
                 throw 'busy';
             }),
         }));
