@@ -846,25 +846,3 @@ void mock.module('../tools/backfill-vectors-runtime', () => ({
         info:            () => undefined,
     }),
 }));
-
-// Same for the #129 orphan-prune CLI (tools/prune-vector-orphans.ts): its default runtime is
-// replaced by in-memory owners, so a mutant of its CLI entry guard can never reach DynamoDB or
-// open a real SQLite file during test imports.
-export const mockPruneRuntime = { writes: [] as string[], opens: 0, closes: 0 };
-
-void mock.module('../tools/prune-vector-orphans-runtime', () => ({
-    createDefaultPruneDependencies: () => ({
-        openStorage: () => {
-            mockPruneRuntime.opens++;
-            return {
-                tableName:    'mock-table',
-                batchGetKeys: async () => ({ found: [], unprocessed: [], consumedReadUnits: 0 }),
-                destroy:      () => { mockPruneRuntime.closes++; },
-            };
-        },
-        openVectorIndex: async () => ({ listRowsByPathPrefix: () => [], 'delete': () => false, close: () => undefined }),
-        now:             () => 0,
-        sleep:           async () => undefined,
-        write:           (message: string) => { mockPruneRuntime.writes.push(message); },
-    }),
-}));

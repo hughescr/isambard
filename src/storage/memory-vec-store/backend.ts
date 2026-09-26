@@ -11,7 +11,8 @@
  * - Source-version guard (#129): each row carries the DynamoDB item's `updatedAt` it reflects, and
  *   `upsert`/`setTtls` never replace a row with a newer one, so a stale read cannot roll it back
  * - Delete tombstones (#134, #143): `deleteAndTombstone()` records every live delete, and
- *   `deleteIfSameGenerationAndTombstone()` records a successful generation-checked orphan prune,
+ *   `deleteIfSameGenerationAndTombstone()` records a successful generation-checked orphan delete
+ *   by the weekly cross-check (#137),
  *   in `vector_delete_tombstones`. `upsert()` refuses to recreate a row at an older version than
  *   the delete it would resurrect — closing the gap where a backfill page read before a deletion
  *   could otherwise re-insert an orphan row. `pruneExpiredTombstones()` bounds the table's size
@@ -31,7 +32,7 @@
  * Concurrency (#129): every connection sets busy_timeout and WAL (see connection.ts), and every
  * write transaction is IMMEDIATE — it takes the write lock before its first read, so a
  * read-then-write can neither act on a stale read nor fail with SQLITE_BUSY_SNAPSHOT when another
- * process (Izzy, the backfill, the orphan prune) commits in between.
+ * process (Izzy or the backfill) commits in between.
  *
  * All public methods are synchronous (bun:sqlite is sync).
  * Open with `VectorIndex.open(path)` for file-backed DB, or
@@ -538,10 +539,10 @@ export class VectorIndex {
     }
 
     /**
-     * Orphan-prune path (#143): deletes (pk, sk) and records a delete-time tombstone only when
-     * the stored row is exactly `expected` (content hash, updated_at, ttl, and source_updated_at).
-     * A changed or missing row is left untouched and gets no tombstone, so a current re-index is
-     * never masked by a prune snapshot. On success the tombstone's source marker blocks an older
+     * Orphan-delete path (#143, used by the #137 weekly cross-check): deletes (pk, sk) and records
+     * a delete-time tombstone only when the stored row is exactly `expected` (content hash,
+     * updated_at, ttl, and source_updated_at). A changed or missing row is left untouched and gets
+     * no tombstone, so a current re-index is never masked by a cross-check snapshot. On success the tombstone's source marker blocks an older
      * backfill page from recreating this orphan; ties intentionally remain valid in {@link upsert}.
      *
      * @returns true when the matching row was deleted and tombstoned; false when it was absent or

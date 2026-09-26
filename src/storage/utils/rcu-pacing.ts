@@ -1,6 +1,6 @@
 /**
- * Read-capacity pacing shared by the operator tools that read DynamoDB while Izzy is live
- * (tools/backfill-vectors.ts, tools/prune-vector-orphans.ts) and by the memory-tool tag index
+ * Read-capacity pacing shared by the operator tool that reads DynamoDB while Izzy is live
+ * (tools/backfill-vectors.ts) and by the memory-tool tag index
  * reconciler (src/storage/memory-tool/reconciliation/reconciler.ts), which paces its own reads
  * the same way but stays within `src` and must not import from `tools/`.
  *

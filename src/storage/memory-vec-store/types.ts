@@ -65,8 +65,8 @@ export interface VectorTtlUpdate {
 }
 
 /**
- * A row's identity plus the fields that change whenever it is rewritten. The orphan-prune tool
- * snapshots this and deletes a row only if it is still the same generation, so a vector
+ * A row's identity plus the fields that change whenever it is rewritten. The weekly cross-check
+ * (#137) snapshots this and deletes an orphan only if it is still the same generation, so a vector
  * re-indexed after the snapshot survives.
  */
 export interface VectorRowSnapshot {

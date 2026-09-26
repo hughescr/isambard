@@ -905,7 +905,7 @@ describe('VectorIndex TTL and prune (#129)', () => {
         });
     });
 
-    describe('generation-checked orphan-prune delete tombstone (#143)', () => {
+    describe('generation-checked orphan delete tombstone (#143)', () => {
         const PK = 'DIR#/events/activity/chat';
         const generation = { contentHash: 'hash-a', updatedAt: 1000, ttl: NOW_S + 60, sourceUpdatedAt: 100 };
 

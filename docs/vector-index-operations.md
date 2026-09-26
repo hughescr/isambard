@@ -4,7 +4,7 @@ The memory vector index (`memory-vec.sqlite`, `src/storage/memory-vec-store/`) i
 
 ## Running tools while Izzy is live
 
-Every connection to the vector database sets `PRAGMA busy_timeout = 5000` and then `PRAGMA journal_mode = WAL` (`src/storage/memory-vec-store/connection.ts`), and every write transaction is IMMEDIATE. So the backfill and the orphan prune can run while Izzy has the file open:
+Every connection to the vector database sets `PRAGMA busy_timeout = 5000` and then `PRAGMA journal_mode = WAL` (`src/storage/memory-vec-store/connection.ts`), and every write transaction is IMMEDIATE. So the backfill can run while Izzy has the file open:
 
 - Readers never block on a writer, and a writer never blocks readers.
 - When two connections want to write at once, the second one waits, synchronously, for up to 5 s. `bun:sqlite` is synchronous, so while Izzy is waiting its event loop is blocked for that time. The tools keep every transaction short (one row, one page of TTL updates, or one prune batch of at most 500 rows), so real waits are milliseconds.
@@ -31,6 +31,8 @@ The job pages local rowids, reads full DynamoDB items in four-key, eventually co
 
 All reads request reported consumed capacity. A run shares one 1 RCU/s pacer against the base table's 5 provisioned RCU and stops after a completed page at 2,000 consumed RCU or 100 requeues; large items cost RCU by **full item size**, regardless of projection, so coverage is bounded by bytes rather than a promised key count. One batch can exceed the remaining cap. The persisted rowid cursor resumes at the next weekly run, wraps at end, and does not advance past a failed or aborted page. The structured `Vector cross-check summary` log includes checked, deleted, requeued, malformed, rcu, cursor, completed and error fields. The job performs no DynamoDB writes and adds no table/index/capacity. Rows present in DynamoDB but absent in SQLite are **not** discovered here: run the operator GSI1 backfill instead; a thorough live GSI1 traversal cannot fit this local-key budget on its 2-RCU provisioned index.
 
+Remaining race (documented, not coordinated): a memory re-created at an orphan's exact path between the strongly consistent confirmation read and the delete that follows it, and not yet re-indexed, loses its vector until its next write or the next backfill. The window is the network return of that one BatchGetItem request, because a batch's confirmed orphans are deleted before another request or pacing wait. A re-creation that has already been re-indexed is safe even with the same content and TTL: the new write's `updatedAt` changes the row's `source_updated_at`, so the generation check keeps it.
+
 Rollback to an older bot ignores the additive local state table. Rebuilding/restoring `memory-vec.sqlite` loses the schedule and cursor and re-enrolls for another seven days; run the existing online backup and backfill procedure below to converge sooner. DynamoDB remains authoritative; a failed run may be retried, and no source records need rollback.
 
 ## Search cost with selective filters (#135)
@@ -38,6 +40,8 @@ Rollback to an older bot ignores the additive local state table. Rebuilding/rest
 A semantic query may rerun local KNN with progressively more candidates when the nearest vectors are expired, outside the requested layer, or have malformed legacy paths. When sqlite-vec's 4096-candidate ceiling is reached on a larger index, the query makes one exact local Hamming-distance scan instead of returning a misleadingly short result. This can raise synchronous SQLite query latency for selective searches, but requires neither a rebuild of the live index nor additional DynamoDB reads. TTL and layer visibility stay the same.
 
 ## Drift cleanup runbook (#129)
+
+This runbook converged the live index once, on 2026-09-24/25; that run also used a one-off orphan-prune tool, which has since been removed because the weekly cross-check (#137, above) now finds and removes orphan rows. Keep these steps for re-converging after a restore or a large drift.
 
 Only Craig runs these steps. Izzy stays running throughout. Run every tool from the develop checkout, unsandboxed, under `sst shell --`, against the same stage Izzy uses.
 
@@ -74,23 +78,9 @@ Below, `DB=/Users/craig/code/hughescr/isambard/scratch/memory-vec.sqlite`. Adjus
 
    Add `--force` to the users run only if #58's one-time forced users rewrite has not been done yet. The default pace is 2 RCU/s on GSI1, its provisioned capacity. `--dry-run` previews any step and writes nothing, TTLs included.
 
-3. **Prune dry run.**
+   Orphan rows (vectors whose memory no longer exists in DynamoDB) are not removed by the backfill; the weekly cross-check removes them.
 
-   ```bash
-   sst shell -- bun tools/prune-vector-orphans.ts --db-path "$DB" | tee prune-dry-run.txt
-   ```
-
-   The prefix defaults to `/events/activity/`, the only namespace this tool accepts (`--prefix` may name a directory below it). The run uses strongly consistent, keys-only BatchGetItem reads of 1 RCU per key, paced at 2 RCU/s against the base table's 5. Expect about 30 minutes for about 3.4k rows. Check the printed `Table:`. Expect `Absent (orphans)` to be about 2,343, plus any activity rows DynamoDB has swept since 2026-09-24, and `Present in DynamoDB` to be above 0. `Malformed (untouched)` rows are listed and never deleted.
-
-4. **Prune for real.**
-
-   ```bash
-   sst shell -- bun tools/prune-vector-orphans.ts --db-path "$DB" --execute | tee prune-execute.txt
-   ```
-
-   The prune recomputes the orphan list at run time. It then re-checks the orphans one paced BatchGetItem at a time and deletes the rows each request found absent as soon as that request returns, before it pauses for the next one, so the rate-limit pause never falls between a re-check and its delete. It deletes a row only if it is still the version it snapshotted (same content hash, `updated_at`, `ttl` and `source_updated_at`). Each successful deletion writes a short-lived (15-minute) delete-time tombstone in that same SQLite transaction, so a stale backfill page read before the prune is refused instead of recreating the orphan. A memory that reappeared in DynamoDB, or was re-indexed in the meantime, is kept and receives no tombstone. The prune refuses to run if every key under the prefix is absent (which usually means the wrong stage, table or credentials). Only `--allow-all-absent` overrides that. The re-check reads the orphans a second time, so allow about 50 minutes in total. The prune writes only the local SQLite file, never DynamoDB. It exits non-zero on any delete error or abort.
-
-5. **Second backfill pass, all layers, no `--force`.**
+3. **Second backfill pass, all layers, no `--force`.**
 
    ```bash
    sst shell -- bun tools/backfill-vectors.ts --db-path "$DB"
@@ -98,11 +88,7 @@ Below, `DB=/Users/craig/code/hughescr/isambard/scratch/memory-vec.sqlite`. Adjus
 
    Expect `Indexed` to be only the items created during the run, and `TTL updated` to be about 0. That means the index has converged.
 
-6. *(Optional)* Rerun the read-only index-drift measurement. Expect orphans, missing and stale all to be about 0. Rows past their TTL disappear at the next hourly prune.
-
-### Remaining race (documented, not coordinated)
-
-A memory re-created at an orphan's exact path between the prune's strongly consistent re-check read and the delete that follows it, and not yet re-indexed, loses its vector until its next write or the next backfill. The window is the network return of that one BatchGetItem request: the deletes run synchronously as soon as it returns, with no pacing pause or retry in between. Activity paths embed a millisecond timestamp, so this needs a same-path write inside that window. Step 5 repairs it regardless. (A re-creation that has already been re-indexed is safe even with the same content and TTL: the new write's `updatedAt` changes the row's `source_updated_at`, so the generation check keeps it.)
+4. *(Optional)* Rerun the read-only index-drift measurement. Expect missing and stale to be about 0; orphans fall to about 0 as the weekly cross-check works through the file. Rows past their TTL disappear at the next hourly prune.
 
 ## Restore
 

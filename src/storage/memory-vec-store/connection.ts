@@ -1,7 +1,7 @@
 /**
  * Per-connection pragmas for the vector-index SQLite file (#129).
  *
- * Izzy keeps the file open while operator tools (the backfill, the orphan prune) write to it, so
+ * Izzy keeps the file open while an operator tool (the backfill) writes to it, so
  * every connection sets:
  * - `busy_timeout` FIRST, so a competing writer waits (synchronously, up to the timeout) instead of
  *   failing at once with SQLITE_BUSY — and so the journal-mode switch below can itself wait;

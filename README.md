@@ -163,7 +163,7 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's provi
 | `bun run sst-dev` | SST development mode |
 | `bun run sst-deploy` | Deploy to AWS |
 
-Vector-index maintenance (backfill, orphan prune, backups; safe while Izzy runs): see [docs/vector-index-operations.md](docs/vector-index-operations.md).
+Vector-index maintenance (backfill, the weekly orphan cross-check, backups; safe while Izzy runs): see [docs/vector-index-operations.md](docs/vector-index-operations.md).
 
 ### Directory Structure
 
