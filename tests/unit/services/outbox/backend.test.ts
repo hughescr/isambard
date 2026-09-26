@@ -569,7 +569,9 @@ describe('OutboxBackend', () => {
 
             await backend.markFailed(makeItem({ progress: { attemptCount: 0 } }), 'rejected', { retryable: true });
 
-            expect(ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress).toEqual({
+            // toStrictEqual, not toEqual: toEqual treats a `deliveryToken: undefined` key as absent,
+            // so it cannot tell "no key" from an unconditionally spread undefined value.
+            expect(ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress).toStrictEqual({
                 attemptCount:  1,
                 lastError:     'rejected',
                 lastAttemptAt: '2030-01-01T00:00:00.000Z',

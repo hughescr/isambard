@@ -10,6 +10,8 @@ const ZERO_WIDTH_DIGIT_INDEX = new Map(ZERO_WIDTH_DIGITS.map((digit, index) => [
 // occurrence, so no end-sentinel character can ever fall in the trailing slice.
 const TRAILING_ZERO_WIDTH_CHARACTERS = new Set(['​', '‌', '‍', '⁠', '⁣', '﻿']);
 const TOKEN_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
+/** Each base-36 token character is written as exactly this many base-4 zero-width digits. */
+const DIGITS_PER_TOKEN_CHARACTER = 3;
 
 function encodeTokenCharacter(character: string): string {
     const value = TOKEN_ALPHABET.indexOf(character);
@@ -22,13 +24,13 @@ function encodeTokenCharacter(character: string): string {
     return high + middle + low;
 }
 
-function decodeTokenCharacter(encoded: string): string | undefined {
-    // The decoder must consume exactly one three-digit group. This guards the boundary even if a
-    // future caller passes a wider slice, rather than silently ignoring excess encoded digits.
-    if(encoded.length !== 3) {
-        return undefined;
-    }
-    const [first, second, third] = Array.from(encoded, digit => ZERO_WIDTH_DIGIT_INDEX.get(digit as typeof ZERO_WIDTH_DIGITS[number]));
+/**
+ * Decodes one group of exactly three digits, passed individually so no caller can hand over a
+ * wider slice. A digit missing past the end of the payload arrives as undefined and is rejected
+ * like any other non-digit, which is what rejects a payload whose length is not a multiple of 3.
+ */
+function decodeTokenCharacter(...digits: [string | undefined, string | undefined, string | undefined]): string | undefined {
+    const [first, second, third] = digits.map(digit => ZERO_WIDTH_DIGIT_INDEX.get(digit as typeof ZERO_WIDTH_DIGITS[number]));
     if(first === undefined || second === undefined || third === undefined) {
         return undefined;
     }
@@ -78,14 +80,14 @@ export function decodeDeliveryCode(content: string): string | undefined {
         return undefined;
     }
     const encoded = content.slice(startSentinel + START_SENTINEL.length, finalSentinel);
-    // A non-multiple-of-3 length is not checked explicitly: it always leaves a final
-    // under-length chunk below, which decodeTokenCharacter already rejects as undefined.
+    // A non-multiple-of-3 length is not checked explicitly: the final group then reads past the
+    // end of the payload, and decodeTokenCharacter rejects the missing digit as undefined.
     if(encoded.length === 0) {
         return undefined;
     }
     let token = '';
-    for(let offset = 0; offset < encoded.length; offset += 3) {
-        const character = decodeTokenCharacter(encoded.slice(offset, offset + 3));
+    for(let offset = 0; offset < encoded.length; offset += DIGITS_PER_TOKEN_CHARACTER) {
+        const character = decodeTokenCharacter(encoded[offset], encoded[offset + 1], encoded[offset + 2]);
         if(character === undefined) {
             return undefined;
         }

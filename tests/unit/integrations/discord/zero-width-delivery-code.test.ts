@@ -72,4 +72,12 @@ describe('zero-width delivery code', () => {
         const content = `${zeroWidth('2063')}${validGroup}xyz${validGroup}${zeroWidth('2064')}`;
         expect(decodeDeliveryCode(content)).toBeUndefined();
     });
+
+    test('rejects a payload whose digit count is not a multiple of three', () => {
+        const validPayload = deliveryCodeFor('iz').slice(1, -1);
+        const withDigits = (...extra: string[]): string => `${zeroWidth('2063')}${validPayload}${zeroWidth(...extra)}${zeroWidth('2064')}`;
+        expect(decodeDeliveryCode(withDigits())).toBe('iz');
+        expect(decodeDeliveryCode(withDigits('200B'))).toBeUndefined();
+        expect(decodeDeliveryCode(withDigits('200B', '200B'))).toBeUndefined();
+    });
 });
