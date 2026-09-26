@@ -7,6 +7,13 @@ import type { ChannelMetadata } from '@/integrations/discord/channel-registry/ty
 import { DM_SCOPE, createChannelId, createGuildId } from '@/integrations/discord/types';
 import type { ReconnectionLoop } from '@/services';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 describe('ChannelRegistryManager', () => {
     let backend: ChannelRegistryBackend;
     let client: Client;
@@ -1488,7 +1495,7 @@ describe('ChannelRegistryManager', () => {
             manager.stop();
             manager.offReady(callback);
             await manager.warmCache();
-            await Bun.sleep(0);
+            await drainMicrotasks();
 
             expect(callback).not.toHaveBeenCalled();
         });

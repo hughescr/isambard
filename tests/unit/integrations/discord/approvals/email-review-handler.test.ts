@@ -14,6 +14,13 @@ const CRAIG_ID = '111111111111111111';
 // Fixtures
 // ---------------------------------------------------------------------------
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 function makeEmail(overrides: Partial<EmailMetadata> = {}): EmailMetadata {
     return {
         uid:            42,
@@ -570,7 +577,7 @@ describe('EmailReviewHandler.handleButton()', () => {
 
             try {
                 await replyStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBeFalse();
             } finally {
                 replyGate.resolve({});
@@ -620,7 +627,7 @@ describe('EmailReviewHandler.handleButton()', () => {
 
             try {
                 await moveStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBeFalse();
                 expect(editReply).not.toHaveBeenCalled();
             } finally {
@@ -652,7 +659,7 @@ describe('EmailReviewHandler.handleButton()', () => {
 
             try {
                 await editStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBeFalse();
             } finally {
                 editGate.resolve({});

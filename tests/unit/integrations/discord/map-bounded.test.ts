@@ -29,10 +29,10 @@ describe('mapBounded', () => {
 
         expect(releases).toHaveLength(2);
         releases.shift()?.();
-        await Bun.sleep(0);
+        await flushMicrotasks();
         expect(releases).toHaveLength(2);
         releases.shift()?.();
-        await Bun.sleep(0);
+        await flushMicrotasks();
         releases.shift()?.();
         releases.shift()?.();
 
@@ -46,7 +46,7 @@ describe('mapBounded', () => {
         const pending = mapBounded([1, 2, 3], 2, async (value) => {
             started.push(value);
             if(value === 1) {
-                await Bun.sleep(0);
+                await Promise.resolve();
                 throw new Error('failed');
             }
             await new Promise<void>((resolve) => {
@@ -57,7 +57,7 @@ describe('mapBounded', () => {
         await expect(pending).rejects.toThrow('failed');
         expect(started).toEqual([1, 2]);
         release();
-        await Bun.sleep(0);
+        await flushMicrotasks();
         expect(started).toEqual([1, 2]);
     });
     test('rejects a sparse input instead of passing an absent item to the mapper', async () => {

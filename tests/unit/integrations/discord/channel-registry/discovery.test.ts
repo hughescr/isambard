@@ -11,6 +11,13 @@ import { createChannelId, createGuildId } from '@/integrations/discord/types';
 
 const noop = (): undefined => undefined;
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 describe('discovery', () => {
     let mockManager: ChannelRegistryManager;
     let mockClient: Client;
@@ -420,7 +427,7 @@ describe('discovery', () => {
             });
             await fiveStarted;
             rejectFirst(new Error('upsert failed'));
-            await Bun.sleep(0);
+            await drainMicrotasks();
 
             expect(started).toEqual(['channel-1', 'channel-2', 'channel-3', 'channel-4', 'channel-5']);
             expect(completed).toBe(false);

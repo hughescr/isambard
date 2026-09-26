@@ -25,6 +25,13 @@ interface BskyOutboundApprovalHandlerDeps {
     notify?:                     NotifyFn
 }
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 function makeAdapter(deps: BskyOutboundApprovalHandlerDeps, cardEdits?: ApprovalCardEditGate): BskyApprovalInteractionAdapter {
     return new BskyApprovalInteractionAdapter({
         approvals: new BskyOutboundApprovals({
@@ -259,7 +266,7 @@ describe('BskyApprovalInteractionAdapter', () => {
 
             try {
                 await acknowledgementStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
                 expect(deps.rejectionBackend.recordRejection).not.toHaveBeenCalled();
             } finally {
@@ -288,7 +295,7 @@ describe('BskyApprovalInteractionAdapter', () => {
 
             try {
                 await replyStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
                 replyGate.resolve();
@@ -317,7 +324,7 @@ describe('BskyApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
                 gate.resolve();
@@ -343,7 +350,7 @@ describe('BskyApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
                 gate.resolve();
@@ -375,7 +382,7 @@ describe('BskyApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
                 gate.resolve();
@@ -397,7 +404,7 @@ describe('BskyApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(editReply).not.toHaveBeenCalled();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {

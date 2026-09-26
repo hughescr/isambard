@@ -17,6 +17,13 @@ import type { OperationalStateKey } from '@/storage/operational-state';
 // Helpers
 // ---------------------------------------------------------------------------
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 const NOW = '2026-03-07T12:00:00.000Z';
 
 const FEED_KEY: OperationalStateKey = { owner: 'bsky', name: 'feeds/following/checkpoint' };
@@ -705,7 +712,7 @@ describe.concurrent('BskyCheckpointManager', () => {
 
             try {
                 await writeStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 return !completed;
             } finally {
                 writeGate.resolve();

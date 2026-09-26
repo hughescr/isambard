@@ -21,6 +21,13 @@ import { mockLogger } from '../../../setup';
 import type { MCPMessageSearchService, DiscordMcpChannelRegistry, MCPDMTracker, DiscordMcpChannelInfo, ChannelId, HistoryFetchParams } from '@/agent';
 import { DiscordHistoryProvider } from '@/integrations/discord/history-provider';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Test constants
 // ---------------------------------------------------------------------------
@@ -325,7 +332,7 @@ describe('DiscordHistoryProvider', () => {
             });
 
             const historyPromise = provider.fetchHistory({ identifier: 'Alice' });
-            await Bun.sleep(1);
+            await drainMicrotasks();
             const admittedSearches = searchService.searchMessages.mock.calls.length;
 
             // Resolve in reverse order; the channel-1 copy must still win the duplicate ID.

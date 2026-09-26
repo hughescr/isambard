@@ -12,6 +12,13 @@ import { PersonAllowlist } from '@/storage/person-allowlist';
 
 const ddbMock = mockClient(DynamoDBDocumentClient);
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 const TABLE_NAME = 'test-table';
 
 function makeContact(personId: string, identifiers: { platform: string, value: string }[], internal?: Contact['_internal']): Contact {
@@ -113,15 +120,15 @@ describe('PersonAllowlist.load()', () => {
         });
 
         const loading = makeAllowlist().load();
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(started).toEqual(ids.slice(0, 8));
         expect(maximumActive).toBe(8);
 
         gates.get(ids[0])?.resolve(makeContact(ids[0], []));
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(started).toEqual(ids.slice(0, 9));
         gates.get(ids[1])?.resolve(makeContact(ids[1], []));
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(started).toEqual(ids);
 
         for(const id of ids.slice(2)) {
@@ -142,9 +149,9 @@ describe('PersonAllowlist.load()', () => {
 
         const allowlist = makeAllowlist();
         const loading = allowlist.load();
-        await Bun.sleep(0);
+        await drainMicrotasks();
         bob.resolve(makeContact(BOB_ID, [{ platform: 'email', value: 'shared@example.com' }]));
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(allowlist.isAllowed('email', 'shared@example.com')).toBe(false);
 
         alice.resolve(makeContact(ALICE_ID, [{ platform: 'email', value: 'shared@example.com' }]));
@@ -169,7 +176,7 @@ describe('PersonAllowlist.load()', () => {
         });
 
         const loading = makeAllowlist().load();
-        await Bun.sleep(0);
+        await drainMicrotasks();
         charlie.resolve(undefined);
         bob.resolve(undefined);
         alice.resolve(ALICE_CONTACT);
@@ -214,16 +221,16 @@ describe('PersonAllowlist.load()', () => {
                 settled = true;
                 return error;
             });
-        await Bun.sleep(0);
+        await drainMicrotasks();
         dave.reject(new Error('later failure'));
         alice.resolve(ALICE_CONTACT);
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(allowlist.isAllowed('email', 'alice@example.com')).toBe(true);
         expect(settled).toBe(false);
 
         const firstFailure = new Error('first INDEX-order failure');
         bob.reject(firstFailure);
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(settled).toBe(false);
         charlie.resolve(makeContact(CHARLIE_ID, [{ platform: 'email', value: 'charlie@example.com' }]));
         expect(await loading).toBe(firstFailure);

@@ -36,7 +36,7 @@ describe('draft context subsections', () => {
         const wdc = makeWildDuck(async (_mailbox, uid) => {
             active++;
             peak = Math.max(peak, active);
-            await Bun.sleep(2);
+            await Promise.resolve();
             active--;
             return {
                 id:       uid, subject:  `subject-${uid}`, to:       [{ address: `user${uid}@example.com` }],

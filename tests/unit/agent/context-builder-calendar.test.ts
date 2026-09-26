@@ -7,6 +7,13 @@ import { MemoryToolBackend } from '../../../src/storage/memory-tool/backend';
 import { createMemoryPath } from '../../../src/storage/memory-tool/types';
 import { mockLogger } from '../../setup';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 describe('createContextBuilder calendar context injection', () => {
     let mockDocClient: DynamoDBDocumentClient;
     let backend: MemoryToolBackend;
@@ -318,7 +325,7 @@ describe('createContextBuilder calendar context injection', () => {
                 return undefined;
             });
             await thirdStarted;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(started).toEqual(userIds);
             expect(settled).toBe(false);
             expect(clientOrder).toEqual([]);

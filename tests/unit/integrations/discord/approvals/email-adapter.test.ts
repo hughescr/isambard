@@ -24,6 +24,13 @@ interface EmailOutboundApprovalHandlerDeps {
     notify:                      NotifyFn
 }
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 function makeAdapter(deps: EmailOutboundApprovalHandlerDeps, cardEdits?: ApprovalCardEditGate): EmailApprovalInteractionAdapter {
     return new EmailApprovalInteractionAdapter({
         approvals: new EmailOutboundApprovals({
@@ -183,7 +190,7 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(editReply).not.toHaveBeenCalled();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
@@ -209,7 +216,7 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(deps.sagaBackend.create).not.toHaveBeenCalled();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
@@ -241,7 +248,7 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
                 gate.resolve();
@@ -265,7 +272,7 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(notify).not.toHaveBeenCalled();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
@@ -298,7 +305,7 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
                 gate.resolve();
@@ -321,7 +328,7 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             try {
                 await started.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
                 gate.resolve();
@@ -345,7 +352,7 @@ describe('EmailApprovalInteractionAdapter', () => {
 
         try {
             await acknowledgementStarted.promise;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(Bun.peek.status(operation)).toBe('pending');
             expect(deps.sagaBackend.create).not.toHaveBeenCalled();
         } finally {

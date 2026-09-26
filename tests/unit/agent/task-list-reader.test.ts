@@ -751,7 +751,7 @@ describe('createTaskListReader', () => {
         mockReadFile = mock(async (filePath: string) => {
             active++;
             peak = Math.max(peak, active);
-            await Bun.sleep(2);
+            await Promise.resolve();
             active--;
             const name = nodePath.basename(filePath);
             return JSON.stringify({ id: name, subject: name, status: 'in_progress' });

@@ -47,7 +47,7 @@ async function expectPromiseToRemainPending(promise: Promise<unknown>): Promise<
     }).catch(() => {
         settled = true;
     });
-    await Bun.sleep(0);
+    await flushMicrotasks();
     expect(settled).toBe(false);
 }
 
@@ -5199,7 +5199,7 @@ describe('createDiscordBot', () => {
                 }),
             } as never, `message-${index}`));
             try {
-                await Bun.sleep(0);
+                await flushMicrotasks();
                 expect(started).toBe(5);
             } finally {
                 release.resolve();

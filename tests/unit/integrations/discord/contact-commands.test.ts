@@ -16,6 +16,13 @@ import { createPersonId, type Contact, type ContactBackend, type ContactChangeRe
 // Test constants
 // ---------------------------------------------------------------------------
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 const ADMIN_USER_ID = '423276934781468692';
 
 const SAMPLE_CONTACT: Contact = {
@@ -2253,7 +2260,7 @@ describe('Contact command public response contracts', () => {
             expect(editReply).not.toHaveBeenCalled();
             deferGate.resolve();
             await editGate.started;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(completed).toBe(false);
             editGate.resolve();
             await completion;
@@ -2345,7 +2352,7 @@ describe('Contact command public response contracts', () => {
             });
             try {
                 await replyGate.started;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed, entry.name).toBe(false);
                 replyGate.resolve();
                 await completion;
@@ -2410,7 +2417,7 @@ describe('Contact command public response contracts', () => {
             });
             try {
                 await replyGate.started;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed, entry.name).toBe(false);
                 replyGate.resolve();
                 await completion;
@@ -2464,7 +2471,7 @@ describe('Contact command public response contracts', () => {
             });
             try {
                 await operationGate.started;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed, entry.name).toBe(false);
                 operationGate.resolve();
                 await completion;

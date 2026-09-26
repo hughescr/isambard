@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest, mock, spyOn } from 'bun:test';
 import { QueryCommand, UpdateCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import * as retryMod from '../../../src/utils/retry/retry-async';
 import { backfillSleep, runBackfillCli } from '../../../tools/backfill-contact-lookup-gsi2';
@@ -7,6 +7,10 @@ import { mockLogger } from '../../setup';
 
 // backfill-contact-lookup-gsi2-core.ts has no top-level side-effects — safe to import in tests.
 // The CLI entrypoint runs only as the main module; tests inject the runtime and never reach AWS.
+
+afterEach(() => {
+    jest.useRealTimers();
+});
 
 describe('backfill CLI wiring', () => {
     const contact: ContactProfileItem = {
@@ -153,11 +157,11 @@ describe('backfill CLI wiring', () => {
     });
 
     test('real backfill sleep resolves after its timer fires', async () => {
-        const outcome = await Promise.race([
-            backfillSleep(1).then(() => 'resolved'),
-            Bun.sleep(100).then(() => 'timed out'),
-        ]);
-        expect(outcome).toBe('resolved');
+        jest.useFakeTimers();
+        const outcome = backfillSleep(1);
+        jest.advanceTimersByTime(1);
+
+        await expect(outcome).resolves.toBeUndefined();
     });
 
     test('the actual CLI main entry prints help before loading DynamoDB runtime', async () => {

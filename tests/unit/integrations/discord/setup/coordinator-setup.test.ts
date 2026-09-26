@@ -21,6 +21,13 @@ import { createChannelId, createGuildId, createUserId, type DiscordMessageContex
 // Minimal mocks
 // ---------------------------------------------------------------------------
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 function makeMockClient(): Client {
     return {
         guilds: { cache: { get: mock(() => undefined) } },
@@ -475,14 +482,14 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         const response = config.onResponse!({
             response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1',
         }, discordMessage, batch);
-        await Bun.sleep(1);
+        await drainMicrotasks();
         expect(admitted).toEqual(['123', '456', '789']);
 
         const firstError = new Error('first write failed');
         const thirdError = new Error('third write failed');
         third.reject(thirdError);
         second.resolve();
-        await Bun.sleep(1);
+        await drainMicrotasks();
         expect(admitted).toEqual(['123', '456', '789', '999']);
         expect(mockLogger.warn).not.toHaveBeenCalled();
 
@@ -507,9 +514,9 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         const result = { response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker, envelopeId: 'env-1' };
 
         const firstResponse = config.onResponse!(result, discordMessage, [makeBatchMessage('123', '100', new Date(1000))]);
-        await Bun.sleep(1);
+        await drainMicrotasks();
         const secondResponse = config.onResponse!({ ...result, envelopeId: 'env-2' }, discordMessage, [makeBatchMessage('123', '101', new Date(2000))]);
-        await Bun.sleep(1);
+        await drainMicrotasks();
         expect(recordHandled).toHaveBeenCalledTimes(1);
 
         firstWrite.resolve();
@@ -533,11 +540,11 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
         const result = { response: 'hello', sessionId: 'sess-1', wasInterrupted: false, streamTracker: {} as StreamTracker };
 
         const firstResponse = config.onResponse!({ ...result, envelopeId: 'env-1' }, discordMessage, [makeBatchMessage('123', '100', new Date(1000))]);
-        await Bun.sleep(1);
+        await drainMicrotasks();
         const secondResponse = config.onResponse!({ ...result, envelopeId: 'env-2' }, discordMessage, [makeBatchMessage('123', '101', new Date(2000))]);
-        await Bun.sleep(1);
+        await drainMicrotasks();
         firstWrite.resolve();
-        await Bun.sleep(1);
+        await drainMicrotasks();
         expect(deleteSpy).not.toHaveBeenCalledWith('123');
 
         secondWrite.resolve();

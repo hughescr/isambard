@@ -22,6 +22,13 @@ import { type EmailMetadata, type ClassifierVerdict, WildDuckClient, ClassifierV
 import type { ApprovedOutboundActionBackend } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 /** Minimal valid NotifyFn mock — always reports delivery succeeded. */
 function makeNotify() {
     return mock((_params: NotifyParams) => true);
@@ -316,7 +323,7 @@ describe('setupEmail — isSendableChannel type guard', () => {
 
         try {
             await started.promise;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(Bun.peek.status(setupOperation)).toBe('pending');
         } finally {
             gate.resolve();
@@ -349,7 +356,7 @@ describe('setupEmail — isSendableChannel type guard', () => {
 
         try {
             await started.promise;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(Bun.peek.status(operation)).toBe('pending');
         } finally {
             gate.resolve();
@@ -484,7 +491,7 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
 
         try {
             await started.promise;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(Bun.peek.status(operation)).toBe('pending');
         } finally {
             gate.resolve();
@@ -663,7 +670,7 @@ describe('buildEmailProcessorCallbacks', () => {
 
         try {
             await started.promise;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(deferredNotify).not.toHaveBeenCalled();
         } finally {
             gate.resolve();
@@ -695,7 +702,7 @@ describe('buildEmailProcessorCallbacks', () => {
 
         try {
             await started.promise;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(deferredNotify).not.toHaveBeenCalled();
         } finally {
             gate.resolve();

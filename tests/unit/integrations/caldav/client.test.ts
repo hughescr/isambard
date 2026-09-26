@@ -382,7 +382,7 @@ describe('CalDAVClient.getEvents', () => {
         try {
             await Promise.race([
                 thirdStarted.promise,
-                Bun.sleep(1000).then(() => { throw new Error('third calendar did not start before the first completed'); }),
+                drainMicrotasks(200).then(() => { throw new Error('third calendar did not start before the first completed'); }),
             ]);
             expect(maxActive).toBe(2);
         } finally {
@@ -417,7 +417,7 @@ describe('CalDAVClient.getEvents', () => {
         try {
             const result = await Promise.race([
                 pending,
-                Bun.sleep(250).then(() => { throw new Error('server result waited for another in-flight calendar'); }),
+                drainMicrotasks(200).then(() => { throw new Error('server result waited for another in-flight calendar'); }),
             ]);
             expect(result).toEqual({ events: [], failed: [] });
             expect(mockFetchCalendarObjects).toHaveBeenCalledTimes(2);

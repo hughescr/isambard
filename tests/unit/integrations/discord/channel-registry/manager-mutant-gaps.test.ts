@@ -5,6 +5,13 @@ import { ChannelRegistryManager } from '@/integrations/discord/channel-registry/
 import type { ChannelMetadata, ChannelStorageRecord } from '@/integrations/discord/channel-registry/types';
 import { DM_SCOPE, createChannelId, createGuildId, type ChannelScope } from '@/integrations/discord/types';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 function deferred<T>() {
     let finish!: (value: T) => void;
     const promise = new Promise<T>((resolve) => {
@@ -72,7 +79,7 @@ describe('ChannelRegistryManager mutation contracts', () => {
         manager.stop();
 
         await manager.warmCache();
-        await Bun.sleep(0);
+        await drainMicrotasks();
 
         expect(calls).toEqual(['first', 'second']);
     });
@@ -95,7 +102,7 @@ describe('ChannelRegistryManager mutation contracts', () => {
         manager.stop();
 
         await manager.warmCache();
-        await Bun.sleep(0);
+        await drainMicrotasks();
 
         expect(calls).toEqual(['first', 'third']);
     });
@@ -120,7 +127,7 @@ describe('ChannelRegistryManager mutation contracts', () => {
             completed = true;
             return undefined;
         });
-        await Bun.sleep(0);
+        await drainMicrotasks();
         try {
             expect(completed).toBe(false);
         } finally {
@@ -171,7 +178,7 @@ describe('ChannelRegistryManager mutation contracts', () => {
             completed = true;
             return result;
         });
-        await Bun.sleep(0);
+        await drainMicrotasks();
         try {
             expect(completed).toBe(false);
         } finally {

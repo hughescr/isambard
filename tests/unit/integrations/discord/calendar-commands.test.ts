@@ -121,7 +121,7 @@ async function expectHandlerToWaitForReply(
         await invoke();
         resolved = true;
     })();
-    await Bun.sleep(0);
+    await drainMicrotasks();
 
     expect(editReply).toHaveBeenCalledWith(expected);
     expect(resolved).toBe(false);
@@ -658,7 +658,7 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
                 await handler.handle(asChatInput);
                 resolved = true;
             })();
-            await Bun.sleep(0);
+            await drainMicrotasks();
 
             expect(editReply).toHaveBeenLastCalledWith({ content: expected, components: [] });
             expect(resolved).toBe(false);
@@ -1019,13 +1019,13 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
             await handler.handle(asChatInput);
             resolved = true;
         })();
-        await Bun.sleep(0);
+        await drainMicrotasks();
 
         expect(mockRegistry.addServer).toHaveBeenCalledTimes(1);
         expect(editReply).not.toHaveBeenCalled();
         expect(resolved).toBe(false);
         stored.resolve();
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(editReply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Added server "Server" with 1 calendar(s):\n  - Only' }));
         expect(resolved).toBe(false);
         reply.resolve({});
@@ -1767,12 +1767,12 @@ describe('CalendarCommandHandler - /calendar shared add-server', () => {
             await handler.handle(asChatInput);
             resolved = true;
         })();
-        await Bun.sleep(0);
+        await drainMicrotasks();
 
         expect(mockRegistry.addSharedServer).toHaveBeenCalledTimes(1);
         expect(editReply).not.toHaveBeenCalled();
         stored.resolve();
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(editReply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Added shared server "Shared" with 1 calendar(s):\n  - Only' }));
         expect(resolved).toBe(false);
         reply.resolve({});

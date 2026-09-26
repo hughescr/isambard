@@ -11,6 +11,13 @@ import type { ContactBackend } from '@/storage/contacts/backend';
 import type { Contact, PersonId } from '@/storage/contacts/types';
 import type { PersonAllowlist } from '@/storage/person-allowlist';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 const SAGA_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const ALICE_ID  = 'alice-smith' as PersonId;
 
@@ -640,7 +647,7 @@ describe('AllowlistSagaExecutor', () => {
             });
             try {
                 await gate.started;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBe(false);
             } finally {
                 gate.resolve();

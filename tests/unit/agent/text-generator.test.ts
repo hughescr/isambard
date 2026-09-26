@@ -436,7 +436,7 @@ describe('generateText', () => {
 
         test('a nonpositive timeout does not abort a delayed successful query', async () => {
             async function* delayedGenerator() {
-                await Bun.sleep(2);
+                await Promise.resolve();
                 yield { type: 'assistant', message: { content: [{ type: 'text', text: 'ready' }] } };
                 yield { type: 'result', subtype: 'success' };
             }

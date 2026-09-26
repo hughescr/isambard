@@ -8,6 +8,19 @@ const originalFetch = globalThis.fetch;
 
 const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-downloader-test-${Date.now()}`;
 
+/**
+ * Lets one real event-loop turn elapse. `AbortSignal.timeout()` schedules a real, native
+ * timer that a microtask-only drain can never observe firing (even at 0ms, its callback
+ * still needs a macrotask turn) — so proving "not yet aborted" needs a genuine turn, not
+ * just settled promise chains.
+ */
+function waitForEventLoopCheckpoint(): Promise<void> {
+    return new Promise((resolve) => {
+        // eslint-disable-next-line no-restricted-syntax -- real macrotask turn required to observe whether a zero-delay AbortSignal.timeout has already fired; a microtask-only drain cannot expose that bug.
+        setImmediate(resolve);
+    });
+}
+
 function makeSuccessRunner(): SpawnRunner {
     return async (): Promise<{ stdout: string, stderr: string, exitCode: number }> => ({
         stdout:   '',
@@ -95,7 +108,7 @@ describe('downloadVideo', () => {
 
         // The download must be guarded by a minutes-long timeout, not a zero-delay one:
         // a zero-delay signal has aborted by the next event-loop turn, the real one has not.
-        await Bun.sleep(0);
+        await waitForEventLoopCheckpoint();
         expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
     });
 

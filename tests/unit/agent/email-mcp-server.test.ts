@@ -40,6 +40,13 @@ interface RegisteredTool {
 }
 interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 describe('createEmailMCPServer', () => {
     let mockSendAdminNotification: ReturnType<typeof mock<(msg: unknown) => Promise<void>>>;
     let mockWildDuck: WildDuckClient;
@@ -1122,7 +1129,7 @@ describe('createEmailMCPServer', () => {
             try {
                 await Promise.race([
                     thirdStarted.promise,
-                    Bun.sleep(1000).then(() => { throw new Error('third attachment did not start before the first completed'); }),
+                    drainMicrotasks(200).then(() => { throw new Error('third attachment did not start before the first completed'); }),
                 ]);
                 expect(maxActive).toBe(2);
             } finally {
@@ -3641,7 +3648,7 @@ describe('createEmailMCPServer', () => {
             });
             const pending = buildAttachments(['/tmp/a0.txt', '/tmp/a1.txt', '/tmp/a2.txt']);
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 // Exactly 2 (not 1, not 3): proves the concurrency limit is 2, not merely "at most 2".
                 expect(maxActive).toBe(2);
                 gate.resolve();
@@ -3691,7 +3698,7 @@ describe('createEmailMCPServer', () => {
             });
             const pending = getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent')({ message: 'CleanInbox:7' });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(maxActive).toBeLessThanOrEqual(2);
                 gate.resolve();
                 const result = await pending;
@@ -3754,10 +3761,10 @@ describe('createEmailMCPServer', () => {
             });
             const second = handler({ to: 'b@example.com', subject: 'B', body: 'B', senderProfile: 'formal' });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(client.uploadMessage).not.toHaveBeenCalled();
                 addressGate.resolve([{ address: 'me@example.com', tags: ['formal'] }]);
-                await Bun.sleep(0);
+                await drainMicrotasks(50);
                 expect(client.uploadMessage).toHaveBeenCalledTimes(2);
                 expect(settled).toBe(false);
                 submitGate.resolve();
@@ -3777,7 +3784,7 @@ describe('createEmailMCPServer', () => {
                 settled = true;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(settled).toBe(false);
                 seenGate.resolve();
                 await pending;

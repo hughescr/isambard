@@ -235,6 +235,10 @@ const eslintConfig = [
                     selector: 'AwaitExpression > ImportExpression',
                     message:  "Don't use dynamic await import() in tests — use static imports at file scope and spyOn() to override module exports.",
                 },
+                {
+                    selector: "CallExpression[callee.object.name='Bun'][callee.property.name='sleep']",
+                    message:  "Don't use real Bun.sleep in tests — use jest.useFakeTimers() + jest.advanceTimersByTime(), await Promise.resolve()/drainMicrotasks() for microtask flushing, or a Promise.withResolvers() gate for deterministic ordering.",
+                },
             ],
 
             // ── Phase 2: eslint-plugin-jest rules ────────────────────────────────────

@@ -8,6 +8,13 @@ import { createCalendarServerId, type CalendarRegistryRecord, type CalendarServe
 import { type DynamoTimeoutOptions } from '@/storage/dynamo-retry';
 import * as dynamoRetry from '@/storage/dynamo-retry';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 const VALID_UUID_1 = createCalendarServerId('550e8400-e29b-41d4-a716-446655440001');
 const VALID_UUID_2 = createCalendarServerId('550e8400-e29b-41d4-a716-446655440002');
 const VALID_URL    = 'https://caldav.example.com/';
@@ -286,7 +293,7 @@ describe('CalendarRegistryBackend', () => {
 
             try {
                 await writeStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBe(false);
             } finally {
                 writeGate.resolve();
@@ -378,7 +385,7 @@ describe('CalendarRegistryBackend', () => {
 
             try {
                 await writeStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBe(false);
             } finally {
                 writeGate.resolve();
@@ -474,7 +481,7 @@ describe('CalendarRegistryBackend', () => {
 
             try {
                 await writeStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBe(false);
             } finally {
                 writeGate.resolve();
@@ -703,7 +710,7 @@ describe('CalendarRegistryBackend', () => {
 
             try {
                 await writeStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBe(false);
             } finally {
                 writeGate.resolve();

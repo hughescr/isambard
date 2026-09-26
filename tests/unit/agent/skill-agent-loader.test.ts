@@ -17,6 +17,13 @@ function waitForEventLoopCheckpoint(): Promise<void> {
     });
 }
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 describe('syncAgentsAndSkills', () => {
     const tempSourceRoot = '/test-source';
     const tempTargetRoot = '/test-target';
@@ -331,7 +338,7 @@ describe('syncAgentsAndSkills', () => {
             .catch((error: unknown) => error)
             .finally(() => { settled = true; });
         await failedRead.promise;
-        await Bun.sleep(1);
+        await drainMicrotasks();
         expect(settled).toBe(false);
 
         releaseHeld.resolve();

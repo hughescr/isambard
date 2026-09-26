@@ -7,6 +7,13 @@ import { type Contact, type ContactBackend, type PersonId, type PersonAllowlist,
 
 const ADMIN_USER_ID = '423276934781468692';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 beforeEach(() => {
     mockLogger.error.mockClear();
     mockLogger.debug.mockClear();
@@ -193,7 +200,7 @@ describe('AllowlistCommandHandler - permission check', () => {
         });
         try {
             await replyGate.started;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(completed).toBe(false);
         } finally {
             replyGate.resolve();
@@ -284,7 +291,7 @@ describe('AllowlistCommandHandler - list', () => {
         const completion = handler.handle(asChatInput);
         try {
             await firstStarted.promise;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(started).toBe(5);
         } finally {
             release.resolve();
@@ -1149,7 +1156,7 @@ describe('AllowlistCommandHandler - completion boundaries', () => {
             });
             try {
                 await replyGate.started;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed, entry.name).toBe(false);
             } finally {
                 replyGate.resolve();

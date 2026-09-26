@@ -13,6 +13,13 @@ import { mockLogger } from '../../../setup';
 import { BskyRejectionBackend, type BskyRejectedReply, type BskyRejectedDM } from '@/integrations/bsky/rejection-backend';
 import { createAtUri, createCid } from '@/integrations/bsky/types';
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 const REPLY_UUID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const DM_UUID    = 'bbbbbbbb-1111-4222-8333-444444444444';
 
@@ -105,7 +112,7 @@ describe('BskyRejectionBackend', () => {
 
             try {
                 await writeStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBe(false);
             } finally {
                 writeGate.resolve({});
@@ -386,7 +393,7 @@ describe('BskyRejectionBackend', () => {
 
             try {
                 await deleteStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBe(false);
             } finally {
                 deleteGate.resolve({});

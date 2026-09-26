@@ -1,7 +1,18 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, jest, mock, test } from 'bun:test';
 import { type DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { runTagIndexReconciliation, type ReconcilerDeps, type ReconcilerOptions } from '@/storage/memory-tool/reconciliation/reconciler';
 import type { MemoryPath, MemoryToolItem, MemoryToolItemData } from '@/storage/memory-tool/types';
+
+afterEach(() => {
+    jest.useRealTimers();
+});
+
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
 
 function controlledPromise<T>(): { promise: Promise<T>, started: Promise<void>, start: () => void, resolve: (value: T) => void } {
     const value = Promise.withResolvers<T>();
@@ -55,11 +66,12 @@ function commandInput(command: unknown): Record<string, unknown> {
 
 describe('reconciler public progress and producer contracts', () => {
     test('reports exact zero progress for an empty run and records Phase A completion time', async () => {
+        jest.useFakeTimers();
         let delayed = false;
         const deps = makeDeps(async () => {
             if(!delayed) {
                 delayed = true;
-                await Bun.sleep(2);
+                jest.advanceTimersByTime(2);
             }
             return { Items: [] };
         });
@@ -149,7 +161,7 @@ describe('reconciler public progress and producer contracts', () => {
         });
         try {
             await refresh.started;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(completed).toBe(false);
             refresh.resolve();
             await completion;
@@ -191,7 +203,7 @@ describe('reconciler public progress and producer contracts', () => {
         });
         try {
             await deletion.started;
-            await Bun.sleep(0);
+            await drainMicrotasks();
             expect(completed).toBe(false);
             deletion.resolve();
             await completion;
@@ -221,7 +233,7 @@ describe('reconciler public progress and producer contracts', () => {
         const completion = runTagIndexReconciliation(deps, { ...options, operationDelayMs: 20 }).finally(() => {
             completed = true;
         });
-        await Bun.sleep(0);
+        await drainMicrotasks();
         expect(completed).toBe(false);
         await completion;
     });

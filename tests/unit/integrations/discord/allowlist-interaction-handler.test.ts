@@ -10,6 +10,13 @@ import type { ContactBackend, Contact, PersonId } from '@/storage';
 // Test constants
 // ---------------------------------------------------------------------------
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 const SAGA_ID           = 'saga-abc-123';
 const PERSON_ID         = 'person-xyz' as PersonId;
 const DISPLAY_NAME      = 'Alice Example';
@@ -517,7 +524,7 @@ describe('AllowlistInteractionHandler', () => {
             deferUpdate.mockImplementation(() => deferGate.promise);
             const pending = handler.handleModalSubmit(interaction);
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(deps.executor.submitName).not.toHaveBeenCalled();
             } finally {
                 deferGate.resolve();
@@ -535,7 +542,7 @@ describe('AllowlistInteractionHandler', () => {
                 return undefined;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(editReply).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {
@@ -557,7 +564,7 @@ describe('AllowlistInteractionHandler', () => {
                 return undefined;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(editReply).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {
@@ -576,7 +583,7 @@ describe('AllowlistInteractionHandler', () => {
                 return undefined;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(showModal).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {
@@ -591,7 +598,7 @@ describe('AllowlistInteractionHandler', () => {
             deferUpdate.mockImplementation(() => deferGate.promise);
             const pending = handler.handleButton(interaction);
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(deps.executor.confirmMatch).not.toHaveBeenCalled();
             } finally {
                 deferGate.resolve();
@@ -609,7 +616,7 @@ describe('AllowlistInteractionHandler', () => {
                 return undefined;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(editReply).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {
@@ -631,7 +638,7 @@ describe('AllowlistInteractionHandler', () => {
                 return undefined;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(editReply).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {
@@ -650,7 +657,7 @@ describe('AllowlistInteractionHandler', () => {
                 return result;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(followUp).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {
@@ -670,7 +677,7 @@ describe('AllowlistInteractionHandler', () => {
                 return result;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(followUp).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {
@@ -690,7 +697,7 @@ describe('AllowlistInteractionHandler', () => {
                 return undefined;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(editReply).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {
@@ -713,7 +720,7 @@ describe('AllowlistInteractionHandler', () => {
                 return undefined;
             });
             try {
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(editReply).toHaveBeenCalledTimes(1);
                 expect(settled).toBe(false);
             } finally {

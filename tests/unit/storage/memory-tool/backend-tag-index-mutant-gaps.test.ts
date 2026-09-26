@@ -6,6 +6,13 @@ import { createIndexLayer, type MemoryPath } from '@/storage/memory-tool/types';
 
 const IDENTITY = createIndexLayer('identity');
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 function deferred<T>() {
     let finish!: (value: T) => void;
     const promise = new Promise<T>((resolve) => {
@@ -97,7 +104,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             return undefined;
         });
         await deleteStarted.promise;
-        await Bun.sleep(0);
+        await drainMicrotasks();
         try {
             expect(completed).toBe(false);
         } finally {
@@ -128,7 +135,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             return undefined;
         });
         await countStarted.promise;
-        await Bun.sleep(0);
+        await drainMicrotasks();
         try {
             expect(createCompleted).toBe(false);
         } finally {
@@ -153,7 +160,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             return undefined;
         });
         await decrementStarted.promise;
-        await Bun.sleep(0);
+        await drainMicrotasks();
         try {
             expect(deleteCompleted).toBe(false);
         } finally {
@@ -213,9 +220,7 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
         // willing to run concurrently. We never await an unresolved promise here: a
         // below-limit concurrency mutant must fail the assertion below instead of hanging
         // the test forever waiting for a 4th dispatch that never comes.
-        await Bun.sleep(0);
-        await Bun.sleep(0);
-        await Bun.sleep(0);
+        await drainMicrotasks(30);
         try {
             expect(started).toBe(4);
             expect(maximumInFlight).toBe(4);

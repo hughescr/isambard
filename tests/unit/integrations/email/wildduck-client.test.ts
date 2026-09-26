@@ -11,6 +11,13 @@ const mockFetch = mock(async (_url: string, _options?: RequestInit): Promise<Res
 
 const originalFetch = globalThis.fetch;
 
+async function drainMicrotasks(ticks = 10): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Test constants
 // ---------------------------------------------------------------------------
@@ -134,7 +141,7 @@ describe('WildDuckClient', () => {
             });
             try {
                 await reloadStarted.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(completed).toBe(false);
             } finally {
                 reloadResponse.resolve(makeJsonResponse(MAILBOX_RESPONSE));
@@ -1578,7 +1585,7 @@ describe('WildDuckClient', () => {
 
             const requests = Array.from({ length: 8 }, (_, index) => client.getMessage('Sent Mail', index + 1));
             await allExpiredRequests.promise;
-            await Bun.sleep(1);
+            await drainMicrotasks();
             expect(authCalls).toBe(1);
             authResponse.resolve(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
             const messages = await Promise.all(requests);
@@ -1647,7 +1654,7 @@ describe('WildDuckClient', () => {
 
             const requests = Array.from({ length: 8 }, (_, index) => client.getMessage('Sent Mail', index + 1));
             await allExpiredRequests.promise;
-            await Bun.sleep(1);
+            await drainMicrotasks();
             expect(authCalls).toBe(1);
             firstAuthResponse.resolve(makeJsonResponse({ success: true }));
             const results = await Promise.allSettled(requests);
@@ -2629,7 +2636,7 @@ describe('WildDuckClient', () => {
                 }).catch(() => undefined);
 
                 await firstFailed.promise;
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(settled).toBe(false);
                 expect(postCount).toBe(2);
                 secondGate.resolve(makeJsonResponse({ success: true }));
@@ -2676,7 +2683,7 @@ describe('WildDuckClient', () => {
 
                 await secondStarted.promise;
                 firstGate.reject(firstReason);
-                await Bun.sleep(0);
+                await drainMicrotasks();
                 expect(settled).toBe(false);
                 expect(postCount).toBe(2);
                 secondGate.reject(new Error('later sibling failure'));
