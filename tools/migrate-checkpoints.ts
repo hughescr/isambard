@@ -4,7 +4,7 @@
  * this file wires it to DynamoDB, the vector index and the terminal.
  *
  * Usage:
- *   bun run migrate:checkpoints [--execute] [--vector-index <db>]
+ *   bun run migrate:checkpoints [--execute] [--paths-file <file>] [--vector-index <db>]
  *   (package.json runs `sst shell -- bun tools/migrate-checkpoints.ts` and appends the flags)
  *
  * Dry run is the default: it reads the table (GSI1 `LAYER#state`, then one strongly consistent
@@ -13,7 +13,18 @@
  * `OPERATIONAL_STATE#<owner>`/<name> with a put that only creates an absent key, then deletes the
  * legacy memory row (and any tag rows) through a MemoryToolBackend that has no indexer. Unrecognised
  * paths under /state/services/ are reported and left alone. `--vector-index <db>` also deletes the
- * recognised checkpoint rows from Izzy's local SQLite vector index.
+ * recognised checkpoint rows from Izzy's local SQLite vector index (it always lists the index
+ * itself, whichever way the DynamoDB rows were found).
+ *
+ * The GSI1 scan pages through every `LAYER#state` memory at 1 RCU/s to find the few rows under
+ * /state/services/, so it is slow; it prints one progress line per page. `--paths-file <file>`
+ * skips it: the file is a saved dry run (or one legacy path per line), and each path it names is
+ * read directly by primary key with one paced, strongly consistent GetItem. Strongly consistent,
+ * because it costs 1 RCU per 4 KB rather than 0.5, which over a few dozen listed rows is seconds,
+ * and it rules out a stale read reporting a row an interrupted earlier run already deleted. The
+ * list comes from DynamoDB itself (the dry run's scan), so it is complete as of the dry run: a
+ * checkpoint row created after it cannot exist, because the new code never writes legacy paths.
+ * A listed path whose row is gone is reported as `already gone` and counted, not an error.
  *
  * Izzy can keep running (#57 clarification, 2026-09-25). The put only creates an absent key, so a
  * checkpoint Izzy writes during the run wins, and since #129 the vector index takes concurrent
@@ -23,15 +34,17 @@
  * Runbook (DB is the file Izzy uses: `<repo>/scratch/memory-vec.sqlite`, see
  * docs/vector-index-operations.md; confirm against Izzy's `Vector index initialized at …` log):
  *   1. Leave Izzy running.
- *   2. Dry run, keeping the listing:
+ *   2. Dry run, saving the listing (this is the one full GSI1 scan):
  *        bun run migrate:checkpoints --vector-index "$DB" | tee migrate-checkpoints-dry-run.txt
  *      Check the `Table:` line names the production table (sst shell uses the active stage) and
  *      that the rows are the expected ones: Bluesky notifications and DM, one per Bluesky feed and
  *      one per Discord channel.
- *   3. Execute:
- *        bun run migrate:checkpoints --execute --vector-index "$DB" | tee migrate-checkpoints-execute.txt
- *   4. Verify with a second dry run: 0 legacy rows (or only the unrecognised ones reported before)
- *      and 0 vector rows to delete.
+ *   3. Execute against the saved listing, reading just those rows:
+ *        bun run migrate:checkpoints --execute --paths-file migrate-checkpoints-dry-run.txt --vector-index "$DB" | tee migrate-checkpoints-execute.txt
+ *   4. Verify with a dry run of the same listing: every recognised path `already gone` (only the
+ *      unrecognised ones reported before remain) and 0 vector rows to delete:
+ *        bun run migrate:checkpoints --paths-file migrate-checkpoints-dry-run.txt --vector-index "$DB"
+ *      A dry run without --paths-file re-scans GSI1 instead, for a check independent of the listing.
  *   5. Watch Izzy's log: no further legacy-fallback reads, and at the next restart no catch-up
  *      replay of already-handled Discord messages and no re-notified Bluesky items.
  *
@@ -41,7 +54,8 @@
  *
  * ROLLBACK:
  * - The tool is idempotent. A new key is written only when absent, and a legacy row is deleted
- *   only after its put succeeded or its key already existed, so a failed run is simply re-run.
+ *   only after its put succeeded or its key already existed, so a failed run is simply re-run
+ *   (with the same --paths-file: the rows it already finished report `already gone`).
  *   The vector pass covers every recognised checkpoint row still in the index, so a re-run also
  *   finishes a vector pass an earlier run never reached.
  * - Reverting to any build from #57's first half onward is safe: those builds read the
@@ -56,7 +70,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { QueryCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, QueryCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { Database } from 'bun:sqlite';
 import { Resource } from 'sst';
 import { clientDestroyer, sleepForRateLimit } from './backfill-vectors-runtime-builder';
@@ -64,6 +78,7 @@ import {
     parseArgs,
     runMigration,
     STATE_PAGE_SIZE,
+    type GetLegacyItem,
     type MigrationDeps,
     type QueryStatePage,
     type VectorRowKey
@@ -73,7 +88,7 @@ import { createDynamoDBClient, MemoryToolBackend, OperationalStateBackend, Vecto
 import { VECTOR_DB_BUSY_TIMEOUT_MS } from '@/storage/memory-vec-store';
 
 export const HELP_TEXT = `
-Usage: bun run migrate:checkpoints [--execute] [--vector-index <db>]
+Usage: bun run migrate:checkpoints [--execute] [--paths-file <file>] [--vector-index <db>]
        (sst shell -- bun tools/migrate-checkpoints.ts [options])
 
 Moves the legacy /state/services/... checkpoint memory rows into the operational-state
@@ -83,9 +98,19 @@ happen to it, and writes nothing.
 Options:
   --execute            Copy each checkpoint (only where the new key is absent) and delete
                        the legacy row. Unrecognised rows are always left alone.
+  --paths-file <file>  Skip the slow GSI1 scan and read just the rows named in <file>
+                       (a saved dry run, or one legacy path per line) by primary key.
+                       A listed row that no longer exists is reported as already gone.
   --vector-index <db>  Also delete the checkpoint rows from Izzy's SQLite vector index
                        (the dry run opens it read-only)
   --help               Show this help message
+
+Recommended: dry run, save its output, then execute from the saved listing:
+  bun run migrate:checkpoints --vector-index "$DB" | tee migrate-checkpoints-dry-run.txt
+  bun run migrate:checkpoints --execute --paths-file migrate-checkpoints-dry-run.txt --vector-index "$DB"
+The listing comes from DynamoDB itself (the dry run's scan), so it is complete as of
+the dry run: a checkpoint row created after it cannot exist, because the new code
+never writes legacy paths.
 
 Izzy can keep running: a checkpoint it writes meanwhile wins, and the vector
 index takes concurrent writers.
@@ -116,6 +141,26 @@ export function createStatePageQuery(docClient: Pick<DynamoDBDocumentClient, 'se
         return {
             items:             output.Items ?? [],
             lastEvaluatedKey:  output.LastEvaluatedKey,
+            consumedReadUnits: output.ConsumedCapacity?.CapacityUnits,
+        };
+    };
+}
+
+/**
+ * One raw memory row by primary key (`--paths-file`). Strongly consistent (1 RCU per 4 KB rather
+ * than 0.5) so a row an interrupted earlier run deleted is never read back stale; over a few dozen
+ * listed rows the difference is seconds. The consumed capacity paces the next read.
+ */
+export function createLegacyItemGet(docClient: Pick<DynamoDBDocumentClient, 'send'>, tableName: string): GetLegacyItem {
+    return async (key) => {
+        const output = await docClient.send(new GetCommand({
+            TableName:              tableName,
+            Key:                    key,
+            ConsistentRead:         true,
+            ReturnConsumedCapacity: 'TOTAL',
+        }));
+        return {
+            item:              output.Item,
             consumedReadUnits: output.ConsumedCapacity?.CapacityUnits,
         };
     };
@@ -162,6 +207,7 @@ export interface MigrateNativeServices {
     Index:          Pick<typeof VectorIndex, 'open'>
     readVectorRows: (dbPath: string, prefix: string) => VectorRowKey[]
     exists:         (filePath: string) => boolean
+    readTextFile:   (filePath: string) => Promise<string>
     now:            () => number
     sleep:          (ms: number) => Promise<void>
     write:          (message: string) => void
@@ -174,6 +220,7 @@ export const productionMigrateServices: MigrateNativeServices = {
     Index:          VectorIndex,
     readVectorRows: readVectorRowsReadOnly,
     exists:         existsSync,
+    readTextFile:   filePath => Bun.file(filePath).text(),
     now:            Date.now,
     sleep:          sleepForRateLimit,
     write:          (message) => { process.stdout.write(message); },
@@ -186,6 +233,7 @@ export function createNativeMigrationDeps(services: MigrateNativeServices = prod
             return {
                 tableName,
                 queryStatePage: createStatePageQuery(docClient, tableName),
+                getLegacyItem:  createLegacyItemGet(docClient, tableName),
                 // No indexer: this process has no embedder; --vector-index removes the vector rows instead.
                 legacy:         new MemoryToolBackend(docClient, tableName),
                 target:         new OperationalStateBackend(docClient, tableName),
@@ -195,6 +243,7 @@ export function createNativeMigrationDeps(services: MigrateNativeServices = prod
         openVectorIndex: dbPath => services.Index.open(dbPath),
         readVectorRows:  (dbPath, prefix) => services.readVectorRows(dbPath, prefix),
         exists:          filePath => services.exists(filePath),
+        readTextFile:    filePath => services.readTextFile(filePath),
         now:             () => services.now(),
         sleep:           ms => services.sleep(ms),
         write:           (message) => { services.write(message); },

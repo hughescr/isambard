@@ -4,14 +4,18 @@ import {
     cleanVectorRows,
     createCapacityPacer,
     estimateItemBytes,
+    extractLegacyPaths,
     formatSummary,
     LEGACY_PREFIX,
     legacyCheckpointTarget,
     legacyDeleteWriteUnits,
+    legacyRowKey,
     listLegacyRows,
     migrateLegacyRows,
     parseArgs,
     preflightVectorIndex,
+    readListedRows,
+    readPathsFile,
     readUnits,
     READ_UNITS_PER_SEC,
     runMigration,
@@ -19,7 +23,9 @@ import {
     toLegacyRow,
     WRITE_UNITS_PER_SEC,
     writeUnits,
+    type LegacyItemRead,
     type LegacyRow,
+    type LegacyRowKey,
     type MigrateOptions,
     type MigrationDeps,
     type MigrationStorage,
@@ -106,6 +112,11 @@ function fakeWorld(items: Record<string, unknown>[], pageSize = 2) {
         log.push(`query ${start}`);
         return { items: all.slice(start, end), lastEvaluatedKey: end < all.length ? { offset: end } : undefined, consumedReadUnits: 1 };
     });
+    const getLegacyItem = mock(async (key: LegacyRowKey): Promise<LegacyItemRead> => {
+        const memoryPath = MemoryToolKeyGenerator.parsePath(key.PK, key.SK);
+        log.push(`get ${memoryPath}`);
+        return { item: legacyRows.get(memoryPath), consumedReadUnits: 1 };
+    });
     const legacy = {
         'delete': mock(async (memoryPath: string) => {
             log.push(`delete ${memoryPath}`);
@@ -131,11 +142,12 @@ function fakeWorld(items: Record<string, unknown>[], pageSize = 2) {
     const storage: MigrationStorage = {
         tableName: 'isambard-memory',
         queryStatePage,
+        getLegacyItem,
         legacy,
         target:    target as unknown as MigrationStorage['target'],
         destroy,
     };
-    return { legacyRows, stored, log, queryStatePage, legacy, target, destroy, storage };
+    return { legacyRows, stored, log, queryStatePage, getLegacyItem, legacy, target, destroy, storage };
 }
 
 function fakeDeps(storage: MigrationStorage, overrides: Partial<MigrationDeps> = {}) {
@@ -151,6 +163,7 @@ function fakeDeps(storage: MigrationStorage, overrides: Partial<MigrationDeps> =
         openVectorIndex: mock(async (_dbPath: string) => vectorIndex),
         readVectorRows:  mock((_dbPath: string, _prefix: string) => [] as { pk: string, sk: string }[]),
         exists:          mock((_filePath: string) => false),
+        readTextFile:    mock(async (_filePath: string) => ''),
         now:             clock.now,
         sleep:           clock.sleep,
         write:           (message: string) => {
@@ -160,8 +173,8 @@ function fakeDeps(storage: MigrationStorage, overrides: Partial<MigrationDeps> =
     return { deps: { ...raw, ...overrides } as unknown as MigrationDeps, raw, clock, output, vectorIndex };
 }
 
-const DRY: MigrateOptions = { execute: false, vectorIndexPath: undefined, showHelp: false };
-const EXECUTE: MigrateOptions = { execute: true, vectorIndexPath: undefined, showHelp: false };
+const DRY: MigrateOptions = { execute: false, vectorIndexPath: undefined, pathsFile: undefined, showHelp: false };
+const EXECUTE: MigrateOptions = { execute: true, vectorIndexPath: undefined, pathsFile: undefined, showHelp: false };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -237,11 +250,27 @@ describe('parseArgs', () => {
     const argv = (...args: string[]) => ['bun', 'tools/migrate-checkpoints.ts', ...args];
 
     test('defaults to a dry run without vector cleanup', () => {
-        expect(parseArgs(argv())).toStrictEqual({ execute: false, vectorIndexPath: undefined, showHelp: false });
+        expect(parseArgs(argv())).toStrictEqual({ execute: false, vectorIndexPath: undefined, pathsFile: undefined, showHelp: false });
     });
 
     test('--execute turns the dry run off', () => {
-        expect(parseArgs(argv('--execute'))).toStrictEqual({ execute: true, vectorIndexPath: undefined, showHelp: false });
+        expect(parseArgs(argv('--execute'))).toStrictEqual({ execute: true, vectorIndexPath: undefined, pathsFile: undefined, showHelp: false });
+    });
+
+    test('--paths-file takes the next argument as a resolved path', () => {
+        expect(parseArgs(argv('--execute', '--paths-file', 'dry-run.txt'))).toStrictEqual({ execute: true, vectorIndexPath: undefined, pathsFile: path.resolve('dry-run.txt'), showHelp: false });
+    });
+
+    test('--paths-file=<file> is accepted too', () => {
+        expect(parseArgs(argv('--paths-file=a=b.txt')).pathsFile).toBe(path.resolve('a=b.txt'));
+    });
+
+    test('--paths-file without a value throws', () => {
+        expect(() => parseArgs(argv('--paths-file'))).toThrow('--paths-file requires a file');
+    });
+
+    test('--paths-file with an empty value throws', () => {
+        expect(() => parseArgs(argv('--paths-file='))).toThrow('--paths-file requires a file');
     });
 
     test('--vector-index takes the next argument as a resolved path', () => {
@@ -249,7 +278,7 @@ describe('parseArgs', () => {
     });
 
     test('--vector-index=<path> is accepted too', () => {
-        expect(parseArgs(argv('--vector-index=a=b.sqlite', '--execute'))).toStrictEqual({ execute: true, vectorIndexPath: path.resolve('a=b.sqlite'), showHelp: false });
+        expect(parseArgs(argv('--vector-index=a=b.sqlite', '--execute'))).toStrictEqual({ execute: true, vectorIndexPath: path.resolve('a=b.sqlite'), pathsFile: undefined, showHelp: false });
     });
 
     test('--vector-index without a value throws', () => {
@@ -328,6 +357,16 @@ describe('createCapacityPacer', () => {
         await pacer.wait();
         await pacer.wait();
         expect(clock.sleeps).toEqual([3000]);
+    });
+
+    test('record returns the whole debt owed from now, not banking idle time', () => {
+        const clock = fakeClock();
+        const pacer = createCapacityPacer(2, clock.now, clock.sleep);
+        expect(pacer.record(3)).toBe(1500);
+        clock.advance(500);
+        expect(pacer.record(1)).toBe(1500);
+        clock.advance(10_000);
+        expect(pacer.record(0.5)).toBe(250);
     });
 
     test('wait sleeps even for precisely one millisecond of debt', async () => {
@@ -449,21 +488,225 @@ describe('listLegacyRows', () => {
             return pages[cursors.length - 1];
         });
 
-        const rows = await listLegacyRows(query, createCapacityPacer(1, clock.now, clock.sleep));
+        const output: string[] = [];
+
+        const rows = await listLegacyRows(query, createCapacityPacer(1, clock.now, clock.sleep), (message) => {
+            output.push(message);
+        });
 
         expect(rows.map(row => row.path)).toEqual([CHANNEL_PATH, DM_PATH, FEED_PATH]);
         expect(cursors).toEqual([undefined, { page: 2 }, { page: 3 }]);
         expect(startedAt).toEqual([1_000_000, 1_002_100, 1_002_700]);
         // Each page's cost is paid from the moment it returned: 2 RCU then 0.5 RCU at 1 RCU/s; none after the last.
         expect(clock.sleeps).toEqual([2000, 500]);
+        expect(output).toEqual([
+            'scanned page 1: 2 state items, 1 legacy rows so far, 2 RCU, next page in 2.0s\n',
+            'scanned page 2: 1 state items, 2 legacy rows so far, 0.5 RCU, next page in 0.5s\n',
+            'scanned page 3: 1 state items, 3 legacy rows so far, 3 RCU, last page\n',
+        ]);
+    });
+
+    test('a page reports the debt still owed from earlier reads, not only its own cost', async () => {
+        const clock = fakeClock();
+        const pacer = createCapacityPacer(1, clock.now, clock.sleep);
+        pacer.record(4);
+        const pages: StatePage[] = [
+            { items: [], lastEvaluatedKey: { page: 2 }, consumedReadUnits: 1 },
+            { items: [], lastEvaluatedKey: undefined, consumedReadUnits: 1 },
+        ];
+        const query = mock(async (_cursor: Record<string, unknown> | undefined) => pages[query.mock.calls.length - 1]);
+        const output: string[] = [];
+        await listLegacyRows(query, { wait: async () => undefined, record: pacer.record }, (message) => {
+            output.push(message);
+        });
+        expect(output).toEqual([
+            'scanned page 1: 0 state items, 0 legacy rows so far, 1 RCU, next page in 5.0s\n',
+            'scanned page 2: 0 state items, 0 legacy rows so far, 1 RCU, last page\n',
+        ]);
     });
 
     test('refuses to continue when a page reports no consumed capacity', async () => {
         const clock = fakeClock();
         const query = mock(async () => ({ items: [rawItem(DM_PATH, DM_JSON)], lastEvaluatedKey: { page: 2 }, consumedReadUnits: undefined }));
-        await expect(listLegacyRows(query, createCapacityPacer(1, clock.now, clock.sleep)))
+        const write = mock((_message: string) => undefined);
+        await expect(listLegacyRows(query, createCapacityPacer(1, clock.now, clock.sleep), write))
             .rejects.toThrow('GSI1 LAYER#state query reported no ConsumedCapacity; refusing to continue without RCU pacing');
         expect(query).toHaveBeenCalledTimes(1);
+        expect(write).not.toHaveBeenCalled();
+    });
+});
+
+// ── Listed paths (--paths-file) ───────────────────────────────────────────────
+
+describe('extractLegacyPaths', () => {
+    test('takes every path a dry run reports, once each, in first-seen order', () => {
+        const dryRun = [
+            'Checkpoint migration (dry run)',
+            '  Table: isambard-memory',
+            '  Vector index: /db/vec.sqlite',
+            '  Pacing: reads 1 RCU/s, writes 1 WCU/s',
+            '(node:123) NOTE: The AWS SDK for JavaScript (v3) will stop supporting Node.js 18',
+            'scanned page 1: 10 state items, 3 legacy rows so far, 2.5 RCU, next page in 2.5s',
+            '5 legacy row(s) under /state/services/',
+            `[dry-run] copy: ${DM_PATH} -> bsky:dm/checkpoint`,
+            `[dry-run] delete legacy row: ${DM_PATH}`,
+            `[dry-run] skip, newer row exists: ${CHANNEL_PATH} -> discord:channels/111/checkpoint`,
+            `[dry-run] delete legacy row: ${CHANNEL_PATH}`,
+            `[dry-run] unparseable (json): ${FEED_PATH}`,
+            `[dry-run] delete legacy row: ${FEED_PATH}`,
+            `[dry-run] unparseable (schema): ${NOTIFICATIONS_PATH}`,
+            `[dry-run] unrecognised (left untouched): ${NOTES_PATH}`,
+            '[dry-run] delete legacy row: /state/services/discord/channels/444/checkpoint',
+            '[dry-run] already gone: /state/services/discord/channels/555/checkpoint',
+            `{"level":"info","msg":"legacy fallback read ${DM_PATH}"}`,
+            '[dry-run] delete vector row: /state/services/discord/channels/666/checkpoint',
+            '[dry-run] keep vector row: pk=DIR#/state/services/discord sk=FILE#notes.md',
+            '',
+            'Checkpoint migration dry run (nothing written):',
+            '  Legacy rows under /state/services/: 5',
+            'Dry run: nothing written. Re-run with --execute.',
+        ].join('\n');
+        expect(extractLegacyPaths(dryRun)).toEqual([
+            DM_PATH,
+            CHANNEL_PATH,
+            FEED_PATH,
+            NOTIFICATIONS_PATH,
+            NOTES_PATH,
+            '/state/services/discord/channels/444/checkpoint',
+            '/state/services/discord/channels/555/checkpoint',
+        ]);
+    });
+
+    test('takes the lines of an execute run, which carry no dry-run marker', () => {
+        expect(extractLegacyPaths(`copy: ${DM_PATH} -> bsky:dm/checkpoint\nunparseable (json): ${FEED_PATH}\nalready gone: ${CHANNEL_PATH}`)).toEqual([DM_PATH, FEED_PATH, CHANNEL_PATH]);
+    });
+
+    test('takes one plain path per line, ignoring surrounding whitespace and CRLF line ends', () => {
+        expect(extractLegacyPaths(`  ${DM_PATH}\r\n\t${CHANNEL_PATH} \r\n`)).toEqual([DM_PATH, CHANNEL_PATH]);
+    });
+
+    test('keeps a path that contains spaces whole', () => {
+        expect(extractLegacyPaths('[dry-run] unrecognised (left untouched): /state/services/discord/my notes.md')).toEqual(['/state/services/discord/my notes.md']);
+    });
+
+    test.each([
+        ['a path outside /state/services/', '[dry-run] copy: /state/notes.md -> bsky:x'],
+        ['the bare /state/services/ directory', '/state/services/'],
+        ['a path with text before it', 'x/state/services/bsky/dm/checkpoint'],
+        ['an unknown verb', `[dry-run] delete vector row: ${DM_PATH}`],
+        ['a verb without its separator', `[dry-run] copy ${DM_PATH}`],
+        ['a marker without its space', `[dry-run]copy: ${DM_PATH}`],
+        ['an unparseable line without a reason', `[dry-run] unparseable (): ${DM_PATH}`],
+        ['an unparseable line with an unclosed reason', `[dry-run] unparseable (json: ${DM_PATH}`],
+        ['an unparseable reason with a closing parenthesis inside it', `[dry-run] unparseable (a) b): ${DM_PATH}`],
+    ])('ignores %s', (_label, line) => {
+        expect(extractLegacyPaths(line)).toEqual([]);
+    });
+});
+
+describe('readPathsFile', () => {
+    test('reads the file and returns its distinct legacy paths', async () => {
+        const read = mock(async (_filePath: string) => `[dry-run] copy: ${DM_PATH} -> bsky:dm/checkpoint\n[dry-run] delete legacy row: ${DM_PATH}\n`);
+        expect(await readPathsFile('/runs/dry-run.txt', read)).toEqual([DM_PATH]);
+        expect(read.mock.calls).toEqual([['/runs/dry-run.txt']]);
+    });
+
+    test('rejects a file with no legacy paths', async () => {
+        await expect(readPathsFile('/runs/empty.txt', async () => 'Checkpoint migration (dry run)\n0 legacy row(s) under /state/services/\n'))
+            .rejects.toThrow('No /state/services/ paths found in /runs/empty.txt: pass the saved output of a dry run, or one legacy path per line');
+    });
+});
+
+describe('legacyRowKey', () => {
+    test('is the primary key MemoryToolBackend uses for the path, without the GSI1 keys', () => {
+        expect(legacyRowKey(DM_PATH)).toStrictEqual({ PK: 'DIR#/state/services/bsky/dm', SK: 'FILE#checkpoint' });
+    });
+});
+
+describe('readListedRows', () => {
+    function collect() {
+        const output: string[] = [];
+        return {
+            output,
+            write: (message: string) => {
+                output.push(message);
+            },
+        };
+    }
+
+    test('reads each listed row by its key and builds the row the scan would have', async () => {
+        const dm = rawItem(DM_PATH, DM_JSON, { tags: new Set(['a']) });
+        const channel = rawItem(CHANNEL_PATH, CHANNEL_JSON);
+        const world = fakeWorld([dm, channel]);
+        const clock = fakeClock();
+        const { output, write } = collect();
+
+        const listed = await readListedRows([DM_PATH, CHANNEL_PATH], world.getLegacyItem, createCapacityPacer(1, clock.now, clock.sleep), write, true);
+
+        expect(listed).toStrictEqual({
+            rows: [
+                { path: DM_PATH, content: DM_JSON, bytes: estimateItemBytes(dm), tagCount: 1 },
+                { path: CHANNEL_PATH, content: CHANNEL_JSON, bytes: estimateItemBytes(channel), tagCount: 0 },
+            ],
+            alreadyGone: 0,
+        });
+        expect(world.getLegacyItem.mock.calls).toEqual([[legacyRowKey(DM_PATH)], [legacyRowKey(CHANNEL_PATH)]]);
+        expect(output).toEqual([]);
+    });
+
+    test('reports and counts a listed row that no longer exists, marked in a dry run', async () => {
+        const world = fakeWorld([rawItem(CHANNEL_PATH, CHANNEL_JSON)]);
+        const clock = fakeClock();
+        const { output, write } = collect();
+
+        const listed = await readListedRows([DM_PATH, CHANNEL_PATH, FEED_PATH], world.getLegacyItem, createCapacityPacer(1, clock.now, clock.sleep), write, false);
+
+        expect(listed.rows.map(row => row.path)).toEqual([CHANNEL_PATH]);
+        expect(listed.alreadyGone).toBe(2);
+        expect(output).toEqual([`[dry-run] already gone: ${DM_PATH}\n`, `[dry-run] already gone: ${FEED_PATH}\n`]);
+    });
+
+    test('an execute run reports a row that is already gone without the dry-run marker', async () => {
+        const world = fakeWorld([]);
+        const clock = fakeClock();
+        const { output, write } = collect();
+        await readListedRows([DM_PATH], world.getLegacyItem, createCapacityPacer(1, clock.now, clock.sleep), write, true);
+        expect(output).toEqual([`already gone: ${DM_PATH}\n`]);
+    });
+
+    test('paces each read by the capacity the previous read consumed', async () => {
+        const clock = fakeClock();
+        const readAt: number[] = [];
+        const consumed = [2.5, 0.5, 1];
+        const getItem = mock(async (_key: LegacyRowKey): Promise<LegacyItemRead> => {
+            readAt.push(clock.now());
+            clock.advance(100);
+            return { item: undefined, consumedReadUnits: consumed[readAt.length - 1] };
+        });
+
+        await readListedRows([DM_PATH, CHANNEL_PATH, FEED_PATH], getItem, createCapacityPacer(1, clock.now, clock.sleep), collect().write, false);
+
+        // 2.5 RCU from the first read's return at +100 ms, then 0.5 RCU from the second's at +2700 ms.
+        expect(readAt).toEqual([1_000_000, 1_002_600, 1_003_200]);
+        expect(clock.sleeps).toEqual([2500, 500]);
+    });
+
+    test('rejects an invalid listed path before reading anything', async () => {
+        const world = fakeWorld([]);
+        const clock = fakeClock();
+        await expect(readListedRows([DM_PATH, '/state/services/a//b'], world.getLegacyItem, createCapacityPacer(1, clock.now, clock.sleep), collect().write, false))
+            .rejects.toThrow('Path cannot contain double slashes');
+        expect(world.getLegacyItem).not.toHaveBeenCalled();
+    });
+
+    test('refuses to continue when a read reports no consumed capacity', async () => {
+        const getItem = mock(async (_key: LegacyRowKey): Promise<LegacyItemRead> => ({ item: undefined, consumedReadUnits: undefined }));
+        const clock = fakeClock();
+        const { output, write } = collect();
+        await expect(readListedRows([DM_PATH, CHANNEL_PATH], getItem, createCapacityPacer(1, clock.now, clock.sleep), write, false))
+            .rejects.toThrow(`GetItem ${DM_PATH} reported no ConsumedCapacity; refusing to continue without RCU pacing`);
+        expect(getItem).toHaveBeenCalledTimes(1);
+        expect(output).toEqual([]);
     });
 });
 
@@ -776,8 +1019,26 @@ describe('preflightVectorIndex', () => {
 const SUMMARY_COUNTS = { legacyRows: 5, copied: 1, skippedNewerExists: 2, unparseable: 1, unrecognised: 1, deleted: 4 };
 
 describe('formatSummary', () => {
+    test('formats a listed-paths summary with the rows already gone', () => {
+        expect(formatSummary({ ...SUMMARY_COUNTS, alreadyGone: 2, vector: undefined }, true, '2.5')).toBe(`
+Checkpoint migration complete:
+  Legacy rows under /state/services/: 5
+  Listed but already gone: 2
+  Copied: 1
+  Skipped, newer row exists: 2
+  Unparseable: 1
+  Unrecognised (left untouched): 1
+  Legacy rows deleted: 4
+  Elapsed: 2.5s
+`);
+    });
+
+    test('shows a listed-paths count of zero rows already gone', () => {
+        expect(formatSummary({ ...SUMMARY_COUNTS, alreadyGone: 0, vector: undefined }, true, '2.5')).toContain('\n  Listed but already gone: 0\n');
+    });
+
     test('formats an execute summary without vector counts', () => {
-        expect(formatSummary({ ...SUMMARY_COUNTS, vector: undefined }, true, '2.5')).toBe(`
+        expect(formatSummary({ ...SUMMARY_COUNTS, alreadyGone: undefined, vector: undefined }, true, '2.5')).toBe(`
 Checkpoint migration complete:
   Legacy rows under /state/services/: 5
   Copied: 1
@@ -790,7 +1051,7 @@ Checkpoint migration complete:
     });
 
     test('formats a dry-run summary with vector counts and the dry-run footer', () => {
-        expect(formatSummary({ ...SUMMARY_COUNTS, vector: { vectorRowsDeleted: 3, vectorRowsKept: 7 } }, false, '0.0')).toBe(`
+        expect(formatSummary({ ...SUMMARY_COUNTS, alreadyGone: undefined, vector: { vectorRowsDeleted: 3, vectorRowsKept: 7 } }, false, '0.0')).toBe(`
 Checkpoint migration dry run (nothing written):
   Legacy rows under /state/services/: 5
   Copied: 1
@@ -813,11 +1074,14 @@ describe('runMigration', () => {
 
         const summary = await runMigration(DRY, deps);
 
-        expect(summary).toStrictEqual({ legacyRows: 2, copied: 1, skippedNewerExists: 0, unparseable: 0, unrecognised: 1, deleted: 1, vector: undefined });
+        expect(summary).toStrictEqual({ legacyRows: 2, alreadyGone: undefined, copied: 1, skippedNewerExists: 0, unparseable: 0, unrecognised: 1, deleted: 1, vector: undefined });
         expect(output.join('')).toBe(`Checkpoint migration (dry run)
   Table: isambard-memory
   Vector index: not cleaned (no --vector-index)
+  Legacy rows: GSI1 LAYER#state scan
   Pacing: reads ${READ_UNITS_PER_SEC} RCU/s, writes ${WRITE_UNITS_PER_SEC} WCU/s
+scanned page 1: 2 state items, 1 legacy rows so far, 1 RCU, next page in 1.0s
+scanned page 2: 1 state items, 2 legacy rows so far, 1 RCU, last page
 2 legacy row(s) under /state/services/
 [dry-run] copy: ${DM_PATH} -> bsky:dm/checkpoint
 [dry-run] delete legacy row: ${DM_PATH}
@@ -828,7 +1092,66 @@ ${formatSummary(summary, false, '2.0')}`);
         expect(raw.exists).not.toHaveBeenCalled();
         expect(raw.openVectorIndex).not.toHaveBeenCalled();
         expect(raw.readVectorRows).not.toHaveBeenCalled();
+        expect(raw.readTextFile).not.toHaveBeenCalled();
+        expect(world.getLegacyItem).not.toHaveBeenCalled();
         expect(world.destroy).toHaveBeenCalledTimes(1);
+    });
+
+    test('with a paths file, a dry run reads only the listed rows and skips the GSI1 scan', async () => {
+        const world = fakeWorld([rawItem(DM_PATH, DM_JSON), rawItem(NOTES_PATH, 'y'), rawItem(FEED_PATH, FEED_JSON)]);
+        const listing = `[dry-run] copy: ${DM_PATH} -> bsky:dm/checkpoint\n[dry-run] delete legacy row: ${DM_PATH}\n${CHANNEL_PATH}\n[dry-run] unrecognised (left untouched): ${NOTES_PATH}\n`;
+        const readTextFile = mock(async (_filePath: string) => listing);
+        const { deps, output } = fakeDeps(world.storage, { readTextFile });
+
+        const summary = await runMigration({ ...DRY, pathsFile: '/runs/dry-run.txt' }, deps);
+
+        expect(summary).toStrictEqual({ legacyRows: 2, alreadyGone: 1, copied: 1, skippedNewerExists: 0, unparseable: 0, unrecognised: 1, deleted: 1, vector: undefined });
+        expect(readTextFile.mock.calls).toEqual([['/runs/dry-run.txt']]);
+        expect(world.queryStatePage).not.toHaveBeenCalled();
+        expect(world.log).toEqual([`get ${DM_PATH}`, `get ${CHANNEL_PATH}`, `get ${NOTES_PATH}`, 'read bsky:dm/checkpoint']);
+        expect(output.join('')).toBe(`Checkpoint migration (dry run)
+  Table: isambard-memory
+  Vector index: not cleaned (no --vector-index)
+  Legacy rows: 3 path(s) listed in /runs/dry-run.txt (no GSI1 scan)
+  Pacing: reads ${READ_UNITS_PER_SEC} RCU/s, writes ${WRITE_UNITS_PER_SEC} WCU/s
+[dry-run] already gone: ${CHANNEL_PATH}
+2 legacy row(s) under /state/services/
+[dry-run] copy: ${DM_PATH} -> bsky:dm/checkpoint
+[dry-run] delete legacy row: ${DM_PATH}
+[dry-run] unrecognised (left untouched): ${NOTES_PATH}
+${formatSummary(summary, false, '3.0')}`);
+    });
+
+    test('with a paths file, an execute run migrates the listed rows and a re-run finds them all gone', async () => {
+        const world = fakeWorld([rawItem(DM_PATH, DM_JSON), rawItem(CHANNEL_PATH, CHANNEL_JSON)]);
+        const readTextFile = mock(async (_filePath: string) => `${DM_PATH}\n${CHANNEL_PATH}\n`);
+        const opts = { ...EXECUTE, pathsFile: '/runs/dry-run.txt' };
+
+        const first = await runMigration(opts, fakeDeps(world.storage, { readTextFile }).deps);
+        expect(first).toStrictEqual({ legacyRows: 2, alreadyGone: 0, copied: 2, skippedNewerExists: 0, unparseable: 0, unrecognised: 0, deleted: 2, vector: undefined });
+        expect(world.legacyRows.size).toBe(0);
+        expect(world.log.slice(0, 3)).toEqual([`get ${DM_PATH}`, `get ${CHANNEL_PATH}`, 'put bsky:dm/checkpoint']);
+
+        const rerun = fakeDeps(world.storage, { readTextFile });
+        const second = await runMigration(opts, rerun.deps);
+        expect(second).toStrictEqual({ legacyRows: 0, alreadyGone: 2, copied: 0, skippedNewerExists: 0, unparseable: 0, unrecognised: 0, deleted: 0, vector: undefined });
+        expect(rerun.output).toContain(`already gone: ${DM_PATH}\n`);
+        expect(world.queryStatePage).not.toHaveBeenCalled();
+    });
+
+    test('rejects a paths file with no legacy paths before touching DynamoDB', async () => {
+        const world = fakeWorld([rawItem(DM_PATH, DM_JSON)]);
+        const { deps, raw, output } = fakeDeps(world.storage, { readTextFile: mock(async (_filePath: string) => 'nothing here\n') });
+        await expect(runMigration({ ...EXECUTE, pathsFile: '/runs/empty.txt' }, deps)).rejects.toThrow('No /state/services/ paths found in /runs/empty.txt');
+        expect(raw.openStorage).not.toHaveBeenCalled();
+        expect(output).toEqual([]);
+    });
+
+    test('checks the vector index before reading the paths file', async () => {
+        const world = fakeWorld([]);
+        const { deps, raw } = fakeDeps(world.storage, { exists: mock((_filePath: string) => false) });
+        await expect(runMigration({ ...DRY, pathsFile: '/runs/dry-run.txt', vectorIndexPath: '/db/vec.sqlite' }, deps)).rejects.toThrow('Vector index not found');
+        expect(raw.readTextFile).not.toHaveBeenCalled();
     });
 
     test('an execute run migrates every row and a second run finds nothing left', async () => {
@@ -846,7 +1169,7 @@ ${formatSummary(summary, false, '2.0')}`);
         const first = await runMigration(EXECUTE, firstDeps.deps);
         expect(firstDeps.raw.openVectorIndex).not.toHaveBeenCalled();
         expect(firstDeps.raw.exists).not.toHaveBeenCalled();
-        expect(first).toStrictEqual({ legacyRows: 5, copied: 3, skippedNewerExists: 1, unparseable: 1, unrecognised: 0, deleted: 5, vector: undefined });
+        expect(first).toStrictEqual({ legacyRows: 5, alreadyGone: undefined, copied: 3, skippedNewerExists: 1, unparseable: 1, unrecognised: 0, deleted: 5, vector: undefined });
         expect(world.legacyRows.size).toBe(0);
         expect([...world.stored.keys()].toSorted((a, b) => a.localeCompare(b))).toEqual([
             'bsky:dm/checkpoint',
@@ -856,7 +1179,7 @@ ${formatSummary(summary, false, '2.0')}`);
         ]);
 
         const second = await runMigration(EXECUTE, fakeDeps(world.storage).deps);
-        expect(second).toStrictEqual({ legacyRows: 0, copied: 0, skippedNewerExists: 0, unparseable: 0, unrecognised: 0, deleted: 0, vector: undefined });
+        expect(second).toStrictEqual({ legacyRows: 0, alreadyGone: undefined, copied: 0, skippedNewerExists: 0, unparseable: 0, unrecognised: 0, deleted: 0, vector: undefined });
     });
 
     test('an execute header names the mode and the vector index', async () => {
@@ -866,6 +1189,7 @@ ${formatSummary(summary, false, '2.0')}`);
         expect(output[0]).toBe(`Checkpoint migration (EXECUTE)
   Table: isambard-memory
   Vector index: /db/vec.sqlite
+  Legacy rows: GSI1 LAYER#state scan
   Pacing: reads ${READ_UNITS_PER_SEC} RCU/s, writes ${WRITE_UNITS_PER_SEC} WCU/s
 `);
         expect(output.at(-1)).not.toContain('Dry run');

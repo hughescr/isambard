@@ -11,7 +11,9 @@
  *   1. Enumerate every raw GSI1 `LAYER#state` item, paced by the consumed RCU each page reports,
  *      and keep the rows whose keys put them under /state/services/. Raw items, not decoded
  *      memories: a row whose memory envelope is malformed (empty content, a bad date) is still
- *      seen, counted and cleaned up rather than silently skipped.
+ *      seen, counted and cleaned up rather than silently skipped. With `--paths-file` the scan is
+ *      skipped: the paths an earlier dry run printed are read directly by primary key instead
+ *      (one paced, strongly consistent GetItem each), and a path whose row is gone is reported.
  *   2. Per row: an unrecognised path is reported and left alone. A recognised checkpoint whose
  *      content is not valid JSON for its schema is reported as unparseable and deleted. Otherwise
  *      the verbatim legacy JSON is written with a conditional put that only creates an absent key
@@ -96,12 +98,14 @@ export function legacyCheckpointTarget(memoryPath: string): LegacyCheckpointTarg
 export interface MigrateOptions {
     execute:         boolean
     vectorIndexPath: string | undefined
+    /** A saved dry-run listing (or one path per line) to read directly instead of scanning GSI1. */
+    pathsFile:       string | undefined
     showHelp:        boolean
 }
 
 /** Parses `process.argv`. Dry run is the default; only `--execute` writes. */
 export function parseArgs(argv: string[]): MigrateOptions {
-    const options: MigrateOptions = { execute: false, vectorIndexPath: undefined, showHelp: false };
+    const options: MigrateOptions = { execute: false, vectorIndexPath: undefined, pathsFile: undefined, showHelp: false };
     // Expand `--flag=value` into ['--flag', 'value'] so the loop below handles both forms.
     const args = argv.slice(2).flatMap((arg) => {
         const eq = arg.startsWith('--') ? arg.indexOf('=') : -1;
@@ -127,6 +131,14 @@ export function parseArgs(argv: string[]): MigrateOptions {
                 options.vectorIndexPath = path.resolve(value);
                 break;
             }
+            case '--paths-file': {
+                const value = iterator.next().value;
+                if(!value) {
+                    throw new Error('--paths-file requires a file');
+                }
+                options.pathsFile = path.resolve(value);
+                break;
+            }
             default: {
                 throw new Error(`Unknown option: ${arg}`);
             }
@@ -139,12 +151,13 @@ export function parseArgs(argv: string[]): MigrateOptions {
 
 /**
  * Capacity debt for one budget. `record` adds units' worth of time to the debt, counted from now
- * or from the end of the debt already owed, whichever is later (idle time is not banked); `wait`
- * sleeps out the debt; `charge` does both, for an operation whose cost is known before it runs.
+ * or from the end of the debt already owed, whichever is later (idle time is not banked), and
+ * returns the whole debt now owed in ms; `wait` sleeps out the debt; `charge` does both, for an
+ * operation whose cost is known before it runs.
  */
 export interface CapacityPacer {
     wait:   () => Promise<void>
-    record: (units: number) => void
+    record: (units: number) => number
     charge: (units: number) => Promise<void>
 }
 
@@ -156,8 +169,10 @@ export function createCapacityPacer(unitsPerSec: number, now: () => number, slee
             await sleep(waitMs);
         }
     };
-    const record = (units: number): void => {
-        nextAllowedAtMs = Math.max(now(), nextAllowedAtMs) + (units * 1000 / unitsPerSec);
+    const record = (units: number): number => {
+        const atMs = now();
+        nextAllowedAtMs = Math.max(atMs, nextAllowedAtMs) + (units * 1000 / unitsPerSec);
+        return nextAllowedAtMs - atMs;
     };
     return {
         wait,
@@ -232,6 +247,11 @@ export function toLegacyRow(raw: Record<string, unknown>): LegacyRow | undefined
     if(!memoryPath.startsWith(LEGACY_PREFIX)) {
         return undefined;
     }
+    return legacyRowFromItem(memoryPath, raw);
+}
+
+/** The legacy row at `memoryPath` for its raw DynamoDB item. */
+function legacyRowFromItem(memoryPath: string, raw: Record<string, unknown>): LegacyRow {
     return {
         path:     memoryPath,
         content:  raw.content,
@@ -241,18 +261,21 @@ export function toLegacyRow(raw: Record<string, unknown>): LegacyRow | undefined
 }
 
 /**
- * Every legacy row, in GSI1 order. All of it is read before anything is written, so a delete
- * never disturbs the pagination and the whole list is printed before the first write.
+ * Every legacy row, in GSI1 order, with one progress line per page. All of it is read before
+ * anything is written, so a delete never disturbs the pagination and the whole list is printed
+ * before the first write.
  */
-export async function listLegacyRows(query: QueryStatePage, pacer: Pick<CapacityPacer, 'wait' | 'record'>): Promise<LegacyRow[]> {
+export async function listLegacyRows(query: QueryStatePage, pacer: Pick<CapacityPacer, 'wait' | 'record'>, write: (message: string) => void): Promise<LegacyRow[]> {
     const rows: LegacyRow[] = [];
     let cursor: Record<string, unknown> | undefined;
+    let pageNumber = 0;
     do {
         // eslint-disable-next-line no-await-in-loop -- sequential, paced pagination
         await pacer.wait();
         // eslint-disable-next-line no-await-in-loop -- sequential, paced pagination
         const page = await query(cursor);
-        pacer.record(requireConsumedReadUnits(page.consumedReadUnits, 'GSI1 LAYER#state query'));
+        const pageUnits = requireConsumedReadUnits(page.consumedReadUnits, 'GSI1 LAYER#state query');
+        const debtMs = pacer.record(pageUnits);
         for(const raw of page.items) {
             const row = toLegacyRow(raw);
             if(row) {
@@ -260,8 +283,100 @@ export async function listLegacyRows(query: QueryStatePage, pacer: Pick<Capacity
             }
         }
         cursor = page.lastEvaluatedKey;
+        pageNumber++;
+        const next = cursor === undefined ? 'last page' : `next page in ${(debtMs / 1000).toFixed(1)}s`;
+        write(`scanned page ${pageNumber}: ${page.items.length} state items, ${rows.length} legacy rows so far, ${pageUnits} RCU, ${next}\n`);
     } while(cursor);
     return rows;
+}
+
+// ── Listed paths (--paths-file) ───────────────────────────────────────────────
+
+/**
+ * A line naming one legacy path: a migration report line (with or without the dry-run marker),
+ * or a bare path. The `-> owner:name` target of a copy or skip line is not part of the path.
+ */
+const LISTED_PATH_LINE = /^(?:(?:\[dry-run\] )?(?:copy|skip, newer row exists|delete legacy row|unrecognised \(left untouched\)|unparseable \([^)]+\)|already gone): )?(\/state\/services\/.+?)(?: -> .+)?$/;
+
+/**
+ * Every distinct legacy path in a saved migration report, or in plain text with one path per
+ * line, in first-seen order. Every other line (headers, progress, vector rows, SDK warnings, log
+ * lines, the summary) is ignored.
+ */
+export function extractLegacyPaths(text: string): string[] {
+    const paths = new Set<string>();
+    for(const line of text.split('\n')) {
+        const match = LISTED_PATH_LINE.exec(line.trim());
+        if(match) {
+            paths.add(match[1]);
+        }
+    }
+    return [...paths];
+}
+
+/**
+ * The legacy paths listed in `filePath`.
+ * @throws {Error} When the file names no legacy path: an empty or wrong file must not look like
+ *   a finished migration.
+ */
+export async function readPathsFile(filePath: string, readTextFile: (filePath: string) => Promise<string>): Promise<string[]> {
+    const paths = extractLegacyPaths(await readTextFile(filePath));
+    if(paths.length === 0) {
+        throw new Error(`No ${LEGACY_PREFIX} paths found in ${filePath}: pass the saved output of a dry run, or one legacy path per line`);
+    }
+    return paths;
+}
+
+/** A memory row's DynamoDB primary key. */
+export interface LegacyRowKey {
+    PK: string
+    SK: string
+}
+
+/** The primary key MemoryToolBackend stores `memoryPath` under (not the GSI1 keys). */
+export function legacyRowKey(memoryPath: string): LegacyRowKey {
+    const { PK, SK } = MemoryToolKeyGenerator.createKeys(createMemoryPath(memoryPath));
+    return { PK, SK };
+}
+
+/** One raw GetItem result. */
+export interface LegacyItemRead {
+    item:              Record<string, unknown> | undefined
+    consumedReadUnits: number | undefined
+}
+
+/** Reads one raw memory row by its primary key. */
+export type GetLegacyItem = (key: LegacyRowKey) => Promise<LegacyItemRead>;
+
+export interface ListedRows {
+    rows:        LegacyRow[]
+    alreadyGone: number
+}
+
+/**
+ * The legacy rows at the listed paths, read one at a time in list order and paced by the RCU
+ * each read reports. A path whose row no longer exists is reported and counted, not an error.
+ * Every path is validated before the first read, and every row is read before anything is
+ * written, as in the scan.
+ */
+export async function readListedRows(paths: readonly string[], getItem: GetLegacyItem, pacer: Pick<CapacityPacer, 'wait' | 'record'>, write: (message: string) => void, execute: boolean): Promise<ListedRows> {
+    const marker = execute ? '' : '[dry-run] ';
+    const keyed = paths.map(memoryPath => ({ memoryPath, key: legacyRowKey(memoryPath) }));
+    const listed: ListedRows = { rows: [], alreadyGone: 0 };
+    for(const { memoryPath, key } of keyed) {
+        // eslint-disable-next-line no-await-in-loop -- sequential, paced reads
+        await pacer.wait();
+        // eslint-disable-next-line no-await-in-loop -- sequential, paced reads
+        const read = await getItem(key);
+        pacer.record(requireConsumedReadUnits(read.consumedReadUnits, `GetItem ${memoryPath}`));
+        if(read.item === undefined) {
+            listed.alreadyGone++;
+            write(`${marker}already gone: ${memoryPath}\n`);
+        } else {
+            listed.rows.push(legacyRowFromItem(memoryPath, read.item));
+        }
+    }
+    return listed;
 }
 
 // ── Migration ─────────────────────────────────────────────────────────────────
@@ -413,6 +528,8 @@ export function preflightVectorIndex(dbPath: string, exists: (filePath: string) 
 export interface MigrationStorage {
     tableName:      string
     queryStatePage: QueryStatePage
+    /** Reads one legacy row by primary key (`--paths-file`). */
+    getLegacyItem:  GetLegacyItem
     /** A MemoryToolBackend with NO indexer, so deletes enqueue nothing. */
     legacy:         Pick<MemoryToolBackend, 'delete'>
     /** The raw operational-state backend: the fallback-wrapped store would report legacy hits. */
@@ -429,24 +546,28 @@ export interface MigrationDeps {
     /** Lists the rows under `prefix` without writing anything to the file (dry run). */
     readVectorRows:  (dbPath: string, prefix: string) => VectorRowKey[]
     exists:          (filePath: string) => boolean
+    readTextFile:    (filePath: string) => Promise<string>
     now:             () => number
     sleep:           (ms: number) => Promise<void>
     write:           (message: string) => void
 }
 
 export interface MigrationSummary extends MigrationCounts {
-    legacyRows: number
-    vector:     VectorCounts | undefined
+    legacyRows:  number
+    /** Listed paths whose row no longer exists; undefined when GSI1 was scanned instead. */
+    alreadyGone: number | undefined
+    vector:      VectorCounts | undefined
 }
 
 export function formatSummary(summary: MigrationSummary, execute: boolean, elapsedSeconds: string): string {
+    const alreadyGone = summary.alreadyGone === undefined ? '' : `  Listed but already gone: ${summary.alreadyGone}\n`;
     const vector = summary.vector === undefined
         ? ''
         : `  Vector rows deleted: ${summary.vector.vectorRowsDeleted}\n  Vector rows kept: ${summary.vector.vectorRowsKept}\n`;
     return `
 Checkpoint migration ${execute ? 'complete' : 'dry run (nothing written)'}:
   Legacy rows under ${LEGACY_PREFIX}: ${summary.legacyRows}
-  Copied: ${summary.copied}
+${alreadyGone}  Copied: ${summary.copied}
   Skipped, newer row exists: ${summary.skippedNewerExists}
   Unparseable: ${summary.unparseable}
   Unrecognised (left untouched): ${summary.unrecognised}
@@ -463,22 +584,26 @@ function vectorPass(dbPath: string, index: MigrationVectorIndex | undefined, dep
 }
 
 /**
- * Runs the whole migration. The vector-index checks run first, before any DynamoDB call, and an
- * execute run opens the index before its first write so an unopenable index stops it early.
+ * Runs the whole migration. The vector-index checks and the paths file come first, before any
+ * DynamoDB call, and an execute run opens the index before its first write so an unopenable
+ * index stops it early.
  */
 export async function runMigration(opts: MigrateOptions, deps: MigrationDeps): Promise<MigrationSummary> {
-    const { vectorIndexPath } = opts;
+    const { vectorIndexPath, pathsFile } = opts;
     if(vectorIndexPath !== undefined) {
         preflightVectorIndex(vectorIndexPath, deps.exists);
     }
+    const listedPaths = pathsFile === undefined ? undefined : await readPathsFile(pathsFile, deps.readTextFile);
 
     const startedAtMs = deps.now();
     const storage = deps.openStorage();
     let vectorIndex: MigrationVectorIndex | undefined;
     try {
+        const source = listedPaths === undefined ? 'GSI1 LAYER#state scan' : `${listedPaths.length} path(s) listed in ${pathsFile} (no GSI1 scan)`;
         deps.write(`Checkpoint migration (${opts.execute ? 'EXECUTE' : 'dry run'})
   Table: ${storage.tableName}
   Vector index: ${vectorIndexPath ?? 'not cleaned (no --vector-index)'}
+  Legacy rows: ${source}
   Pacing: reads ${READ_UNITS_PER_SEC} RCU/s, writes ${WRITE_UNITS_PER_SEC} WCU/s
 `);
         if(vectorIndexPath !== undefined && opts.execute) {
@@ -487,7 +612,9 @@ export async function runMigration(opts: MigrateOptions, deps: MigrationDeps): P
 
         const readPacer = createCapacityPacer(READ_UNITS_PER_SEC, deps.now, deps.sleep);
         const writePacer = createCapacityPacer(WRITE_UNITS_PER_SEC, deps.now, deps.sleep);
-        const rows = await listLegacyRows(storage.queryStatePage, readPacer);
+        const { rows, alreadyGone } = listedPaths === undefined
+            ? { rows: await listLegacyRows(storage.queryStatePage, readPacer, deps.write), alreadyGone: undefined }
+            : await readListedRows(listedPaths, storage.getLegacyItem, readPacer, deps.write, opts.execute);
         deps.write(`${rows.length} legacy row(s) under ${LEGACY_PREFIX}\n`);
 
         const counts = await migrateLegacyRows(rows, {
@@ -500,7 +627,7 @@ export async function runMigration(opts: MigrateOptions, deps: MigrationDeps): P
         });
         const vector = vectorIndexPath === undefined ? undefined : vectorPass(vectorIndexPath, vectorIndex, deps);
 
-        const summary: MigrationSummary = { legacyRows: rows.length, ...counts, vector };
+        const summary: MigrationSummary = { legacyRows: rows.length, alreadyGone, ...counts, vector };
         deps.write(formatSummary(summary, opts.execute, ((deps.now() - startedAtMs) / 1000).toFixed(1)));
         return summary;
     } finally {

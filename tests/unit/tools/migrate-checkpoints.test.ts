@@ -3,8 +3,9 @@ import { afterEach, describe, expect, jest, mock, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { QueryCommand, type QueryCommandOutput } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, QueryCommand, type GetCommandOutput, type QueryCommandOutput } from '@aws-sdk/lib-dynamodb';
 import {
+    createLegacyItemGet,
     createNativeMigrationDeps,
     createStatePageQuery,
     HELP_TEXT,
@@ -57,10 +58,16 @@ function fakeDocClient(output: Partial<QueryCommandOutput>) {
 
 // ── Help and CLI entry ────────────────────────────────────────────────────────
 
+function fakeGetClient(output: Partial<GetCommandOutput>) {
+    return { send: mock(async (_command: GetCommand) => output) };
+}
+
 describe('HELP_TEXT', () => {
     test('documents the flags, that Izzy may keep running, and rollback', () => {
-        expect(HELP_TEXT).toContain('bun run migrate:checkpoints [--execute] [--vector-index <db>]');
+        expect(HELP_TEXT).toContain('bun run migrate:checkpoints [--execute] [--paths-file <file>] [--vector-index <db>]');
         expect(HELP_TEXT).toContain('--execute');
+        expect(HELP_TEXT).toContain('--paths-file <file>');
+        expect(HELP_TEXT).toContain('--execute --paths-file migrate-checkpoints-dry-run.txt');
         expect(HELP_TEXT).toContain('--vector-index <db>');
         expect(HELP_TEXT).toContain('Dry run is the default');
         expect(HELP_TEXT).toContain('Izzy can keep running');
@@ -74,6 +81,7 @@ function fakeMigrationDeps() {
     const storage: MigrationStorage = {
         tableName:      'isambard-memory',
         queryStatePage: mock(async () => ({ items: [], lastEvaluatedKey: undefined, consumedReadUnits: 1 })),
+        getLegacyItem:  mock(async () => ({ item: undefined, consumedReadUnits: 1 })),
         legacy:         { 'delete': mock(async () => undefined) },
         target:         { read: mock(async () => ({ status: 'absent' as const })), putIfAbsent: mock(async () => 'created' as const) },
         destroy:        mock(() => undefined),
@@ -85,6 +93,7 @@ function fakeMigrationDeps() {
         }),
         readVectorRows: mock(() => []),
         exists:         mock(() => false),
+        readTextFile:   mock(async () => '/state/services/bsky/dm/checkpoint\n'),
         now:            () => 0,
         sleep:          mock(async () => undefined),
         write:          (message: string) => {
@@ -114,6 +123,13 @@ describe('main', () => {
         const { deps, output } = fakeMigrationDeps();
         await main(['bun', 'tools/migrate-checkpoints.ts', '--execute'], deps);
         expect(output[0]).toStartWith('Checkpoint migration (EXECUTE)\n');
+    });
+
+    test('passes --paths-file through as a resolved path', async () => {
+        const { deps, raw, output } = fakeMigrationDeps();
+        await main(['bun', 'tools/migrate-checkpoints.ts', '--paths-file', 'dry-run.txt'], deps);
+        expect(raw.readTextFile).toHaveBeenCalledWith(path.resolve('dry-run.txt'));
+        expect(output).toContain('[dry-run] already gone: /state/services/bsky/dm/checkpoint\n');
     });
 
     test('rejects an unknown option before opening anything', async () => {
@@ -177,6 +193,39 @@ describe('createStatePageQuery', () => {
         expect(await createStatePageQuery(docClient as never, 'isambard-memory')(undefined)).toStrictEqual({
             items:             [],
             lastEvaluatedKey:  undefined,
+            consumedReadUnits: undefined,
+        });
+    });
+});
+
+// ── Listed-row reads ──────────────────────────────────────────────────────────
+
+describe('createLegacyItemGet', () => {
+    test('reads one row by its primary key, strongly consistent, with its consumed capacity', async () => {
+        const docClient = fakeGetClient({ ConsumedCapacity: { CapacityUnits: 1 } });
+        await createLegacyItemGet(docClient as never, 'isambard-memory')({ PK: 'DIR#/state/services/bsky/dm', SK: 'FILE#checkpoint' });
+        const command = docClient.send.mock.calls[0][0];
+        expect(command).toBeInstanceOf(GetCommand);
+        expect(command.input).toStrictEqual({
+            TableName:              'isambard-memory',
+            Key:                    { PK: 'DIR#/state/services/bsky/dm', SK: 'FILE#checkpoint' },
+            ConsistentRead:         true,
+            ReturnConsumedCapacity: 'TOTAL',
+        });
+    });
+
+    test('maps the item and the consumed read units', async () => {
+        const docClient = fakeGetClient({ Item: { PK: 'DIR#/state/services/bsky/dm', SK: 'FILE#checkpoint', content: '{}' }, ConsumedCapacity: { CapacityUnits: 0.5 } });
+        expect(await createLegacyItemGet(docClient as never, 'isambard-memory')({ PK: 'DIR#/state/services/bsky/dm', SK: 'FILE#checkpoint' })).toStrictEqual({
+            item:              { PK: 'DIR#/state/services/bsky/dm', SK: 'FILE#checkpoint', content: '{}' },
+            consumedReadUnits: 0.5,
+        });
+    });
+
+    test('a missing row without capacity maps to no item and undefined capacity', async () => {
+        const docClient = fakeGetClient({});
+        expect(await createLegacyItemGet(docClient as never, 'isambard-memory')({ PK: 'p', SK: 's' })).toStrictEqual({
+            item:              undefined,
             consumedReadUnits: undefined,
         });
     });
@@ -326,10 +375,11 @@ describe('createNativeMigrationDeps', () => {
         const open = mock(async (dbPath: string) => ({ dbPath }));
         const readVectorRows = mock((_dbPath: string, _prefix: string) => [{ pk: 'p', sk: 's' }]);
         const exists = mock((_filePath: string) => true);
+        const readTextFile = mock(async (_filePath: string) => 'listing');
         const now = mock(() => 123);
         const sleep = mock(async (_ms: number) => undefined);
         const write = mock((_message: string) => undefined);
-        const services = { resource, loadConfig, createClient, Index: { open }, readVectorRows, exists, now, sleep, write } as unknown as MigrateNativeServices;
+        const services = { resource, loadConfig, createClient, Index: { open }, readVectorRows, exists, readTextFile, now, sleep, write } as unknown as MigrateNativeServices;
 
         const deps = createNativeMigrationDeps(services);
         const storage = deps.openStorage();
@@ -341,6 +391,10 @@ describe('createNativeMigrationDeps', () => {
         expect(storage.target).toBeInstanceOf(OperationalStateBackend);
         expect(await storage.queryStatePage(undefined)).toStrictEqual({ items: [], lastEvaluatedKey: undefined, consumedReadUnits: 1 });
         expect(docClient.send.mock.calls[0][0].input.TableName).toBe('isambard-memory');
+        expect(await storage.getLegacyItem({ PK: 'p', SK: 's' })).toStrictEqual({ item: undefined, consumedReadUnits: 1 });
+        const get = docClient.send.mock.calls[1][0] as unknown as GetCommand;
+        expect(get).toBeInstanceOf(GetCommand);
+        expect(get.input.TableName).toBe('isambard-memory');
         storage.destroy();
         expect(client.destroy).toHaveBeenCalledTimes(1);
 
@@ -349,6 +403,8 @@ describe('createNativeMigrationDeps', () => {
         expect(readVectorRows).toHaveBeenCalledWith('live.sqlite', '/state/services/');
         expect(deps.exists('live.sqlite')).toBe(true);
         expect(exists).toHaveBeenCalledWith('live.sqlite');
+        expect(await deps.readTextFile('dry-run.txt')).toBe('listing');
+        expect(readTextFile).toHaveBeenCalledWith('dry-run.txt');
         expect(deps.now()).toBe(123);
         await deps.sleep(250);
         deps.write('hello');
@@ -363,6 +419,7 @@ describe('createNativeMigrationDeps', () => {
             'Index',
             'loadConfig',
             'now',
+            'readTextFile',
             'readVectorRows',
             'resource',
             'sleep',
@@ -375,5 +432,12 @@ describe('createNativeMigrationDeps', () => {
         expect(typeof deps.now()).toBe('number');
         deps.write('production output');
         expect(output).toHaveBeenCalledWith('production output');
+    });
+
+    test('production readTextFile reads a file as UTF-8 text', async () => {
+        const file = path.join(makeTempDir(), 'dry-run.txt');
+        // eslint-disable-next-line n/no-sync -- real filesystem required; node:fs/promises is globally mocked in tests
+        fs.writeFileSync(file, 'copy: /state/services/bsky/dm/é\n');
+        expect(await productionMigrateServices.readTextFile(file)).toBe('copy: /state/services/bsky/dm/é\n');
     });
 });
