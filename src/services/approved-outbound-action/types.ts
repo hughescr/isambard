@@ -89,6 +89,20 @@ export type ApprovalCardRef = z.infer<typeof approvalCardRefSchema>;
  * atomic); persisting first instead would silently lose a notification.
  * A restart or an unavailable Discord/conductor therefore retries the report, never the send.
  *
+ * Escalation (#125): a row still `unverified` 24 hours after it became so is escalated to the
+ * admin. The clock is its `updatedAt`, which the transition into `unverified` writes and which no
+ * marker update changes while the row stays undecided; the same `updatedAt` is the revision the
+ * admin's buttons carry and the admin's resolution is conditioned on. Checks keep running.
+ * - `escalated` belongs to one unknown episode: the outcome reporter sets it, reopening the
+ *   episode's report (or joining the interim report still pending), so the card gains "Mark sent"
+ *   and "Resend" controls. Every transition drops it, so a later unknown episode (after a Resend
+ *   or a check's requeue) is escalated afresh.
+ * - The one admin ping belongs to the row's whole life, and is recorded apart from the row (see
+ *   {@link adminPingSchema}): whole-row transition puts built from an earlier read can then never
+ *   erase it, and recording it never contends with the row's own revision.
+ * - `resolvedBy: 'admin'` is set only on the `executed` row an admin marked sent, which the
+ *   destination never confirmed; it is terminal, so nothing ever carries it further.
+ *
  * No `ttl` field: the persisted DynamoDB `TTL` attribute is written directly by the backend via
  * `DynamoTableAccess.expiresAt`, never through this domain schema — see issue #88. Stored rows
  * written before #40 may carry the retired review-only fields (`approvalChannelId`,
@@ -105,12 +119,27 @@ export const approvedOutboundActionSchema = z.object({
     outcomeReportPending: z.boolean().optional(),
     outcomeNotified:      z.boolean().optional(),
     claimId:              z.uuid().optional(),
+    escalated:            z.boolean().optional(),
+    resolvedBy:           z.literal('admin').optional(),
     firstClaimedAt:       z.iso.datetime().optional(),
     ambiguousSends:       z.number().int().nonnegative().optional(),
     createdAt:            z.iso.datetime(),
     updatedAt:            z.iso.datetime(),
 });
 export type ApprovedOutboundAction = z.infer<typeof approvedOutboundActionSchema>;
+
+/**
+ * The record of the one admin ping about an approved action whose outcome stayed unknown for 24
+ * hours (#125), stored as its own item beside the action row and expiring with it. Its presence
+ * means the ping went out; later unknown episodes of the row only regain the controls. `message`
+ * is the ping itself when it carried the "Mark sent" / "Resend" controls because the row had no
+ * editable approval card: that message then stands in for the card, so later outcomes and
+ * episodes of the row are drawn on it.
+ */
+export const adminPingSchema = z.object({
+    message: approvalCardRefSchema.optional(),
+});
+export type AdminPing = z.infer<typeof adminPingSchema>;
 
 /** A row held by one executor's claim: `sending`, with the `claimId` that claim wrote. */
 export type ClaimedApprovedOutboundAction = ApprovedOutboundAction & { state: 'sending', claimId: string };

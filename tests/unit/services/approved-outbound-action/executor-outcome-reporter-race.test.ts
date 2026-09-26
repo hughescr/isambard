@@ -11,6 +11,11 @@ import {
     type UpdateCommandInput
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import type { ButtonInteraction, Channel } from 'discord.js';
+import type { ChannelId } from '@/config';
+import { ApprovalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
+import { ApprovedActionEscalationHandler } from '@/integrations/discord/approvals/escalation-interaction-handler';
+import { createApprovedActionOutcomeDelivery } from '@/integrations/discord/approvals/outcome-delivery';
 import { ApprovedOutboundActionBackend } from '@/services/approved-outbound-action/backend';
 import { createApprovedOutboundActionExecutor, type ApprovedOutboundActionExecutorLogger } from '@/services/approved-outbound-action/executor';
 import { createApprovedActionOutcomeReporter } from '@/services/approved-outbound-action/outcome-reporter';
@@ -26,7 +31,8 @@ import { createPrefixedKey } from '@/storage';
  * this fake receives would change and it would honour the weaker (or missing) condition, so the
  * marker-survival assertions below would fail — the guard is exercised, not assumed.
  *
- * Only equality (`name = value`) and `IN (...)` clauses joined by `AND` are supported: every
+ * Only equality (`name = value`), `name <= value`, `IN (...)` and `attribute_not_exists(name)`
+ * clauses joined by `AND`, with one top-level `OR` of parenthesised groups, are supported: every
  * condition/filter/key expression the backend actually builds (see backend.ts) is one of those.
  */
 
@@ -51,15 +57,54 @@ function resolveName(token: string, names: Record<string, string> | undefined): 
     return names?.[token] ?? token;
 }
 
-/** Evaluates an `AND`-joined DynamoDB condition/filter/key expression against one item. */
+/** Splits `expression` on `separator` wherever it is outside parentheses. */
+function splitTopLevel(expression: string, separator: string): string[] {
+    const parts: string[] = [];
+    let depth = 0;
+    let start = 0;
+    for(let index = 0; index < expression.length; index++) {
+        if(expression[index] === '(') {
+            depth++;
+        } else if(expression[index] === ')') {
+            depth--;
+        } else if(depth === 0 && expression.startsWith(separator, index)) {
+            parts.push(expression.slice(start, index));
+            start = index + separator.length;
+        }
+    }
+    parts.push(expression.slice(start));
+    return parts;
+}
+
+/**
+ * Evaluates a DynamoDB condition/filter/key expression against one item: top-level `OR` of
+ * (optionally parenthesised) `AND`-joined clauses.
+ */
 function evaluateExpression(
     expression: string,
     names: Record<string, string> | undefined,
     values: Record<string, unknown> | undefined,
     item: Record<string, unknown> | undefined
 ): boolean {
-    return expression.split(' AND ').every((rawClause) => {
+    const alternatives = splitTopLevel(expression.trim(), ' OR ');
+    if(alternatives.length > 1) {
+        return alternatives.some(alternative => evaluateExpression(alternative, names, values, item));
+    }
+    const single = expression.trim();
+    if(single.startsWith('(') && single.endsWith(')')) {
+        return evaluateExpression(single.slice(1, -1), names, values, item);
+    }
+    return single.split(' AND ').every((rawClause) => {
         const clause = rawClause.trim();
+        const absent = /^attribute_not_exists\((\S+)\)$/.exec(clause);
+        if(absent) {
+            return item?.[resolveName(absent[1], names)] === undefined;
+        }
+        const atMost = /^(\S+) <= (\S+)$/.exec(clause);
+        if(atMost) {
+            const [, nameToken, valueToken] = atMost;
+            return String(item?.[resolveName(nameToken, names)]) <= String(values?.[valueToken]);
+        }
         const inClause = /^(\S+) IN \(([^)]+)\)$/.exec(clause);
         if(inClause) {
             const [, nameToken, valuesList] = inClause;
@@ -404,5 +449,277 @@ describe('approved outbound action executor and outcome reporter, driven against
         expect(await backend.settleClaim(claimed!, { state: 'executed' })).toBeUndefined();
 
         expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'approved', claimId: claimed!.claimId });
+    });
+});
+
+describe('an outcome unknown for 24 h, escalated to the admin, driven against the real backend (#125)', () => {
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const ADMIN = '1234567890';
+    let fake: ReturnType<typeof createConditionEvaluatingDynamoFake>;
+    let backend: ApprovedOutboundActionBackend;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date(FROZEN_AT));
+        fake = createConditionEvaluatingDynamoFake();
+        backend = new ApprovedOutboundActionBackend(fake.docClient, TABLE_NAME);
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+        fake.restore();
+    });
+
+    async function createUnknown(overrides: Partial<ApprovedOutboundAction> = {}): Promise<void> {
+        await backend.create({
+            id:             ACTION_ID,
+            state:          'unverified',
+            type:           'email_send',
+            params:         { uid: 42 },
+            lastError:      'fetch failed',
+            firstClaimedAt: FROZEN_AT,
+            approvalCard:   { channelId: '111', messageId: '222' },
+            createdAt:      FROZEN_AT,
+            updatedAt:      FROZEN_AT,
+            ...overrides,
+        });
+    }
+
+    /** The admin channel's ping message, as Discord answers a send. */
+    const PING = { channelId: '333', messageId: '444' };
+
+    function makeDiscord(cardEdits = new ApprovalCardEditGate()) {
+        const edit = mock(async (messageId: string, options: { components: unknown[] }): Promise<unknown> => ({ url: `https://discord.com/channels/g/c/${messageId}`, options }));
+        const send = mock(async (_options: unknown): Promise<unknown> => ({ channelId: PING.channelId, id: PING.messageId }));
+        const channel = { isTextBased: () => true, isSendable: () => true, messages: { edit }, send } as unknown as Channel;
+        const notify = mock((): boolean => true);
+        const deliver = createApprovedActionOutcomeDelivery({
+            fetchChannel:   async () => channel,
+            isDiscordReady: () => true,
+            notify,
+            backend,
+            cardEdits,
+            adminChannelId: 'admin-review' as ChannelId,
+            adminUserId:    ADMIN,
+        });
+        return { edit, send, notify, deliver };
+    }
+
+    function makeHandler(cardEdits = new ApprovalCardEditGate()) {
+        const wakeExecutor = mock((): void => undefined);
+        const handler = new ApprovedActionEscalationHandler({ backend, adminUserId: ADMIN, wakeReporter: () => undefined, wakeExecutor, cardEdits });
+        return { handler, wakeExecutor };
+    }
+
+    function click(prefix: string, revision: string, messageId = '222') {
+        const reply = mock(async (_options: unknown): Promise<unknown> => ({}));
+        const update = mock(async (_options: unknown): Promise<unknown> => ({}));
+        const interaction = { customId: `${prefix}:${ACTION_ID}:${revision}`, user: { id: ADMIN }, message: { id: messageId }, reply, update } as unknown as ButtonInteraction;
+        return { interaction, reply, update };
+    }
+
+    /** Resend through the executor's own claim and settle, ending unknown again: a new unknown episode. */
+    async function resendEndingUnknown(): Promise<string> {
+        const reset = await backend.get(ACTION_ID);
+        const claimed = await backend.claim(reset!);
+        await backend.settleClaim(claimed!, { state: 'unverified', lastError: 'fetch failed' });
+        return (await backend.get(ACTION_ID))!.updatedAt;
+    }
+
+    function controlsShown(edit: ReturnType<typeof mock<(messageId: string, options: { components: unknown[] }) => Promise<unknown>>>): boolean[] {
+        return edit.mock.calls.map(([, options]) => options.components.length > 0);
+    }
+
+    test('escalates at exactly 24 h, pings once across a restart, and a later unknown episode regains only the controls', async () => {
+        await createUnknown();
+        const discord = makeDiscord();
+        const reporterAt = (at: number) => createApprovedActionOutcomeReporter({ backend, deliver: discord.deliver, logger: makeLogger(), now: () => at });
+
+        expect(await reporterAt(Date.parse(FROZEN_AT) + DAY_MS - 1).reportOnce()).toEqual({ delivered: 0, pending: 0 });
+        expect(discord.edit).not.toHaveBeenCalled();
+
+        expect(await reporterAt(Date.parse(FROZEN_AT) + DAY_MS).reportOnce()).toEqual({ delivered: 1, pending: 0 });
+        expect(discord.send).toHaveBeenCalledTimes(1);
+        expect(discord.notify).not.toHaveBeenCalled();
+        expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'unverified', updatedAt: FROZEN_AT, escalated: true });
+        expect(await backend.getAdminPing(ACTION_ID)).toStrictEqual({});
+
+        // A restarted reporter finds nothing to do: the episode is escalated and its report cleared.
+        expect(await reporterAt(Date.parse(FROZEN_AT) + (2 * DAY_MS)).reportOnce()).toEqual({ delivered: 0, pending: 0 });
+        expect(discord.send).toHaveBeenCalledTimes(1);
+
+        // The admin authorises a resend; the resend's own send ends unknown again.
+        jest.setSystemTime(new Date(Date.parse(FROZEN_AT) + (2 * DAY_MS)));
+        const { handler, wakeExecutor } = makeHandler();
+        await handler.handleButton(click('approved-action-resend', FROZEN_AT).interaction);
+        expect(wakeExecutor).toHaveBeenCalledTimes(1);
+        const reset = await backend.get(ACTION_ID);
+        expect(reset).toMatchObject({ state: 'approved' });
+        expect(reset).not.toHaveProperty('escalated');
+        const secondEpisode = await resendEndingUnknown();
+
+        // Its interim report goes out as usual, then 24 h later the controls return without a second ping.
+        expect(await reporterAt(Date.parse(secondEpisode)).reportOnce()).toEqual({ delivered: 1, pending: 0 });
+        expect(await reporterAt(Date.parse(secondEpisode) + DAY_MS).reportOnce()).toEqual({ delivered: 1, pending: 0 });
+        expect(controlsShown(discord.edit)).toEqual([true, false, true]);
+        expect(discord.send).toHaveBeenCalledTimes(1);
+    });
+
+    test('a destination check that decides first wins; the admin click changes nothing', async () => {
+        await createUnknown({ escalated: true });
+        const listed = (await backend.get(ACTION_ID)) as UnverifiedApprovedOutboundAction;
+        expect(await backend.resolveUnverified(listed, 'executed')).toBeDefined();
+
+        const { handler, wakeExecutor } = makeHandler();
+        const fakeClick = click('approved-action-resend', FROZEN_AT);
+        await handler.handleButton(fakeClick.interaction);
+
+        expect(fakeClick.reply).toHaveBeenCalledTimes(1);
+        expect(wakeExecutor).not.toHaveBeenCalled();
+        expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'executed' });
+    });
+
+    test('a double Resend resets once, and only the executor\'s claim sends it, once', async () => {
+        await createUnknown({ escalated: true });
+        const { handler } = makeHandler();
+        const first = click('approved-action-resend', FROZEN_AT);
+        const second = click('approved-action-resend', FROZEN_AT);
+        await Promise.all([handler.handleButton(first.interaction), handler.handleButton(second.interaction)]);
+        expect(first.update.mock.calls.length + second.update.mock.calls.length).toBe(1);
+
+        const executors = makeExecutors();
+        const executor = createApprovedOutboundActionExecutor({
+            backend,
+            registry:  { isAvailable: () => true } as unknown as ServiceHealthRegistry,
+            executors,
+            verifiers: {
+                bsky_reply: { check: async () => ({ verdict: 'undetermined', reason: 'n/a' }), contentKey: () => undefined },
+                bsky_dm:    { check: async () => ({ verdict: 'undetermined', reason: 'n/a' }), contentKey: () => undefined },
+                email_send: { check: async () => ({ verdict: 'undetermined', reason: 'n/a' }), contentKey: () => undefined },
+            },
+            onOutcomeRecorded: () => undefined,
+            logger:            makeLogger(),
+        });
+        await executor.executeOnce();
+        await executor.executeOnce();
+
+        expect(executors.email_send).toHaveBeenCalledTimes(1);
+        expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'executed' });
+    });
+
+    test('a timed-out send that succeeds after its row was escalated and the admin pinged still resolves the row (#126)', async () => {
+        await createUnknown({ state: 'approved', lastError: undefined, firstClaimedAt: undefined });
+        const send = Promise.withResolvers<undefined>();
+        const executors = makeExecutors();
+        executors.email_send.mockImplementation(async () => send.promise);
+        const executor = createApprovedOutboundActionExecutor({
+            backend,
+            registry:  { isAvailable: () => true } as unknown as ServiceHealthRegistry,
+            executors,
+            verifiers: {
+                bsky_reply: { check: async () => ({ verdict: 'undetermined', reason: 'n/a' }), contentKey: () => undefined },
+                bsky_dm:    { check: async () => ({ verdict: 'undetermined', reason: 'n/a' }), contentKey: () => undefined },
+                email_send: { check: async () => ({ verdict: 'undetermined', reason: 'n/a' }), contentKey: () => undefined },
+            },
+            onOutcomeRecorded: () => undefined,
+            logger:            makeLogger(),
+            sendTimeoutMs:     1000,
+            claimLeaseMs:      1001,
+        });
+        const pass = executor.executeOnce();
+        await flush();
+        jest.advanceTimersByTime(1000);
+        await pass;
+        const episode = (await backend.get(ACTION_ID))!.updatedAt;
+
+        // The interim report, then the escalation a day later with its admin ping.
+        const discord = makeDiscord();
+        expect(await createApprovedActionOutcomeReporter({ backend, deliver: discord.deliver, logger: makeLogger(), now: () => Date.parse(episode) }).reportOnce()).toEqual({ delivered: 1, pending: 0 });
+        expect(await createApprovedActionOutcomeReporter({ backend, deliver: discord.deliver, logger: makeLogger(), now: () => Date.parse(episode) + DAY_MS }).reportOnce()).toEqual({ delivered: 1, pending: 0 });
+        expect(discord.send).toHaveBeenCalledTimes(1);
+
+        send.resolve(undefined);
+        await flush();
+
+        expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'executed', outcomeReportPending: true });
+        expect(await backend.getAdminPing(ACTION_ID)).toStrictEqual({});
+    });
+
+    test('a ping Discord accepted while a check moved the row on is still recorded, so a later episode never pings again', async () => {
+        await createUnknown();
+        const discord = makeDiscord();
+        discord.send.mockImplementation(async () => {
+            // The destination check decides "definitely absent" while Discord is taking the ping.
+            await backend.resolveUnverified((await backend.get(ACTION_ID)) as UnverifiedApprovedOutboundAction, 'approved');
+            return { channelId: PING.channelId, id: PING.messageId };
+        });
+        const reporterAt = (at: number) => createApprovedActionOutcomeReporter({ backend, deliver: discord.deliver, logger: makeLogger(), now: () => at });
+
+        await reporterAt(Date.parse(FROZEN_AT) + DAY_MS).reportOnce();
+        expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'approved' });
+        expect(await backend.getAdminPing(ACTION_ID)).toStrictEqual({});
+
+        const secondEpisode = await resendEndingUnknown();
+        await reporterAt(Date.parse(secondEpisode) + DAY_MS).reportOnce();
+        expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'unverified', escalated: true });
+        expect(discord.send).toHaveBeenCalledTimes(1);
+    });
+
+    test('a card-less row keeps working controls on its one ping across unknown episodes', async () => {
+        await createUnknown({ approvalCard: undefined });
+        const discord = makeDiscord();
+        const reporterAt = (at: number) => createApprovedActionOutcomeReporter({ backend, deliver: discord.deliver, logger: makeLogger(), now: () => at });
+
+        await reporterAt(Date.parse(FROZEN_AT) + DAY_MS).reportOnce();
+        expect(discord.send).toHaveBeenCalledTimes(1);
+        expect(discord.edit).not.toHaveBeenCalled();
+        expect(await backend.getAdminPing(ACTION_ID)).toStrictEqual({ message: PING });
+
+        // The admin resends from the ping; the resend ends unknown again.
+        jest.setSystemTime(new Date(Date.parse(FROZEN_AT) + (2 * DAY_MS)));
+        await makeHandler().handler.handleButton(click('approved-action-resend', FROZEN_AT, PING.messageId).interaction);
+        const secondEpisode = await resendEndingUnknown();
+
+        // Its interim report clears the ping's old controls; 24 h later the ping regains controls for the new episode.
+        await reporterAt(Date.parse(secondEpisode)).reportOnce();
+        await reporterAt(Date.parse(secondEpisode) + DAY_MS).reportOnce();
+        expect(discord.edit.mock.calls.map(([messageId]) => messageId)).toEqual([PING.messageId, PING.messageId]);
+        expect(controlsShown(discord.edit)).toEqual([false, true]);
+        const [controls] = (discord.edit.mock.calls[1]?.[1] as unknown as { components: { toJSON: () => { components: { custom_id: string }[] } }[] }).components.map(row => row.toJSON());
+        expect(controls.components.map(button => button.custom_id)).toEqual([`approved-action-mark-sent:${ACTION_ID}:${secondEpisode}`, `approved-action-resend:${ACTION_ID}:${secondEpisode}`]);
+        expect(discord.send).toHaveBeenCalledTimes(1);
+    });
+
+    test('an interim report Izzy never took does not hold back the escalation', async () => {
+        await createUnknown({ outcomeReportPending: true });
+        const discord = makeDiscord();
+        discord.notify.mockImplementation(() => false);
+
+        const pass = await createApprovedActionOutcomeReporter({ backend, deliver: discord.deliver, logger: makeLogger(), now: () => Date.parse(FROZEN_AT) + (2 * DAY_MS) }).reportOnce();
+
+        expect(pass).toEqual({ delivered: 0, pending: 1 });
+        expect(controlsShown(discord.edit)).toEqual([true]);
+        expect(discord.send).toHaveBeenCalledTimes(1);
+        expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'unverified', escalated: true, outcomeReportPending: true });
+        expect(await backend.get(ACTION_ID)).not.toHaveProperty('outcomeNotified');
+        expect(await backend.getAdminPing(ACTION_ID)).toStrictEqual({});
+    });
+
+    test('an escalation still waiting on the card when the admin resends never paints stale controls over the resend', async () => {
+        await createUnknown({ escalated: true, outcomeReportPending: true, outcomeNotified: true });
+        const cardEdits = new ApprovalCardEditGate();
+        const discord = makeDiscord(cardEdits);
+        const escalatedSnapshot = await backend.get(ACTION_ID);
+        const resend = click('approved-action-resend', FROZEN_AT);
+        // The admin's click holds the card first; the escalation's delivery queues behind it.
+        const clicked = makeHandler(cardEdits).handler.handleButton(resend.interaction);
+        const delivered = discord.deliver(escalatedSnapshot!);
+
+        await clicked;
+        expect(await delivered).toBe(false);
+        expect(resend.update).toHaveBeenCalledTimes(1);
+        expect(discord.edit).not.toHaveBeenCalled();
+        expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'approved' });
     });
 });

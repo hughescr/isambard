@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { type ApprovedOutboundActionState, type ApprovedOutboundActionWriter } from '@/services';
 import {
+    adminPingSchema,
     approvalCardRefSchema,
     approvedOutboundActionSchema,
     deliveryWindowStart,
@@ -149,6 +150,33 @@ describe('approvedOutboundActionSchema', () => {
 
     test('rejects a non-boolean notified marker', () => {
         expect(approvedOutboundActionSchema.safeParse({ ...ROW, outcomeNotified: 'yes' }).success).toBe(false);
+    });
+
+    test('accepts and keeps the escalation markers and an admin resolution (#125)', () => {
+        const row = { ...ROW, state: 'executed' as const, escalated: true, resolvedBy: 'admin' as const };
+        expect(approvedOutboundActionSchema.parse(row)).toEqual(row);
+    });
+
+    test('rejects a non-boolean escalated marker', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, escalated: 'yes' }).success).toBe(false);
+    });
+
+    test('keeps the admin ping record off the row: a stray adminNotified is stripped on read', () => {
+        expect(approvedOutboundActionSchema.parse({ ...ROW, adminNotified: true })).toEqual(ROW);
+    });
+
+    test('an admin ping record keeps the message carrying the controls and strips its storage keys', () => {
+        const message = { channelId: CARD_CHANNEL_ID, messageId: CARD_MESSAGE_ID };
+        expect(adminPingSchema.parse({ PK: 'APPROVAL#ADMIN_PING', SK: 'SAGA#x', TTL: 1, message })).toStrictEqual({ message });
+        expect(adminPingSchema.parse({ PK: 'APPROVAL#ADMIN_PING' })).toStrictEqual({});
+    });
+
+    test('an admin ping record rejects a message that is not a Discord message reference', () => {
+        expect(adminPingSchema.safeParse({ message: { channelId: 'admin-review', messageId: CARD_MESSAGE_ID } }).success).toBe(false);
+    });
+
+    test('rejects a resolvedBy other than admin', () => {
+        expect(approvedOutboundActionSchema.safeParse({ ...ROW, resolvedBy: 'check' }).success).toBe(false);
     });
 
     test('accepts and keeps a claimId uuid on a sending row', () => {

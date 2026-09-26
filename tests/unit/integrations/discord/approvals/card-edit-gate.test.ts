@@ -74,6 +74,62 @@ describe('ApprovalCardEditGate', () => {
         expect(gate.pendingEdit('card-msg')).toBeUndefined();
     });
 
+    test('acquire holds an unheld card at once', async () => {
+        const gate = new ApprovalCardEditGate();
+
+        const release = await gate.acquire('card-msg');
+        const pending = gate.pendingEdit('card-msg');
+        await flush();
+        expect(pending === undefined ? 'none' : Bun.peek.status(pending)).toBe('pending');
+
+        release();
+        expect(gate.pendingEdit('card-msg')).toBeUndefined();
+    });
+
+    test('acquire waits for every hold on the card before holding it', async () => {
+        const gate = new ApprovalCardEditGate();
+        const releaseFirst = gate.hold('card-msg');
+        const releaseSecond = gate.hold('card-msg');
+
+        const acquiring = gate.acquire('card-msg');
+        releaseFirst();
+        await flush();
+        expect(Bun.peek.status(acquiring)).toBe('pending');
+
+        releaseSecond();
+        const release = await acquiring;
+        expect(gate.pendingEdit('card-msg')).toBeDefined();
+        release();
+        expect(gate.pendingEdit('card-msg')).toBeUndefined();
+    });
+
+    test('two acquires of one card take turns: the second holds only once the first releases', async () => {
+        const gate = new ApprovalCardEditGate();
+        const releaseHold = gate.hold('card-msg');
+        const order: string[] = [];
+        const first = gate.acquire('card-msg').then((release) => {
+            order.push('first');
+            return release;
+        });
+        const second = gate.acquire('card-msg').then((release) => {
+            order.push('second');
+            return release;
+        });
+
+        releaseHold();
+        const releaseFirst = await first;
+        await flush();
+        await flush();
+        expect(order).toEqual(['first']);
+        expect(Bun.peek.status(second)).toBe('pending');
+
+        releaseFirst();
+        const releaseSecond = await second;
+        expect(order).toEqual(['first', 'second']);
+        releaseSecond();
+        expect(gate.pendingEdit('card-msg')).toBeUndefined();
+    });
+
     test('the shared gate is an ApprovalCardEditGate', () => {
         expect(approvalCardEditGate).toBeInstanceOf(ApprovalCardEditGate);
     });

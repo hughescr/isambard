@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import type { ApprovedOutboundActionBackend } from '@/services/approved-outbound-action/backend';
-import { createApprovedActionOutcomeReporter } from '@/services/approved-outbound-action/outcome-reporter';
+import { ESCALATE_AFTER_MS, createApprovedActionOutcomeReporter } from '@/services/approved-outbound-action/outcome-reporter';
 import type { ApprovedOutboundAction } from '@/services/approved-outbound-action/types';
 import type { ServiceLogger } from '@/services/types';
 
@@ -27,10 +27,11 @@ async function flush(): Promise<void> {
     }
 }
 
-type Backend = Pick<ApprovedOutboundActionBackend, 'listPendingOutcomeReports' | 'markOutcomeReported'>;
+type Backend = Pick<ApprovedOutboundActionBackend, 'listOutcomeReportWork' | 'escalate' | 'markOutcomeReported'>;
 
 describe('createApprovedActionOutcomeReporter', () => {
-    let listPendingOutcomeReports: ReturnType<typeof mock<() => Promise<ApprovedOutboundAction[]>>>;
+    let listOutcomeReportWork: ReturnType<typeof mock<(escalateBefore: string) => Promise<ApprovedOutboundAction[]>>>;
+    let escalate: ReturnType<typeof mock<(action: ApprovedOutboundAction) => Promise<ApprovedOutboundAction | undefined>>>;
     let markOutcomeReported: ReturnType<typeof mock<(action: ApprovedOutboundAction) => Promise<boolean>>>;
     let backend: Backend;
     let deliver: ReturnType<typeof mock<(action: ApprovedOutboundAction) => Promise<boolean>>>;
@@ -38,9 +39,10 @@ describe('createApprovedActionOutcomeReporter', () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
-        listPendingOutcomeReports = mock(async (): Promise<ApprovedOutboundAction[]> => []);
+        listOutcomeReportWork = mock(async (_escalateBefore: string): Promise<ApprovedOutboundAction[]> => []);
+        escalate = mock(async (action: ApprovedOutboundAction): Promise<ApprovedOutboundAction | undefined> => ({ ...action, outcomeReportPending: true, outcomeNotified: true, escalated: true }));
         markOutcomeReported = mock(async (): Promise<boolean> => true);
-        backend = { listPendingOutcomeReports, markOutcomeReported };
+        backend = { listOutcomeReportWork, escalate, markOutcomeReported };
         deliver = mock(async (): Promise<boolean> => true);
         logger = {
             debug: mock((): void => undefined),
@@ -58,7 +60,7 @@ describe('createApprovedActionOutcomeReporter', () => {
     test('delivers each pending outcome in listed order and clears its marker only after delivery', async () => {
         const first = pendingRow(FIRST);
         const second = pendingRow(SECOND, { state: 'failed', lastError: 'boom', failureKind: 'transient' });
-        listPendingOutcomeReports.mockImplementation(async () => [first, second]);
+        listOutcomeReportWork.mockImplementation(async () => [first, second]);
         const events: string[] = [];
         deliver.mockImplementation(async (action) => {
             events.push(`deliver:${action.id}`);
@@ -74,10 +76,118 @@ describe('createApprovedActionOutcomeReporter', () => {
         expect(result).toEqual({ delivered: 2, pending: 0 });
         expect(events).toEqual([`deliver:${FIRST}`, `mark:${FIRST}`, `deliver:${SECOND}`, `mark:${SECOND}`]);
         expect(markOutcomeReported.mock.calls).toEqual([[first], [second]]);
+        expect(escalate).not.toHaveBeenCalled();
+    });
+
+    test('escalates rows whose outcome has been unknown for 24 hours (#125)', () => {
+        expect(ESCALATE_AFTER_MS).toBe(86_400_000);
+    });
+
+    test('lists its work with the escalation cutoff 24 hours before the injected clock', async () => {
+        await createApprovedActionOutcomeReporter({ backend, deliver, logger, now: () => Date.parse('2026-09-25T12:00:00.000Z') }).reportOnce();
+
+        expect(listOutcomeReportWork.mock.calls).toEqual([['2026-09-24T12:00:00.000Z']]);
+    });
+
+    test('measures the escalation cutoff from the system clock by default', async () => {
+        jest.setSystemTime(new Date('2026-09-25T08:30:00.000Z'));
+
+        await createApprovedActionOutcomeReporter({ backend, deliver, logger }).reportOnce();
+
+        expect(listOutcomeReportWork.mock.calls).toEqual([['2026-09-24T08:30:00.000Z']]);
+    });
+
+    /** 24 h after every row's `updatedAt` below: the escalation cutoff falls exactly on it. */
+    const DAY_LATER = () => Date.parse('2026-09-25T12:00:00.000Z');
+
+    test('escalates a listed unknown outcome with no report pending, then delivers and clears the escalated report', async () => {
+        const unknown = pendingRow(FIRST, { state: 'unverified', lastError: 'fetch failed', outcomeReportPending: undefined });
+        const escalated = { ...unknown, outcomeReportPending: true, outcomeNotified: true, escalated: true };
+        listOutcomeReportWork.mockImplementation(async () => [unknown]);
+
+        const result = await createApprovedActionOutcomeReporter({ backend, deliver, logger, now: DAY_LATER }).reportOnce();
+
+        expect(result).toEqual({ delivered: 1, pending: 0 });
+        expect(escalate.mock.calls).toEqual([[unknown]]);
+        expect(deliver.mock.calls).toEqual([[escalated]]);
+        expect(markOutcomeReported.mock.calls).toEqual([[escalated]]);
+        expect(logger.warn).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith({ actionId: FIRST, type: 'email_send' }, 'Approved outbound action outcome still unknown after 24 h; escalating to the admin');
+    });
+
+    test('escalates an unknown outcome 24 h old even while its interim report is still undelivered', async () => {
+        const untold = pendingRow(FIRST, { state: 'unverified', lastError: 'fetch failed' });
+        const escalated = { ...untold, escalated: true };
+        listOutcomeReportWork.mockImplementation(async () => [untold]);
+        escalate.mockImplementation(async () => escalated);
+
+        await createApprovedActionOutcomeReporter({ backend, deliver, logger, now: DAY_LATER }).reportOnce();
+
+        expect(escalate.mock.calls).toEqual([[untold]]);
+        expect(deliver.mock.calls).toEqual([[escalated]]);
+    });
+
+    test('delivers a pending unknown outcome younger than 24 h as it is, without escalating it', async () => {
+        const young = pendingRow(FIRST, { state: 'unverified', lastError: 'fetch failed', updatedAt: '2026-09-24T12:00:00.001Z' });
+        listOutcomeReportWork.mockImplementation(async () => [young]);
+
+        await createApprovedActionOutcomeReporter({ backend, deliver, logger, now: DAY_LATER }).reportOnce();
+
+        expect(escalate).not.toHaveBeenCalled();
+        expect(deliver.mock.calls).toEqual([[young]]);
+    });
+
+    test('delivers the pending report of an episode already escalated without escalating it again', async () => {
+        const escalated = pendingRow(FIRST, { state: 'unverified', lastError: 'fetch failed', escalated: true });
+        listOutcomeReportWork.mockImplementation(async () => [escalated]);
+
+        await createApprovedActionOutcomeReporter({ backend, deliver, logger, now: DAY_LATER }).reportOnce();
+
+        expect(escalate).not.toHaveBeenCalled();
+        expect(deliver.mock.calls).toEqual([[escalated]]);
+    });
+
+    test('never escalates a pending outcome that is not unknown, however old', async () => {
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST)]);
+
+        await createApprovedActionOutcomeReporter({ backend, deliver, logger, now: DAY_LATER }).reportOnce();
+
+        expect(escalate).not.toHaveBeenCalled();
+        expect(deliver.mock.calls).toEqual([[pendingRow(FIRST)]]);
+    });
+
+    test('skips a listed row with neither a report pending nor an escalation due', async () => {
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST, { state: 'unverified', outcomeReportPending: undefined, escalated: true })]);
+
+        expect(await createApprovedActionOutcomeReporter({ backend, deliver, logger, now: DAY_LATER }).reportOnce()).toEqual({ delivered: 0, pending: 0 });
+
+        expect(escalate).not.toHaveBeenCalled();
+        expect(deliver).not.toHaveBeenCalled();
+    });
+
+    test('skips an unknown outcome another process escalated first or that moved on', async () => {
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST, { state: 'unverified', outcomeReportPending: undefined }), pendingRow(SECOND)]);
+        escalate.mockImplementation(async () => undefined);
+
+        const result = await createApprovedActionOutcomeReporter({ backend, deliver, logger, now: DAY_LATER }).reportOnce();
+
+        expect(result).toEqual({ delivered: 1, pending: 0 });
+        expect(deliver.mock.calls).toEqual([[pendingRow(SECOND)]]);
+        expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    test('a failed escalation write rejects the pass before anything else is delivered', async () => {
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST, { state: 'unverified', outcomeReportPending: undefined }), pendingRow(SECOND)]);
+        escalate.mockImplementation(async () => {
+            throw new Error('throughput exceeded');
+        });
+
+        await expect(createApprovedActionOutcomeReporter({ backend, deliver, logger, now: DAY_LATER }).reportOnce()).rejects.toThrow('throughput exceeded');
+        expect(deliver).not.toHaveBeenCalled();
     });
 
     test('leaves an undelivered outcome pending without clearing its marker', async () => {
-        listPendingOutcomeReports.mockImplementation(async () => [pendingRow(FIRST)]);
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST)]);
         deliver.mockImplementation(async () => false);
 
         const result = await createApprovedActionOutcomeReporter({ backend, deliver, logger }).reportOnce();
@@ -87,7 +197,7 @@ describe('createApprovedActionOutcomeReporter', () => {
     });
 
     test('a throwing delivery is logged, left pending, and does not stop later outcomes', async () => {
-        listPendingOutcomeReports.mockImplementation(async () => [pendingRow(FIRST), pendingRow(SECOND)]);
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST), pendingRow(SECOND)]);
         deliver.mockImplementationOnce(async () => {
             throw new Error('describe failed');
         });
@@ -104,7 +214,7 @@ describe('createApprovedActionOutcomeReporter', () => {
     });
 
     test('a delivery throwing a non-Error value logs its string form', async () => {
-        listPendingOutcomeReports.mockImplementation(async () => [pendingRow(FIRST)]);
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST)]);
         // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- exercises the non-Error branch of the log.
         deliver.mockImplementation(() => Promise.reject('plain failure'));
 
@@ -117,14 +227,14 @@ describe('createApprovedActionOutcomeReporter', () => {
     });
 
     test('counts an outcome whose row moved on before its marker was cleared as delivered', async () => {
-        listPendingOutcomeReports.mockImplementation(async () => [pendingRow(FIRST)]);
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST)]);
         markOutcomeReported.mockImplementation(async () => false);
 
         expect(await createApprovedActionOutcomeReporter({ backend, deliver, logger }).reportOnce()).toEqual({ delivered: 1, pending: 0 });
     });
 
     test('a failed marker clear rejects the pass', async () => {
-        listPendingOutcomeReports.mockImplementation(async () => [pendingRow(FIRST), pendingRow(SECOND)]);
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST), pendingRow(SECOND)]);
         markOutcomeReported.mockImplementation(async () => {
             throw new Error('throughput exceeded');
         });
@@ -135,7 +245,7 @@ describe('createApprovedActionOutcomeReporter', () => {
 
     test('after a restart the first poll reports an outcome recorded before it, from durable state alone', async () => {
         const recorded = pendingRow(FIRST, { approvalCard: { channelId: 'ch-1', messageId: 'msg-1' } });
-        listPendingOutcomeReports.mockImplementation(async () => [recorded]);
+        listOutcomeReportWork.mockImplementation(async () => [recorded]);
         const reporter = createApprovedActionOutcomeReporter({ backend, deliver, logger, pollIntervalMs: 1000 });
 
         reporter.start();
@@ -150,7 +260,7 @@ describe('createApprovedActionOutcomeReporter', () => {
     test('an undelivered outcome is retried on a later poll and cleared once delivery succeeds', async () => {
         const row = pendingRow(FIRST);
         let stillPending = true;
-        listPendingOutcomeReports.mockImplementation(async () => (stillPending ? [row] : []));
+        listOutcomeReportWork.mockImplementation(async () => (stillPending ? [row] : []));
         deliver.mockImplementationOnce(async () => false);
         markOutcomeReported.mockImplementation(async () => {
             stillPending = false;
@@ -182,7 +292,7 @@ describe('createApprovedActionOutcomeReporter', () => {
         const failed = pendingRow(FIRST, { state: 'failed', lastError: 'socket hang up', failureKind: 'transient', updatedAt: '2026-09-24T12:00:00.000Z' });
         const executed = pendingRow(FIRST, { state: 'executed', updatedAt: '2026-09-24T12:05:00.000Z' });
         let current: ApprovedOutboundAction[] = [failed];
-        listPendingOutcomeReports.mockImplementation(async () => current);
+        listOutcomeReportWork.mockImplementation(async () => current);
         markOutcomeReported.mockImplementation(async action => action.updatedAt === current[0]?.updatedAt);
         const card: string[] = [];
         const slowEdit = Promise.withResolvers<undefined>();
@@ -218,7 +328,7 @@ describe('createApprovedActionOutcomeReporter', () => {
     });
 
     test('a pass that delivers keeps polling at the base interval', async () => {
-        listPendingOutcomeReports.mockImplementation(async () => [pendingRow(FIRST)]);
+        listOutcomeReportWork.mockImplementation(async () => [pendingRow(FIRST)]);
         const reporter = createApprovedActionOutcomeReporter({ backend, deliver, logger, pollIntervalMs: 1000 });
 
         reporter.start();
@@ -227,7 +337,7 @@ describe('createApprovedActionOutcomeReporter', () => {
         jest.advanceTimersByTime(1000);
         await flush();
 
-        expect(listPendingOutcomeReports).toHaveBeenCalledTimes(2);
+        expect(listOutcomeReportWork).toHaveBeenCalledTimes(2);
         reporter.stop();
     });
 
@@ -239,7 +349,7 @@ describe('createApprovedActionOutcomeReporter', () => {
         jest.advanceTimersByTime(0);
         await flush();
 
-        expect(listPendingOutcomeReports).toHaveBeenCalledTimes(1);
+        expect(listOutcomeReportWork).toHaveBeenCalledTimes(1);
         reporter.stop();
     });
 
@@ -249,10 +359,10 @@ describe('createApprovedActionOutcomeReporter', () => {
 
         jest.advanceTimersByTime(29_000);
         await flush();
-        expect(listPendingOutcomeReports).not.toHaveBeenCalled();
+        expect(listOutcomeReportWork).not.toHaveBeenCalled();
         jest.advanceTimersByTime(1000);
         await flush();
-        expect(listPendingOutcomeReports).toHaveBeenCalledTimes(1);
+        expect(listOutcomeReportWork).toHaveBeenCalledTimes(1);
         reporter.stop();
     });
 

@@ -1,7 +1,10 @@
 import { GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import {
+    adminPingSchema,
     approvedOutboundActionSchema,
+    type AdminPing,
+    type ApprovalCardRef,
     type ApprovedOutboundAction,
     type ApprovedOutboundActionState,
     type ClaimedApprovedOutboundAction,
@@ -15,6 +18,8 @@ import { DynamoTableAccess, createPrefixedKey } from '@/storage';
 // unchanged so existing rows stay addressable.
 const ACTION_PK        = 'APPROVAL#SAGA';
 const ACTION_SK_PREFIX = 'SAGA';
+/** Each action's one admin-ping record (#125) sits under the action's own sort key, in its own partition. */
+const ADMIN_PING_PK    = 'APPROVAL#ADMIN_PING';
 
 const TTL_DAYS = 30;
 
@@ -72,15 +77,20 @@ function isConditionalCheckFailure(err: unknown): boolean {
     return err instanceof Error && err.name === 'ConditionalCheckFailedException';
 }
 
+/** Who resolved an `unverified` row other than a destination check: the admin, from its escalated card (#125). */
+export type UnverifiedResolver = 'admin';
+
 /**
  * The fields of `prior` that carry over into its next state. `failureKind` describes only the
  * current failure, `outcomeReportPending` and `outcomeNotified` only the current outcome (a retry
  * reset drops an unreported failure, because the new attempt's own outcome supersedes it, and a
- * new terminal revision must notify Izzy afresh), and `claimId` only the current claim, so every
- * transition drops all four and re-adds what it needs.
+ * new terminal revision must notify Izzy afresh), `claimId` only the current claim, and
+ * `escalated` only the current unknown episode (#125), so every transition drops all five and
+ * re-adds what it needs. Everything else carries. (The row-lifetime admin ping is recorded in
+ * its own item, so no transition can drop it.)
  */
-function carriedFields(prior: ApprovedOutboundAction): Omit<ApprovedOutboundAction, 'failureKind' | 'outcomeReportPending' | 'outcomeNotified' | 'claimId'> {
-    const { failureKind: _failureKind, outcomeReportPending: _reportPending, outcomeNotified: _notified, claimId: _claimId, ...rest } = prior;
+function carriedFields(prior: ApprovedOutboundAction): Omit<ApprovedOutboundAction, 'failureKind' | 'outcomeReportPending' | 'outcomeNotified' | 'claimId' | 'escalated'> {
+    const { failureKind: _failureKind, outcomeReportPending: _reportPending, outcomeNotified: _notified, claimId: _claimId, escalated: _escalated, ...rest } = prior;
     return rest;
 }
 
@@ -243,10 +253,18 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
      * revision that was listed, so of two processes that checked the same row only one resolves
      * it. No read. Returns the written row, or undefined (writing nothing) when the row moved on.
      * Any other failure propagates.
+     *
+     * The admin resolves an escalated row through this same conditional put (#125): "Mark sent"
+     * passes `resolvedBy: 'admin'`, recorded on the `executed` row only, so its report says the
+     * destination never confirmed it; "Resend" resets to `approved` like a definite absence. The
+     * row-lifetime admin-ping record is a separate item this put never touches, so a snapshot
+     * taken before the ping — such as the one a timed-out send's late success resolves (#126) —
+     * still resolves its episode.
      */
-    async resolveUnverified(action: UnverifiedApprovedOutboundAction, to: DeliveryResolution): Promise<ApprovedOutboundAction | undefined> {
+    async resolveUnverified(action: UnverifiedApprovedOutboundAction, to: DeliveryResolution, resolvedBy?: UnverifiedResolver): Promise<ApprovedOutboundAction | undefined> {
         assertTransition(action, to);
-        const marker = to === 'executed' ? { outcomeReportPending: true } : {};
+        const resolution = resolvedBy === undefined ? {} : { resolvedBy };
+        const marker = to === 'executed' ? { outcomeReportPending: true, ...resolution } : {};
         const next: ApprovedOutboundAction = { ...carriedFields(action), ...marker, state: to, updatedAt: new Date().toISOString() };
         try {
             await this.putTransition(action, next, {
@@ -297,16 +315,107 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
     }
 
     /**
-     * List the terminal actions whose outcome has not yet been reported (see
-     * `outcomeReportPending` on the schema), with a strongly consistent query so a report never
-     * shows an outcome older than the latest one already written.
+     * List the outcome reporter's work with one strongly consistent query, so a report never shows
+     * an outcome older than the latest one already written: the actions whose outcome has not yet
+     * been reported (see `outcomeReportPending` on the schema), and the unescalated `unverified`
+     * rows whose outcome has been unknown since `escalateBefore` or earlier (#125). The query reads
+     * the same partition either way, so the escalation scan costs no extra read capacity. Every
+     * `updatedAt` is written by `toISOString`, so comparing the strings compares the instants.
      */
-    async listPendingOutcomeReports(): Promise<ApprovedOutboundAction[]> {
-        return this.listWhere('listPendingOutcomeReports', {
-            FilterExpression:          '#pending = :pending',
-            ExpressionAttributeNames:  { '#pending': 'outcomeReportPending' },
-            ExpressionAttributeValues: { ':pending': true },
+    async listOutcomeReportWork(escalateBefore: string): Promise<ApprovedOutboundAction[]> {
+        return this.listWhere('listOutcomeReportWork', {
+            FilterExpression:          '#pending = :pending OR (#state = :unverified AND #updatedAt <= :escalateBefore AND attribute_not_exists(#escalated))',
+            ExpressionAttributeNames:  { '#pending': 'outcomeReportPending', '#state': 'state', '#updatedAt': 'updatedAt', '#escalated': 'escalated' },
+            ExpressionAttributeValues: { ':pending': true, ':unverified': 'unverified', ':escalateBefore': escalateBefore },
         });
+    }
+
+    /**
+     * Escalate the listed unknown episode of an `unverified` row to the admin (#125): mark it
+     * `escalated` with its outcome report pending, so the reporter redraws its card with the
+     * admin's controls and pings the admin. When the listed row's report had already been
+     * delivered, it is reopened, marked as notified to Izzy (she was already told the outcome is
+     * unknown); when its interim report is still pending — Izzy or the card not yet told — the
+     * escalation joins that report and leaves whether Izzy was told as it is, so an undelivered
+     * interim report never holds the escalation back. Conditioned on the row still being
+     * `unverified` at the listed `updatedAt` revision, not yet escalated, and with its report
+     * still in the listed state, so of two processes only one escalates. `updatedAt` is left
+     * unchanged: it stays the episode's clock and revision, so destination checks and a late
+     * success still resolve it. Returns the escalated row, or undefined (writing nothing) when the
+     * condition fails. Any other failure propagates.
+     */
+    async escalate(action: ApprovedOutboundAction): Promise<ApprovedOutboundAction | undefined> {
+        const joinsPendingReport = action.outcomeReportPending === true;
+        const update: { UpdateExpression: string, ConditionExpression: string, ExpressionAttributeNames: Record<string, string> } = joinsPendingReport
+            ? {
+                UpdateExpression:         'SET #escalated = :true',
+                ConditionExpression:      '#state = :unverified AND #updatedAt = :revision AND #pending = :true AND attribute_not_exists(#escalated)',
+                ExpressionAttributeNames: { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending', '#escalated': 'escalated' },
+            }
+            : {
+                UpdateExpression:         'SET #pending = :true, #notified = :true, #escalated = :true',
+                ConditionExpression:      '#state = :unverified AND #updatedAt = :revision AND attribute_not_exists(#pending) AND attribute_not_exists(#escalated)',
+                ExpressionAttributeNames: { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending', '#notified': 'outcomeNotified', '#escalated': 'escalated' },
+            };
+        try {
+            await this.docClient.send(new UpdateCommand({
+                TableName:                 this.tableName,
+                Key:                       { PK: ACTION_PK, SK: actionSK(action.id) },
+                ...update,
+                ExpressionAttributeValues: { ':unverified': 'unverified', ':revision': action.updatedAt, ':true': true },
+            }));
+        } catch (err: unknown) {
+            if(isConditionalCheckFailure(err)) {
+                return undefined;
+            }
+            throw err;
+        }
+        return joinsPendingReport
+            ? { ...action, escalated: true }
+            : { ...action, outcomeReportPending: true, outcomeNotified: true, escalated: true };
+    }
+
+    /**
+     * Read the record of this action's one admin ping (#125) with a strongly consistent read;
+     * undefined when no ping has been recorded.
+     */
+    async getAdminPing(id: string): Promise<AdminPing | undefined> {
+        const { Item } = await this.docClient.send(new GetCommand({
+            TableName:      this.tableName,
+            Key:            { PK: ADMIN_PING_PK, SK: actionSK(id) },
+            ConsistentRead: true,
+        }));
+        return Item === undefined ? undefined : adminPingSchema.parse(Item);
+    }
+
+    /**
+     * Record that the one admin ping for this row was accepted by Discord (#125), with the ping
+     * message when it carried the controls, in its own item expiring with the row. The record is
+     * independent of the row's state and revision: a ping accepted while a check or the admin
+     * moved the row on is still recorded, and no later transition of the row can erase it. Written
+     * only if absent, so the first record stands; one already there (another process pinged too —
+     * the unavoidable window between an external send and its record) is left as it is. Any other
+     * failure propagates.
+     */
+    async markAdminNotified(action: ApprovedOutboundAction, message?: ApprovalCardRef): Promise<void> {
+        const item = {
+            PK:  ADMIN_PING_PK,
+            SK:  actionSK(action.id),
+            ...(message === undefined ? {} : { message }),
+            TTL: ApprovedOutboundActionBackend.expiresAt(new Date(action.createdAt), { days: TTL_DAYS }),
+        };
+        try {
+            await this.docClient.send(new PutCommand({
+                TableName:                this.tableName,
+                Item:                     item,
+                ConditionExpression:      'attribute_not_exists(#pk)',
+                ExpressionAttributeNames: { '#pk': 'PK' },
+            }));
+        } catch (err: unknown) {
+            if(!isConditionalCheckFailure(err)) {
+                throw err;
+            }
+        }
     }
 
     /**

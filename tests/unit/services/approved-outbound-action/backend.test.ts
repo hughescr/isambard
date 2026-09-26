@@ -635,6 +635,36 @@ describe('ApprovedOutboundActionBackend', () => {
                 ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt' },
                 ExpressionAttributeValues: { ':from': 'unverified', ':revision': '2026-03-30T11:46:00.000Z' },
             });
+            // A destination check's resolution is not the admin's: no resolvedBy key at all.
+            expect('resolvedBy' in (ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as Record<string, unknown>)).toBe(false);
+            expect(resolved).not.toHaveProperty('resolvedBy');
+        });
+
+        test('drops the escalated marker of the episode it ends', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const resolved = await backend.resolveUnverified({ ...UNVERIFIED, escalated: true }, 'executed');
+
+            expect(resolved).not.toHaveProperty('escalated');
+            expect('escalated' in (ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as Record<string, unknown>)).toBe(false);
+        });
+
+        test('an admin marking the row sent records resolvedBy admin on the executed row', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const resolved = await backend.resolveUnverified(UNVERIFIED, 'executed', 'admin');
+
+            expect(resolved).toMatchObject({ state: 'executed', resolvedBy: 'admin', outcomeReportPending: true });
+            expect((ddbMock.commandCalls(PutCommand)[0].args[0].input.Item as Record<string, unknown>).resolvedBy).toBe('admin');
+        });
+
+        test('an admin resend resets to approved without recording resolvedBy', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            const resolved = await backend.resolveUnverified(UNVERIFIED, 'approved', 'admin');
+
+            expect(resolved?.state).toBe('approved');
+            expect(resolved).not.toHaveProperty('resolvedBy');
         });
 
         test('resolves an unverified row definitely absent to approved, dropping its unreported interim report', async () => {
@@ -750,22 +780,22 @@ describe('ApprovedOutboundActionBackend', () => {
         });
     });
 
-    describe('listPendingOutcomeReports', () => {
+    describe('listOutcomeReportWork', () => {
         const EXECUTED: ApprovedOutboundAction = { ...BASE_ACTION, state: 'executed', outcomeReportPending: true, updatedAt: '2026-03-30T12:00:00.000Z' };
 
-        test('queries the partition for pending reports with a strongly consistent read', async () => {
+        test('queries the partition for pending reports and unescalated unverified rows due for escalation, with a strongly consistent read', async () => {
             ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-            await backend.listPendingOutcomeReports();
+            await backend.listOutcomeReportWork('2026-03-29T12:00:00.000Z');
 
             const calls = ddbMock.commandCalls(QueryCommand);
             expect(calls).toHaveLength(1);
             expect(calls[0].args[0].input).toEqual({
                 TableName:                 'TestTable',
                 KeyConditionExpression:    '#pk = :pk',
-                FilterExpression:          '#pending = :pending',
-                ExpressionAttributeNames:  { '#pk': 'PK', '#pending': 'outcomeReportPending' },
-                ExpressionAttributeValues: { ':pk': 'APPROVAL#SAGA', ':pending': true },
+                FilterExpression:          '#pending = :pending OR (#state = :unverified AND #updatedAt <= :escalateBefore AND attribute_not_exists(#escalated))',
+                ExpressionAttributeNames:  { '#pk': 'PK', '#pending': 'outcomeReportPending', '#state': 'state', '#updatedAt': 'updatedAt', '#escalated': 'escalated' },
+                ExpressionAttributeValues: { ':pk': 'APPROVAL#SAGA', ':pending': true, ':unverified': 'unverified', ':escalateBefore': '2026-03-29T12:00:00.000Z' },
                 ConsistentRead:            true,
             });
         });
@@ -778,12 +808,107 @@ describe('ApprovedOutboundActionBackend', () => {
                 ],
             });
 
-            expect(await backend.listPendingOutcomeReports()).toEqual([EXECUTED]);
+            expect(await backend.listOutcomeReportWork('2026-03-29T12:00:00.000Z')).toEqual([EXECUTED]);
             expect(mockLogger.warn).toHaveBeenCalledTimes(1);
             expect(mockLogger.warn).toHaveBeenCalledWith(
                 expect.objectContaining({ item: expect.objectContaining({ SK: 'SAGA#bad-item' }), error: expect.any(String) }),
-                'ApprovedOutboundActionBackend.listPendingOutcomeReports: failed to parse action'
+                'ApprovedOutboundActionBackend.listOutcomeReportWork: failed to parse action'
             );
+        });
+    });
+
+    describe('escalate', () => {
+        const REPORTED: UnverifiedApprovedOutboundAction = { ...UNVERIFIED, outcomeReportPending: undefined, outcomeNotified: undefined };
+
+        test('reopens the report of the listed unknown episode as escalated and already told to Izzy, without changing updatedAt', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+
+            expect(await backend.escalate(REPORTED)).toEqual({ ...REPORTED, outcomeReportPending: true, outcomeNotified: true, escalated: true });
+            expect(ddbMock.commandCalls(UpdateCommand)[0].args[0].input).toEqual({
+                TableName:                 'TestTable',
+                Key:                       KEY,
+                UpdateExpression:          'SET #pending = :true, #notified = :true, #escalated = :true',
+                ConditionExpression:       '#state = :unverified AND #updatedAt = :revision AND attribute_not_exists(#pending) AND attribute_not_exists(#escalated)',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending', '#notified': 'outcomeNotified', '#escalated': 'escalated' },
+                ExpressionAttributeValues: { ':unverified': 'unverified', ':revision': '2026-03-30T11:46:00.000Z', ':true': true },
+            });
+        });
+
+        test('escalates an episode whose interim report is still pending, leaving whether Izzy was told untouched', async () => {
+            ddbMock.on(UpdateCommand).resolves({});
+            const untold: UnverifiedApprovedOutboundAction = { ...UNVERIFIED, outcomeNotified: undefined };
+
+            expect(await backend.escalate(untold)).toEqual({ ...untold, escalated: true });
+            expect(ddbMock.commandCalls(UpdateCommand)[0].args[0].input).toEqual({
+                TableName:                 'TestTable',
+                Key:                       KEY,
+                UpdateExpression:          'SET #escalated = :true',
+                ConditionExpression:       '#state = :unverified AND #updatedAt = :revision AND #pending = :true AND attribute_not_exists(#escalated)',
+                ExpressionAttributeNames:  { '#state': 'state', '#updatedAt': 'updatedAt', '#pending': 'outcomeReportPending', '#escalated': 'escalated' },
+                ExpressionAttributeValues: { ':unverified': 'unverified', ':revision': '2026-03-30T11:46:00.000Z', ':true': true },
+            });
+        });
+
+        test('returns undefined when the episode moved on, was already escalated or its report changed', async () => {
+            ddbMock.on(UpdateCommand).rejects(CONDITIONAL_CHECK_FAILED);
+            expect(await backend.escalate(REPORTED)).toBeUndefined();
+        });
+
+        test('propagates a real write failure', async () => {
+            ddbMock.on(UpdateCommand).rejects(new Error('throughput exceeded'));
+            await expect(backend.escalate(REPORTED)).rejects.toThrow('throughput exceeded');
+        });
+    });
+
+    describe('admin ping record', () => {
+        const PING_KEY = { PK: 'APPROVAL#ADMIN_PING', SK: `SAGA#${ACTION_UUID}` };
+        const PING_MESSAGE = { channelId: '1283746501928374650', messageId: '1419283746501928374' };
+
+        test('records the ping in its own item, once per row, expiring with the row', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            expect(await backend.markAdminNotified(UNVERIFIED)).toBeUndefined();
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input).toStrictEqual({
+                TableName:                'TestTable',
+                Item:                     { ...PING_KEY, TTL: EXPECTED_TTL },
+                ConditionExpression:      'attribute_not_exists(#pk)',
+                ExpressionAttributeNames: { '#pk': 'PK' },
+            });
+        });
+
+        test('records the message that carries the controls when the ping carried them', async () => {
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.markAdminNotified(UNVERIFIED, PING_MESSAGE);
+
+            expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toStrictEqual({ ...PING_KEY, message: PING_MESSAGE, TTL: EXPECTED_TTL });
+        });
+
+        test('a ping already recorded (by another process) is kept as it was', async () => {
+            ddbMock.on(PutCommand).rejects(CONDITIONAL_CHECK_FAILED);
+            expect(await backend.markAdminNotified(UNVERIFIED)).toBeUndefined();
+        });
+
+        test('propagates a real write failure', async () => {
+            ddbMock.on(PutCommand).rejects(new Error('throughput exceeded'));
+            await expect(backend.markAdminNotified(UNVERIFIED)).rejects.toThrow('throughput exceeded');
+        });
+
+        test('reads the record with a strongly consistent read', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: { ...PING_KEY, message: PING_MESSAGE, TTL: EXPECTED_TTL } });
+
+            expect(await backend.getAdminPing(ACTION_UUID)).toStrictEqual({ message: PING_MESSAGE });
+            expect(ddbMock.commandCalls(GetCommand)[0].args[0].input).toEqual({ TableName: 'TestTable', Key: PING_KEY, ConsistentRead: true });
+        });
+
+        test('reads a ping that carried no controls as a record with no message', async () => {
+            ddbMock.on(GetCommand).resolves({ Item: { ...PING_KEY, TTL: EXPECTED_TTL } });
+            expect(await backend.getAdminPing(ACTION_UUID)).toStrictEqual({});
+        });
+
+        test('reads no record as undefined', async () => {
+            ddbMock.on(GetCommand).resolves({});
+            expect(await backend.getAdminPing(ACTION_UUID)).toBeUndefined();
         });
     });
 

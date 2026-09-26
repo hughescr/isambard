@@ -4884,6 +4884,32 @@ describe('createDiscordBot', () => {
             expect(allowlistModal).toHaveBeenCalledTimes(1);
         });
 
+        test('routes the approved-action escalation buttons to their handler only by exact prefix, and only when it is configured (#125)', async () => {
+            const client = makeMockClientForConductor();
+            const escalationButton = mock(async (_interaction: unknown) => undefined);
+            createDiscordBot({
+                config:                          mockConfig, client, channelRegistry:                 mockChannelRegistry,
+                approvedActionEscalationHandler: { handleButton: escalationButton } as unknown as DiscordBotOptions['approvedActionEscalationHandler'],
+            });
+            const onInteraction = (client.on as ReturnType<typeof mock>).mock.calls.find(([event]) => event === 'interactionCreate')?.[1] as (interaction: unknown) => Promise<void>;
+            const button = (customId: string) => ({ customId, isButton: () => true, isModalSubmit: () => false, isStringSelectMenu: () => false, isChatInputCommand: () => false });
+            const markSent = button('approved-action-mark-sent:id-1:2026-09-24T12:00:00.000Z');
+            const resend = button('approved-action-resend:id-1:2026-09-24T12:00:00.000Z');
+            await onInteraction(markSent);
+            await onInteraction(resend);
+            await onInteraction(button('other-approved-action-resend:id-1:x'));
+            await onInteraction(button('approved-action-resend'));
+            expect(escalationButton.mock.calls).toEqual([[markSent], [resend]]);
+
+            const unconfigured = makeMockClientForConductor();
+            const handleButtonInteraction = mock(async (_interaction: unknown) => undefined);
+            spies.push(spyOn(interactionsModule, 'createInteractionHandler').mockReturnValue({ handleButtonInteraction }));
+            createDiscordBot({ config: mockConfig, client: unconfigured, channelRegistry: mockChannelRegistry });
+            const onUnconfigured = (unconfigured.on as ReturnType<typeof mock>).mock.calls.find(([event]) => event === 'interactionCreate')?.[1] as (interaction: unknown) => Promise<void>;
+            await onUnconfigured(resend);
+            expect(handleButtonInteraction.mock.calls).toEqual([[resend]]);
+        });
+
         test('does not claim interaction IDs that only contain an owned prefix', async () => {
             const client = makeMockClientForConductor();
             const bskyButton = mock(async () => undefined);

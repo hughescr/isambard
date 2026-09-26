@@ -9,6 +9,7 @@ export type {
     DeliveryVerifier,
     FailureKind
 } from './types';
+export { isUnverified } from './types';
 export { ApprovedOutboundActionBackend } from './backend';
 export type { ApprovedOutboundActionExecutor } from './executor';
 export { createApprovedOutboundActionExecutor } from './executor';

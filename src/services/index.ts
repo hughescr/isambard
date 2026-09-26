@@ -42,6 +42,7 @@ export {
     createApprovedActionRetryListener,
     createWakingActionWriter,
     describeApprovedActionOutcome,
+    isUnverified,
     raceDeadline
 } from './approved-outbound-action';
 

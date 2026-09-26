@@ -31,6 +31,21 @@ export class ApprovalCardEditGate {
         };
     }
 
+    /**
+     * Hold the card exclusively: wait until nobody holds it, then hold it. Checking and holding
+     * happen in one synchronous step, so of two callers woken by the same release only the first
+     * holds and the other waits for it in turn. Used by the writers whose edit depends on a read
+     * of the row (the outcome delivery's escalated card, and the admin's escalation buttons), so
+     * neither paints over the other with a state it read before the other one wrote.
+     */
+    async acquire(messageId: string): Promise<() => void> {
+        for(let pending = this.pendingEdit(messageId); pending !== undefined; pending = this.pendingEdit(messageId)) {
+            // eslint-disable-next-line no-await-in-loop -- re-check after each release: another waiter may have taken the card first.
+            await pending;
+        }
+        return this.hold(messageId);
+    }
+
     /** Settles once every current hold on the card is released; undefined when the card is not held. */
     pendingEdit(messageId: string): Promise<unknown> | undefined {
         const holds = this.held.get(messageId);

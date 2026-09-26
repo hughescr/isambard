@@ -21,7 +21,7 @@ import {
     type BskyReplyInput
 } from '@/integrations/bsky';
 import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
-import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createApprovedActionOutcomeDelivery, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
+import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createApprovedActionOutcomeDelivery, ApprovedActionEscalationHandler, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, WildDuckClient, checkEmailSendDelivery, emailSendParamsSchema } from '@/integrations/email';
 import { createJevOutboxFailureClassifier } from '@/integrations/typesafe/jev-outbox-failure-classifier';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, createOutboxDrainListener, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
@@ -714,6 +714,9 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             isDiscordReady: () => discordCapability.isReady(),
             notify:         notificationBridge.notify,
             backend:        approvedOutboundActionBackend,
+            // #125: an outcome still unknown after 24 h pings the admin here, once per row.
+            adminChannelId: config.adminDiscordChannelId,
+            adminUserId:    config.adminDiscordUserId,
         }),
         logger,
     });
@@ -1133,6 +1136,19 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // Create contacts command handler
     const contactCommandHandler = new ContactCommandHandler(storage.contactBackend, config.adminDiscordUserId, contactApprovalHandler, personAllowlist);
 
+    // #125: the admin's "Mark sent" / "Resend" on an outcome unknown for 24 h. Both are conditional
+    // writes on the row's unknown episode; a Resend is sent only by the executor's own claim path.
+    const approvedActionEscalationHandler = new ApprovedActionEscalationHandler({
+        backend:      approvedOutboundActionBackend,
+        adminUserId:  config.adminDiscordUserId,
+        wakeReporter: () => {
+            approvedActionOutcomeReporter.wake();
+        },
+        wakeExecutor: () => {
+            approvedActionExecutor.wake();
+        },
+    });
+
     // Create Discord bot
     logger.info('Creating Discord bot...');
     const bot: DiscordBot = createDiscordBot({
@@ -1153,6 +1169,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         calendarHandler,
         contactHandler:           contactCommandHandler,
         contactApprovalHandler,
+        approvedActionEscalationHandler,
         activityLogger,
         healthRegistry,
         discordCapability,

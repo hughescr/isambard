@@ -11,6 +11,7 @@ import { logger } from '@hughescr/logger';
 import { MessageFlags, type ButtonInteraction, type ChatInputCommandInteraction, type Client, type Interaction, type Message, type ModalSubmitInteraction } from 'discord.js';
 import type { AllowlistCommandHandler } from './allowlist-commands';
 import type { AllowlistInteractionHandler } from './allowlist-interaction-handler';
+import type { ApprovedActionEscalationHandler } from './approvals/escalation-interaction-handler';
 import type { CalendarCommandHandler } from './calendar-commands';
 import type { DiscordCapability } from './capability';
 import { DMTracker, ResponseRouter, type ChannelRegistryManager } from './channel-registry';
@@ -50,6 +51,7 @@ import {
     CONTACT_PREFIXES,
     ALLOWLIST_BUTTON_PREFIXES,
     ALLOWLIST_MODAL_PREFIXES,
+    APPROVED_ACTION_ESCALATION_PREFIXES,
     type DiscordConfig
 } from '@/config';
 import { InvariantViolationError } from '@/errors';
@@ -214,6 +216,12 @@ export interface DiscordBotOptions {
      * Optional contact approval handler for Izzy-requested contact changes.
      */
     contactApprovalHandler?: ContactApprovalHandler
+
+    /**
+     * Optional handler for the admin's "Mark sent" / "Resend" buttons on an approved action whose
+     * outcome has been unknown for 24 h (#125).
+     */
+    approvedActionEscalationHandler?: ApprovedActionEscalationHandler
 
     /**
      * Optional activity logger for recording lifecycle events (email, bsky, perch, catch-up, Discord exchanges).
@@ -422,12 +430,13 @@ function registerRoutes<T>(map: Map<string, T>, prefixes: readonly string[], han
  * as it did before, when the equivalent startsWith chain was simply unreached for that feature.
  */
 function buildInteractionRoutes(deps: {
-    bskySetup?:                   BskySetupResult
-    emailSetup?:                  EmailSetupResult
-    contactApprovalHandler?:      ContactApprovalHandler
-    allowlistInteractionHandler?: AllowlistInteractionHandler
+    bskySetup?:                       BskySetupResult
+    emailSetup?:                      EmailSetupResult
+    contactApprovalHandler?:          ContactApprovalHandler
+    allowlistInteractionHandler?:     AllowlistInteractionHandler
+    approvedActionEscalationHandler?: ApprovedActionEscalationHandler
 }): { buttonRoutes: Map<string, ButtonRouteHandler>, modalRoutes: Map<string, ModalRouteHandler> } {
-    const { bskySetup, emailSetup, contactApprovalHandler, allowlistInteractionHandler } = deps;
+    const { bskySetup, emailSetup, contactApprovalHandler, allowlistInteractionHandler, approvedActionEscalationHandler } = deps;
     const buttonRoutes = new Map<string, ButtonRouteHandler>();
     const modalRoutes = new Map<string, ModalRouteHandler>();
 
@@ -446,6 +455,9 @@ function buildInteractionRoutes(deps: {
     if(allowlistInteractionHandler) {
         registerRoutes(buttonRoutes, ALLOWLIST_BUTTON_PREFIXES, i => allowlistInteractionHandler.handleButton(i));
         registerRoutes(modalRoutes, ALLOWLIST_MODAL_PREFIXES, i => allowlistInteractionHandler.handleModalSubmit(i));
+    }
+    if(approvedActionEscalationHandler) {
+        registerRoutes(buttonRoutes, APPROVED_ACTION_ESCALATION_PREFIXES, i => approvedActionEscalationHandler.handleButton(i));
     }
 
     return { buttonRoutes, modalRoutes };
@@ -661,7 +673,7 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     // setup/handler is present — an owned-looking prefix with no setup falls through to the
     // generic question-button handler (or, for modals, is silently ignored) exactly as it did
     // before, when the equivalent startsWith chain was simply unreached for that feature.
-    const { buttonRoutes, modalRoutes } = buildInteractionRoutes({ bskySetup, emailSetup, contactApprovalHandler, allowlistInteractionHandler });
+    const { buttonRoutes, modalRoutes } = buildInteractionRoutes({ bskySetup, emailSetup, contactApprovalHandler, allowlistInteractionHandler, approvedActionEscalationHandler: options.approvedActionEscalationHandler });
 
     // Register interaction handler for button clicks and slash commands
     // This uses `client` (not `readyClient`) so it is registered immediately at bot creation time,

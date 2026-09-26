@@ -21,6 +21,11 @@ export interface ApprovedActionOutcomeReport {
         /** The error, for a failure. */
         detail?: string
     }
+    /**
+     * Present only for an escalated `unverified` row (#125): its card offers the admin "Mark
+     * sent" and "Resend", and `alert` is the text of the one admin ping.
+     */
+    escalation?: { alert: string }
 }
 
 const MAX_ERROR_LENGTH   = 500;
@@ -95,7 +100,10 @@ function label(action: ApprovedOutboundAction, copy: TypeCopy): string {
  * card and for Izzy. A failure with no `failureKind` (written before #40) is never retried, so it
  * reads as permanent. An `unverified` row is an interim report (amber, not waking Izzy): the
  * send's outcome is unknown and its destination is being checked, and the check's result is
- * reported in turn. Throws for an `approved` or `sending` row, which has no outcome yet.
+ * reported in turn. An escalated `unverified` row (#125) also offers the admin its controls and
+ * carries the admin alert; an `executed` row the admin marked sent says so, and that the
+ * destination never confirmed it. Throws for an `approved` or `sending` row, which has no
+ * outcome yet.
  */
 export function describeApprovedActionOutcome(action: ApprovedOutboundAction): ApprovedActionOutcomeReport {
     if(action.state === 'approved' || action.state === 'sending') {
@@ -106,6 +114,15 @@ export function describeApprovedActionOutcome(action: ApprovedOutboundAction): A
     const key = `${action.id}:${action.state}:${action.updatedAt}`;
 
     if(action.state === 'executed') {
+        if(action.resolvedBy === 'admin') {
+            return {
+                source: copy.source,
+                key,
+                wake:   copy.wakeOnSuccess,
+                text:   `${subject} was marked ${copy.past} by the admin; ${copy.destination} never confirmed it.`,
+                card:   { tone: 'sent', title: `Marked ${copy.past} by admin — not confirmed in ${copy.destination}` },
+            };
+        }
         return {
             source: copy.source,
             key,
@@ -117,11 +134,22 @@ export function describeApprovedActionOutcome(action: ApprovedOutboundAction): A
 
     const error = truncate(action.lastError ?? 'unknown error', { length: MAX_ERROR_LENGTH });
     if(action.state === 'unverified') {
+        const text = `${subject}: no clear answer from ${copy.service} (${error}), so it may or may not have been ${copy.past}. Checking ${copy.destination} before deciding whether to resend; you will be told the result.`;
+        if(action.escalated === true) {
+            return {
+                source:     copy.source,
+                key,
+                wake:       false,
+                text,
+                card:       { tone: 'retrying', title: `Outcome still unknown after 24 h — still checking ${copy.destination}; Mark sent or Resend below`, detail: error },
+                escalation: { alert: `${subject}: outcome still unknown after 24 h. Still checking ${copy.destination}; press Mark sent if you know it arrived, or Resend to send it again.` },
+            };
+        }
         return {
             source: copy.source,
             key,
             wake:   false,
-            text:   `${subject}: no clear answer from ${copy.service} (${error}), so it may or may not have been ${copy.past}. Checking ${copy.destination} before deciding whether to resend; you will be told the result.`,
+            text,
             card:   { tone: 'retrying', title: `Outcome unknown — checking ${copy.destination} before any resend`, detail: error },
         };
     }

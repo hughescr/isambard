@@ -9,7 +9,8 @@ import {
     EMAIL_SEND_MODAL_PREFIXES,
     EMAIL_ALLOWLIST_SELECT_PREFIX,
     BSKY_BUTTON_PREFIXES,
-    BSKY_MODAL_PREFIXES
+    BSKY_MODAL_PREFIXES,
+    APPROVED_ACTION_ESCALATION_PREFIXES
 } from '@/config/interaction-routes';
 import { encodeCustomId, parseCustomId, customIdSchema } from '@/utils/interaction-route';
 
@@ -30,6 +31,7 @@ const ALL_REGISTERED_PREFIXES: readonly string[] = [
     EMAIL_ALLOWLIST_SELECT_PREFIX,
     ...BSKY_BUTTON_PREFIXES,
     ...BSKY_MODAL_PREFIXES,
+    ...APPROVED_ACTION_ESCALATION_PREFIXES,
 ];
 
 describe('encodeCustomId / parseCustomId round-trip', () => {
@@ -56,6 +58,15 @@ describe('encodeCustomId / parseCustomId round-trip', () => {
             const customId = encodeCustomId({ prefix, id: 'uuid-1' });
             expect(parseCustomId(customId)).toEqual({ prefix, id: 'uuid-1' });
         }
+    });
+
+    test('round-trips an escalation button carrying an action uuid and its ISO revision, within Discord\'s 100-character limit', () => {
+        for(const prefix of APPROVED_ACTION_ESCALATION_PREFIXES) {
+            const customId = encodeCustomId({ prefix, id: 'aaaaaaaa-1111-4222-8333-444444444444', value: '2026-09-24T12:00:00.000Z' });
+            expect(customId.length).toBeLessThanOrEqual(100);
+            expect(parseCustomId(customId)).toEqual({ prefix, id: 'aaaaaaaa-1111-4222-8333-444444444444', value: '2026-09-24T12:00:00.000Z' });
+        }
+        expect(APPROVED_ACTION_ESCALATION_PREFIXES).toEqual(['approved-action-mark-sent', 'approved-action-resend']);
     });
 
     test('round-trips every registered route prefix from every closed vocabulary, id-only', () => {

@@ -73,6 +73,47 @@ describe('describeApprovedActionOutcome', () => {
         });
     });
 
+    test('an escalated email_send unverified row keeps checking, offers the admin controls and carries the admin alert (#125)', () => {
+        expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'unverified', lastError: 'fetch failed', escalated: true }))).toEqual({
+            source:     'email-approval',
+            key:        `${ID}:unverified:${REVISION}`,
+            wake:       false,
+            text:       'Outbound email (uid 42): no clear answer from email (fetch failed), so it may or may not have been sent. Checking Sent Mail before deciding whether to resend; you will be told the result.',
+            card:       { tone: 'retrying', title: 'Outcome still unknown after 24 h — still checking Sent Mail; Mark sent or Resend below', detail: 'fetch failed' },
+            escalation: { alert: 'Outbound email (uid 42): outcome still unknown after 24 h. Still checking Sent Mail; press Mark sent if you know it arrived, or Resend to send it again.' },
+        });
+    });
+
+    test('an escalated bsky_dm unverified row names its own destination and verb', () => {
+        const report = describeApprovedActionOutcome(row({ ...DM, state: 'unverified', lastError: 'socket hang up', escalated: true }));
+        expect(report.card.title).toBe('Outcome still unknown after 24 h — still checking the DM conversation; Mark sent or Resend below');
+        expect(report.escalation).toEqual({ alert: 'Bluesky DM "See you Tuesday": outcome still unknown after 24 h. Still checking the DM conversation; press Mark sent if you know it arrived, or Resend to send it again.' });
+    });
+
+    test('an unescalated unverified row carries no admin alert', () => {
+        expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'unverified', lastError: 'fetch failed', escalated: false }))).not.toHaveProperty('escalation');
+    });
+
+    test('email_send marked sent by the admin says the destination never confirmed it', () => {
+        expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'executed', resolvedBy: 'admin' }))).toEqual({
+            source: 'email-approval',
+            key:    `${ID}:executed:${REVISION}`,
+            wake:   true,
+            text:   'Outbound email (uid 42) was marked sent by the admin; Sent Mail never confirmed it.',
+            card:   { tone: 'sent', title: 'Marked sent by admin — not confirmed in Sent Mail' },
+        });
+    });
+
+    test('bsky_reply marked posted by the admin uses its own verb and destination and does not wake Izzy', () => {
+        expect(describeApprovedActionOutcome(row({ ...REPLY, state: 'executed', resolvedBy: 'admin' }))).toEqual({
+            source: 'bsky-approval',
+            key:    `${ID}:executed:${REVISION}`,
+            wake:   false,
+            text:   'Bluesky reply "Thanks for the link!" was marked posted by the admin; the account’s Bluesky posts never confirmed it.',
+            card:   { tone: 'sent', title: 'Marked posted by admin — not confirmed in the account’s Bluesky posts' },
+        });
+    });
+
     test('an unverified row with no lastError reports an unknown error, truncated like any other', () => {
         expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'unverified' })).card.detail).toBe('unknown error');
         expect(describeApprovedActionOutcome(row({ ...EMAIL, state: 'unverified', lastError: 'x'.repeat(600) })).card.detail).toHaveLength(500);

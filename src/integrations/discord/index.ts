@@ -124,3 +124,4 @@ export { createOutboxReplayDeliverFn } from './outbox-replay';
 
 // Approved outbound action outcomes: approval card + Izzy notification
 export { createApprovedActionOutcomeDelivery } from './approvals/outcome-delivery';
+export { ApprovedActionEscalationHandler } from './approvals/escalation-interaction-handler';

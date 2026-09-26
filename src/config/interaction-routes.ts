@@ -37,5 +37,13 @@ export const BSKY_BUTTON_PREFIXES = [
     'bsky-send-approve', 'bsky-send-approveallowlist', 'bsky-send-reject',
     'bsky-dm-approve',   'bsky-dm-approveallowlist',   'bsky-dm-reject',
 ] as const;
+/**
+ * `approved-action-{mark-sent,resend}:{uuid}:{updatedAt}` admin buttons on an approved action whose
+ * outcome has been unknown for 24 h (#125); the value is the unknown episode's `updatedAt` revision.
+ */
+export const APPROVED_ACTION_MARK_SENT_PREFIX = 'approved-action-mark-sent';
+export const APPROVED_ACTION_RESEND_PREFIX = 'approved-action-resend';
+export const APPROVED_ACTION_ESCALATION_PREFIXES = [APPROVED_ACTION_MARK_SENT_PREFIX, APPROVED_ACTION_RESEND_PREFIX] as const;
+
 /** `bsky-{send,dm}-reject-reason:{uuid}` outbound-rejection modals. */
 export const BSKY_MODAL_PREFIXES = ['bsky-send-reject-reason', 'bsky-dm-reject-reason'] as const;
