@@ -658,6 +658,32 @@ describe('vector backfill TTL (#129)', () => {
             await processPage([stale], DEFAULT_OPTIONS, index, embedder(), sha256Hex, clock);
             expect(storedTtl(index, stale)).toBe(NOW_S + 3000);
         });
+
+        test('a page read before the live indexer deleted the item cannot resurrect it (#134)', async () => {
+            const item = makeItem(0);
+            const index = openIndex();
+            const keys = MemoryToolKeyGenerator.createKeys(item.path);
+            // The live indexer's delete tombstoned this key after the backfill's GSI1 page was
+            // read but before this stale page's write reached the index.
+            expect(index.deleteAndTombstone(keys.PK, keys.SK, ITEM_VERSION + 1)).toBe(false);
+
+            const stats = await processPage([item], DEFAULT_OPTIONS, index, embedder(), sha256Hex, clock);
+
+            expect(stats).toEqual({ scanned: 1, skipped: 0, indexed: 0, errors: 0, ttlUpdated: 0, expired: 0, superseded: 1 });
+            expect(index.listRowsByPathPrefix('/identity/')).toEqual([]);
+        });
+
+        test('a page read at a version after the delete it raced can legitimately recreate the row (#134)', async () => {
+            const item = makeItem(0);
+            const index = openIndex();
+            const keys = MemoryToolKeyGenerator.createKeys(item.path);
+            expect(index.deleteAndTombstone(keys.PK, keys.SK, ITEM_VERSION - 1)).toBe(false);
+
+            const stats = await processPage([item], DEFAULT_OPTIONS, index, embedder(), sha256Hex, clock);
+
+            expect(stats).toEqual({ scanned: 1, skipped: 0, indexed: 1, errors: 0, ttlUpdated: 0, expired: 0, superseded: 0 });
+            expect(index.listRowsByPathPrefix('/identity/')).toHaveLength(1);
+        });
     });
 
     test('the run judges expiry at the page read time and reports expired and TTL-updated totals', async () => {

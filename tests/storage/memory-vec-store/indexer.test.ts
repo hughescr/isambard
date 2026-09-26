@@ -57,13 +57,13 @@ function makeLogger() {
 
 describe('AsyncIndexer', () => {
     let mockVectorIndex: {
-        getHash:  ReturnType<typeof mock>
-        upsert:   ReturnType<typeof mock>
-        setTtls:  ReturnType<typeof mock>
-        'delete': ReturnType<typeof mock>
-        query:    ReturnType<typeof mock>
-        close:    ReturnType<typeof mock>
-        isClosed: boolean
+        getHash:            ReturnType<typeof mock>
+        upsert:             ReturnType<typeof mock>
+        setTtls:            ReturnType<typeof mock>
+        deleteAndTombstone: ReturnType<typeof mock>
+        query:              ReturnType<typeof mock>
+        close:              ReturnType<typeof mock>
+        isClosed:           boolean
     };
     let mockEmbedder: {
         encode: ReturnType<typeof mock>
@@ -74,13 +74,13 @@ describe('AsyncIndexer', () => {
 
     beforeEach(() => {
         mockVectorIndex = {
-            getHash:  mock(() => undefined),
-            upsert:   mock(() => {}),
-            setTtls:  mock(() => 0),
-            'delete': mock(() => {}),
-            query:    mock(() => []),
-            close:    mock(() => {}),
-            isClosed: false,
+            getHash:            mock(() => undefined),
+            upsert:             mock(() => {}),
+            setTtls:            mock(() => 0),
+            deleteAndTombstone: mock(() => true),
+            query:              mock(() => []),
+            close:              mock(() => {}),
+            isClosed:           false,
         };
         mockEmbedder = {
             encode: mock(async (): Promise<EmbedResult> => makeEmbedResult()),
@@ -133,7 +133,7 @@ describe('AsyncIndexer', () => {
         });
 
         it('tracks a path while its work is pending and retires it on completion', async () => {
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/tracked') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/tracked'), sourceUpdatedAt: 1 });
             expect(indexer.trackedPathCount).toBe(1);
             await indexer.drain();
             expect(indexer.trackedPathCount).toBe(0);
@@ -197,12 +197,12 @@ describe('AsyncIndexer', () => {
 
     describe('queue bookkeeping', () => {
         it('removes completed jobs before calculating later queue pressure', async () => {
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/completed') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/completed'), sourceUpdatedAt: 1 });
             await Promise.resolve();
             await Promise.resolve();
 
             for(let i = 0; i < 1100; i++) {
-                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/jobs/item-${i}`) });
+                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/jobs/item-${i}`), sourceUpdatedAt: 1 });
             }
             await indexer.drain();
 
@@ -283,11 +283,11 @@ describe('AsyncIndexer', () => {
     });
 
     describe('delete flow', () => {
-        it('calls vectorIndex.delete for a delete job', async () => {
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/identity/foo') });
+        it('calls vectorIndex.deleteAndTombstone with the job\'s sourceUpdatedAt', async () => {
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/identity/foo'), sourceUpdatedAt: 4242 });
             await indexer.drain();
             const keys = MemoryToolKeyGenerator.createKeys(createMemoryPath('/identity/foo'));
-            expect(mockVectorIndex.delete).toHaveBeenCalledWith(keys.PK, keys.SK);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledWith(keys.PK, keys.SK, 4242);
             expect(mockEmbedder.encode).not.toHaveBeenCalled();
         });
     });
@@ -336,15 +336,15 @@ describe('AsyncIndexer', () => {
 
         it('retries SQLITE_BUSY with exponential 250ms then 500ms backoff before terminal drop', async () => {
             const failure = new Error('SQLITE_BUSY: database is locked');
-            mockVectorIndex.delete.mockImplementation(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementation(() => {
                 throw failure;
             });
             const path = createMemoryPath('/retry/busy');
             const retryWarning = waitForRetryWarning();
-            indexer.enqueue({ kind: 'delete', path });
+            indexer.enqueue({ kind: 'delete', path, sourceUpdatedAt: 1 });
             await retryWarning;
             jest.advanceTimersByTime(0);
-            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(1);
             const secondRetryWarning = new Promise<void>((resolve) => {
                 logger.warn.mockImplementation((...args: unknown[]) => {
                     const payload = args[0] as Record<string, unknown>;
@@ -356,10 +356,10 @@ describe('AsyncIndexer', () => {
             jest.advanceTimersByTime(250);
             await secondRetryWarning;
             jest.advanceTimersByTime(0);
-            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(2);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(2);
             jest.advanceTimersByTime(500);
             await indexer.drain();
-            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(3);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(3);
             const warnCalls = logger.warn.mock.calls as unknown as unknown[][];
             expect(warnCalls).toEqual([
                 [expect.objectContaining({ error: failure, path, attempt: 1, nextAttempt: 2, delayMs: 250, msg: 'AsyncIndexer job failed: retrying with bounded backoff' })],
@@ -370,13 +370,13 @@ describe('AsyncIndexer', () => {
 
         it('drops a non-lock vector-index error immediately without retrying', async () => {
             const failure = new Error('disk full');
-            mockVectorIndex.delete.mockImplementation(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementation(() => {
                 throw failure;
             });
             const path = createMemoryPath('/retry/non-transient');
-            indexer.enqueue({ kind: 'delete', path });
+            indexer.enqueue({ kind: 'delete', path, sourceUpdatedAt: 1 });
             await indexer.drain();
-            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(1);
             const warnCalls = logger.warn.mock.calls as unknown as unknown[][];
             expect(warnCalls).toEqual([[{ error: failure, path, msg: 'AsyncIndexer job failed: dropping and continuing' }]]);
         });
@@ -405,11 +405,11 @@ describe('AsyncIndexer', () => {
 
         it('supersedes a sleeping retry silently when newer same-path work arrives', async () => {
             const path = createMemoryPath('/retry/supersede');
-            mockVectorIndex.delete.mockImplementation(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementation(() => {
                 throw new Error('database is locked');
             });
             const retryWarning = waitForRetryWarning();
-            indexer.enqueue({ kind: 'delete', path });
+            indexer.enqueue({ kind: 'delete', path, sourceUpdatedAt: 1 });
             await retryWarning;
             jest.advanceTimersByTime(0);
             expect(jest.getTimerCount()).toBe(1);
@@ -418,7 +418,7 @@ describe('AsyncIndexer', () => {
             expect(jest.getTimerCount()).toBe(0);
             jest.advanceTimersByTime(500);
             await indexer.drain();
-            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(1);
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
             expect(logger.warn).toHaveBeenCalledTimes(1);
             expect(indexer.trackedPathCount).toBe(0);
@@ -506,7 +506,7 @@ describe('AsyncIndexer', () => {
             const blockerStarted = new Promise<void>((resolve) => {
                 markBlockerStarted = resolve;
             });
-            mockVectorIndex.delete.mockImplementationOnce(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementationOnce(() => {
                 throw new Error('database is locked');
             });
             mockEmbedder.encode.mockImplementation(async () => {
@@ -514,7 +514,7 @@ describe('AsyncIndexer', () => {
                 return blockerResult;
             });
             const retryWarning = waitForRetryWarning();
-            indexer.enqueue({ kind: 'delete', path: retryPath });
+            indexer.enqueue({ kind: 'delete', path: retryPath, sourceUpdatedAt: 1 });
             await retryWarning;
             jest.advanceTimersByTime(0);
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/retry/blocker'), content: 'block', ttl: undefined, sourceUpdatedAt: 1 });
@@ -523,7 +523,7 @@ describe('AsyncIndexer', () => {
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: retryPath, content: 'new', ttl: undefined, sourceUpdatedAt: 2 });
             resolveBlocker(makeEmbedResult());
             await indexer.drain();
-            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(1);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(1);
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(2);
         });
 
@@ -533,7 +533,7 @@ describe('AsyncIndexer', () => {
                 resolveSecond = resolve;
             });
             let deleteCount = 0;
-            mockVectorIndex.delete.mockImplementation(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementation(() => {
                 deleteCount++;
                 if(deleteCount === 1) {
                     throw new Error('database is locked');
@@ -541,14 +541,14 @@ describe('AsyncIndexer', () => {
                 resolveSecond();
             });
             const retryWarning = waitForRetryWarning();
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/first') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/first'), sourceUpdatedAt: 1 });
             const capturedDrain = indexer.drain();
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/second') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/second'), sourceUpdatedAt: 1 });
             await retryWarning;
             jest.advanceTimersByTime(0);
             await secondProcessed;
-            expect(mockVectorIndex.delete).toHaveBeenCalledWith(expect.any(String), expect.any(String));
-            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(2);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.any(Number));
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(2);
             let drained = false;
             void capturedDrain.then(() => {
                 drained = true;
@@ -558,19 +558,19 @@ describe('AsyncIndexer', () => {
             expect(drained).toBe(false);
             jest.advanceTimersByTime(250);
             await capturedDrain;
-            expect(mockVectorIndex.delete).toHaveBeenCalledTimes(3);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(3);
         });
 
         it('decrements queue pressure once per logical retrying job', async () => {
-            mockVectorIndex.delete.mockImplementationOnce(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementationOnce(() => {
                 throw new Error('database is locked');
             });
             const retryWarning = waitForRetryWarning();
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/pressure') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/retry/pressure'), sourceUpdatedAt: 1 });
             await retryWarning;
             jest.advanceTimersByTime(0);
             for(let i = 0; i < 1100; i++) {
-                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/retry/pressure-${i}`) });
+                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/retry/pressure-${i}`), sourceUpdatedAt: 1 });
             }
             expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ queueLen: 1100, path: createMemoryPath('/retry/pressure-1098') }));
             jest.advanceTimersByTime(250);
@@ -596,29 +596,29 @@ describe('AsyncIndexer', () => {
 
     describe('error handling', () => {
         it('logs and drops a non-transient vector-index failure without crashing the worker', async () => {
-            mockVectorIndex.delete.mockImplementation(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementation(() => {
                 throw new Error('delete failed');
             });
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a'), sourceUpdatedAt: 1 });
             await indexer.drain();
             expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ msg: 'AsyncIndexer job failed: dropping and continuing' }));
         });
 
         it('continues processing subsequent jobs after a non-transient failure', async () => {
-            mockVectorIndex.delete.mockImplementationOnce(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementationOnce(() => {
                 throw new Error('delete failed');
             });
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a'), sourceUpdatedAt: 1 });
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/b'), content: 'b', ttl: undefined, sourceUpdatedAt: 1 });
             await indexer.drain();
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
         });
 
         it('logs and drops job when vectorIndex.delete throws, continues', async () => {
-            mockVectorIndex.delete.mockImplementation(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementation(() => {
                 throw new Error('delete failed');
             });
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/identity/foo') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/identity/foo'), sourceUpdatedAt: 1 });
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path: createMemoryPath('/b'), content: 'b', ttl: undefined, sourceUpdatedAt: 1 });
             await indexer.drain();
             expect(logger.warn).toHaveBeenCalled();
@@ -672,10 +672,10 @@ describe('AsyncIndexer', () => {
 
     describe('error logging', () => {
         it('logs warn with path and msg fields when a non-transient job fails', async () => {
-            mockVectorIndex.delete.mockImplementation(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementation(() => {
                 throw new Error('delete error');
             });
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a'), sourceUpdatedAt: 1 });
             await indexer.drain();
             expect(logger.warn).toHaveBeenCalledTimes(1);
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
@@ -686,10 +686,10 @@ describe('AsyncIndexer', () => {
         });
 
         it('includes "AsyncIndexer" in the terminal drop msg field', async () => {
-            mockVectorIndex.delete.mockImplementation(() => {
+            mockVectorIndex.deleteAndTombstone.mockImplementation(() => {
                 throw new Error('delete error');
             });
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/a'), sourceUpdatedAt: 1 });
             await indexer.drain();
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
             const warnArg = warnCalls[0][0];
@@ -713,7 +713,7 @@ describe('AsyncIndexer', () => {
             const throttle = AsyncIndexer.QUEUE_WARN_THROTTLE;
             const firstWarnAt = threshold + throttle;
             for(let n = 0; n < firstWarnAt; n++) {
-                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/jobs/item${n}`) });
+                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/jobs/item${n}`), sourceUpdatedAt: 1 });
             }
             await indexer.drain();
             // Warn should have been called exactly once (at the first throttle boundary)
@@ -728,10 +728,10 @@ describe('AsyncIndexer', () => {
             const throttle = AsyncIndexer.QUEUE_WARN_THROTTLE;
             // First warn fires when queue length = threshold + throttle
             for(let n = 0; n < threshold + throttle - 1; n++) {
-                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/jobs/item${n}`) });
+                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/jobs/item${n}`), sourceUpdatedAt: 1 });
             }
             // The final job triggers the warn
-            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/jobs/trigger') });
+            indexer.enqueue({ kind: 'delete', path: createMemoryPath('/jobs/trigger'), sourceUpdatedAt: 1 });
             await indexer.drain();
             const warnCalls = logger.warn.mock.calls as unknown as Record<string, unknown>[][];
             const warnArg = warnCalls[0][0];
@@ -744,7 +744,7 @@ describe('AsyncIndexer', () => {
             // First warn at threshold+throttle, second at threshold+2*throttle
             const totalJobs = threshold + throttle * 2;
             for(let n = 0; n < totalJobs; n++) {
-                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/jobs/item${n}`) });
+                indexer.enqueue({ kind: 'delete', path: createMemoryPath(`/jobs/item${n}`), sourceUpdatedAt: 1 });
             }
             await indexer.drain();
             // Should have warned exactly twice: at threshold+throttle and threshold+2*throttle

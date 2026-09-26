@@ -289,6 +289,10 @@ export class MemoryToolBackend extends DynamoTableAccess {
         const existing = await this.coreOps.get(path);
 
         await this.coreOps.delete(path);
+        // Captured immediately after the DynamoDB delete completes (#134), not after the
+        // best-effort tag-index cleanup below: enqueueIndex() carries this as the delete job's own
+        // version marker, so a delayed enqueue never understates how fresh the delete was.
+        const sourceUpdatedAt = Date.now();
 
         // Delete tag index items if item had tags (counts handled internally)
         const normalizedTags = normalizeTags(existing?.tags);
@@ -301,7 +305,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
         }
 
         // Enqueue vector index delete job (fire-and-forget)
-        this.enqueueIndex({ kind: 'delete', path });
+        this.enqueueIndex({ kind: 'delete', path, sourceUpdatedAt });
 
         if(classifyMemoryPath(path).namespace === 'identity') {
             this.onIdentityWrite?.();

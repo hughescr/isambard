@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn, jest } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -1221,13 +1221,26 @@ describe('MemoryToolBackend', () => {
                 updatedAt:      '2024-01-01T00:00:00.000Z',
             };
 
-            test('calls indexer.enqueue with delete job after successful delete', async () => {
-                ddbMock.on(GetCommand).resolves({ Item: existingItemForDelete });
-                ddbMock.on(DeleteCommand).resolves({});
-                const backendWithIndexer = makeBackendWithIndexer();
-                await backendWithIndexer.delete('/identity/foo' as MemoryPath);
-                expect(enqueueMock).toHaveBeenCalledTimes(1);
-                expect(enqueueMock.mock.calls[0][0]).toEqual({ kind: 'delete', path: '/identity/foo' });
+            describe('delete job version stamping (#134)', () => {
+                const FIXED_NOW = 1_700_000_000_000;
+
+                beforeEach(() => {
+                    jest.useFakeTimers();
+                    jest.setSystemTime(FIXED_NOW);
+                });
+
+                afterEach(() => {
+                    jest.useRealTimers();
+                });
+
+                test('calls indexer.enqueue with delete job after successful delete, stamped with the delete\'s own version', async () => {
+                    ddbMock.on(GetCommand).resolves({ Item: existingItemForDelete });
+                    ddbMock.on(DeleteCommand).resolves({});
+                    const backendWithIndexer = makeBackendWithIndexer();
+                    await backendWithIndexer.delete('/identity/foo' as MemoryPath);
+                    expect(enqueueMock).toHaveBeenCalledTimes(1);
+                    expect(enqueueMock.mock.calls[0][0]).toEqual({ kind: 'delete', path: '/identity/foo', sourceUpdatedAt: FIXED_NOW });
+                });
             });
 
             test('does not propagate indexer.enqueue error on delete', async () => {

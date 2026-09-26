@@ -12,7 +12,7 @@
  * and @anthropic-ai/claude-agent-sdk globally — those mocks are in effect here.
  */
 import '../setup'; // ensures SST mock + node-llama-cpp mock are in effect
-import { beforeEach, afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { beforeEach, afterEach, describe, expect, it, mock, spyOn, jest } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
     BatchWriteCommand,
@@ -597,11 +597,15 @@ describe('Vector feature wiring', () => {
                 sourceUpdatedAt: Date.parse(updated.updatedAt),
             });
 
-            // 3. delete → should enqueue a 'delete' job
+            // 3. delete → should enqueue a 'delete' job, stamped with the delete's own version (#134)
+            const FIXED_NOW = 1_700_000_000_000;
+            jest.useFakeTimers();
+            jest.setSystemTime(FIXED_NOW);
             await backend.delete('/state/test-item' as MemoryPath);
+            jest.useRealTimers();
             const afterDelete = [...enqueuedJobs];
             expect(afterDelete).toHaveLength(3);
-            expect(afterDelete[2]).toEqual({ kind: 'delete', path: '/state/test-item' as MemoryPath });
+            expect(afterDelete[2]).toEqual({ kind: 'delete', path: '/state/test-item' as MemoryPath, sourceUpdatedAt: FIXED_NOW });
         });
     });
 });

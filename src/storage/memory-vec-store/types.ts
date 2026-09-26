@@ -99,8 +99,16 @@ export interface IndexerUpsertJob {
  * A delete job: remove a memory item from the vector index.
  */
 export interface IndexerDeleteJob {
-    kind: 'delete'
-    path: MemoryPath
+    kind:            'delete'
+    path:            MemoryPath
+    /**
+     * The delete's own version marker: epoch ms of `Date.now()` at the moment the underlying
+     * DynamoDB delete completed. Unlike {@link IndexerUpsertJob.sourceUpdatedAt} (which reuses the
+     * persisted `updatedAt`), a delete carries no persisted version to reuse — this is stamped by
+     * the caller instead. Guards {@link VectorIndexEntry.sourceUpdatedAt}-style resurrection: a
+     * backfill page read before this delete cannot recreate the row (#134).
+     */
+    sourceUpdatedAt: number
 }
 
 /**

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from 'bun:te
 import { logger } from '@hughescr/logger';
 import { VectorIndexClosedError, VectorIndexError } from '@/errors';
 import { createLayerName, createMemoryPath, createIndexLayer, createSearchableNamespace } from '@/storage/memory-tool/types';
-import { PRUNE_EXPIRED_BATCH_SIZE, VectorIndex } from '@/storage/memory-vec-store/backend';
+import { DELETE_TOMBSTONE_TTL_MS, PRUNE_EXPIRED_BATCH_SIZE, PRUNE_TOMBSTONE_BATCH_SIZE, VectorIndex } from '@/storage/memory-vec-store/backend';
 import type { PackedBinaryEmbedding1024, VectorIndexEntry } from '@/storage/memory-vec-store/types';
 import { createEpochSeconds } from '@/storage/repositories/types';
 
@@ -286,6 +286,16 @@ describe('VectorIndex', () => {
         it('delete throws VectorIndexClosedError after close', () => {
             index.close();
             expect(() => index.delete('pk1', 'sk1')).toThrow(VectorIndexClosedError);
+        });
+
+        it('deleteAndTombstone throws VectorIndexClosedError after close', () => {
+            index.close();
+            expect(() => index.deleteAndTombstone('pk1', 'sk1', 1)).toThrow(VectorIndexClosedError);
+        });
+
+        it('pruneExpiredTombstones throws VectorIndexClosedError after close', () => {
+            index.close();
+            expect(() => index.pruneExpiredTombstones()).toThrow(VectorIndexClosedError);
         });
 
         it('query throws VectorIndexClosedError after close', () => {
@@ -687,6 +697,70 @@ describe('VectorIndex TTL and prune (#129)', () => {
         });
     });
 
+    describe('pruneExpiredTombstones (#134)', () => {
+        function tombstoneCount(): number {
+            return db.query<{ n: number }, []>('SELECT COUNT(*) AS n FROM vector_delete_tombstones').get()!.n;
+        }
+
+        it('deletes only tombstones created at or before the cutoff and returns the count', () => {
+            index.deleteAndTombstone('DIR#/events/activity/chat', 'FILE#old', 1); // created_at = clockMs = NOW_MS
+            clockMs = NOW_MS + DELETE_TOMBSTONE_TTL_MS;
+            index.deleteAndTombstone('DIR#/events/activity/chat', 'FILE#new', 2); // created_at = NOW_MS + TTL
+            expect(tombstoneCount()).toBe(2);
+
+            expect(index.pruneExpiredTombstones()).toBe(1);
+
+            expect(tombstoneCount()).toBe(1);
+            expect(db.query<{ sk: string }, []>('SELECT sk FROM vector_delete_tombstones').get()).toEqual({ sk: 'FILE#new' });
+        });
+
+        it('prunes a tombstone exactly DELETE_TOMBSTONE_TTL_MS old (boundary is inclusive)', () => {
+            index.deleteAndTombstone('DIR#/events/activity/chat', 'FILE#old', 1); // created_at = NOW_MS
+            clockMs = NOW_MS + DELETE_TOMBSTONE_TTL_MS;
+            expect(index.pruneExpiredTombstones()).toBe(1);
+            expect(tombstoneCount()).toBe(0);
+        });
+
+        it('keeps a tombstone one millisecond younger than the TTL boundary', () => {
+            index.deleteAndTombstone('DIR#/events/activity/chat', 'FILE#old', 1); // created_at = NOW_MS
+            clockMs = NOW_MS + DELETE_TOMBSTONE_TTL_MS - 1;
+            expect(index.pruneExpiredTombstones()).toBe(0);
+            expect(tombstoneCount()).toBe(1);
+        });
+
+        it('returns 0 and deletes nothing when no tombstone has expired', () => {
+            index.deleteAndTombstone('DIR#/events/activity/chat', 'FILE#fresh', 1);
+            expect(index.pruneExpiredTombstones()).toBe(0);
+            expect(tombstoneCount()).toBe(1);
+        });
+
+        it('loops over bounded batches until a batch comes back short', () => {
+            for(const sk of ['t1', 't2', 't3', 't4', 't5']) {
+                index.deleteAndTombstone('DIR#/events/activity/chat', `FILE#${sk}`, 1);
+            }
+            clockMs = NOW_MS + DELETE_TOMBSTONE_TTL_MS;
+            expect(index.pruneExpiredTombstones(2)).toBe(5);
+            expect(tombstoneCount()).toBe(0);
+        });
+
+        it('stops after an exactly-full final batch', () => {
+            for(const sk of ['t1', 't2', 't3', 't4']) {
+                index.deleteAndTombstone('DIR#/events/activity/chat', `FILE#${sk}`, 1);
+            }
+            clockMs = NOW_MS + DELETE_TOMBSTONE_TTL_MS;
+            expect(index.pruneExpiredTombstones(2)).toBe(4);
+            expect(tombstoneCount()).toBe(0);
+        });
+
+        it('defaults to batches of 500', () => {
+            expect(PRUNE_TOMBSTONE_BATCH_SIZE).toBe(500);
+        });
+
+        it('pins the tombstone TTL at 15 minutes', () => {
+            expect(DELETE_TOMBSTONE_TTL_MS).toBe(15 * 60 * 1000);
+        });
+    });
+
     describe('setTtls', () => {
         it('updates many rows in one call and counts only rows whose ttl actually changed', () => {
             index.upsert(entry('a', null));
@@ -818,6 +892,98 @@ describe('VectorIndex TTL and prune (#129)', () => {
 
         it('returns false for a missing row even with a guard', () => {
             expect(index.delete('DIR#/events/activity/chat', 'FILE#a', generation)).toBe(false);
+        });
+    });
+
+    describe('deleteAndTombstone (#134)', () => {
+        const PK = 'DIR#/events/activity/chat';
+
+        function tombstoneRow(sk: string) {
+            return db.query<{ source_updated_at: number, created_at: number }, [string, string]>(
+                'SELECT source_updated_at, created_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?'
+            ).get(PK, `FILE#${sk}`);
+        }
+
+        it('removes an existing row from both tables and returns true', () => {
+            index.upsert(entry('a', null, { sourceUpdatedAt: 100 }));
+            expect(rowCounts()).toEqual({ meta: 1, vec: 1 });
+            expect(index.deleteAndTombstone(PK, 'FILE#a', 200)).toBe(true);
+            expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
+        });
+
+        it('deletes a row whose source version exactly ties the delete\'s version', () => {
+            index.upsert(entry('a', null, { sourceUpdatedAt: 100 }));
+            expect(index.deleteAndTombstone(PK, 'FILE#a', 100)).toBe(true);
+            expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
+        });
+
+        it('deletes a legacy row with no source version regardless of the delete\'s version', () => {
+            index.upsert(entry('a', null));
+            expect(index.deleteAndTombstone(PK, 'FILE#a', 1)).toBe(true);
+            expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
+        });
+
+        it('returns false and still records a tombstone when no row exists', () => {
+            expect(index.deleteAndTombstone(PK, 'FILE#missing', 100)).toBe(false);
+            expect(tombstoneRow('missing')).toEqual({ source_updated_at: 100, created_at: NOW_MS });
+            // The tombstone landed: a stale upsert for that key is now refused.
+            expect(index.upsert(entry('missing', null, { sourceUpdatedAt: 50 }))).toBe(false);
+            expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
+        });
+
+        it('keeps a row that a concurrent recreate made newer than a late-arriving delete job, but still advances the tombstone (#134 challenge fix)', () => {
+            // The delete job was enqueued for an old version (300); by the time it runs, a
+            // concurrent recreate has already written a newer row (1000) via its own upsert job.
+            index.upsert(entry('a', null, { sourceUpdatedAt: 1000, contentHash: 'recreated' }));
+            expect(index.deleteAndTombstone(PK, 'FILE#a', 300)).toBe(false);
+            // The newer row must survive untouched.
+            expect(rowCounts()).toEqual({ meta: 1, vec: 1 });
+            expect(index.getHash(PK, 'FILE#a')).toBe('recreated');
+            // The tombstone is still recorded at the delete's version, so a backfill page read
+            // before the delete (but also before the recreate) is still refused.
+            expect(index.upsert(entry('a', null, { sourceUpdatedAt: 200, contentHash: 'stale-backfill' }))).toBe(false);
+            expect(index.getHash(PK, 'FILE#a')).toBe('recreated');
+            // A legitimate write at or after the surviving row's own version still succeeds.
+            expect(index.upsert(entry('a', null, { sourceUpdatedAt: 1000, contentHash: 'refresh' }))).toBe(true);
+            expect(index.getHash(PK, 'FILE#a')).toBe('refresh');
+        });
+
+        it('keeps the maximum source_updated_at across repeated tombstones for the same key', () => {
+            index.deleteAndTombstone(PK, 'FILE#a', 100);
+            index.deleteAndTombstone(PK, 'FILE#a', 50); // out-of-order duplicate: must not regress the tombstone
+            expect(tombstoneRow('a')?.source_updated_at).toBe(100);
+            expect(index.upsert(entry('a', null, { sourceUpdatedAt: 75 }))).toBe(false);
+
+            index.deleteAndTombstone(PK, 'FILE#a', 200);
+            expect(tombstoneRow('a')?.source_updated_at).toBe(200);
+            expect(index.upsert(entry('a', null, { sourceUpdatedAt: 150 }))).toBe(false);
+            expect(index.upsert(entry('a', null, { sourceUpdatedAt: 200 }))).toBe(true);
+        });
+    });
+
+    describe('upsert delete-tombstone guard (#134)', () => {
+        const PK = 'DIR#/events/activity/chat';
+
+        it.each([
+            ['strictly before the tombstone\'s version', 99, false],
+            ['tying the tombstone\'s version', 100, true],
+            ['newer than the tombstone\'s version', 101, true],
+        ] as const)('an upsert %s is resolved by the guard', (_label, sourceUpdatedAt, expected) => {
+            index.deleteAndTombstone(PK, 'FILE#a', 100);
+            expect(index.upsert(entry('a', null, { sourceUpdatedAt }))).toBe(expected);
+            expect(rowCounts()).toEqual(expected ? { meta: 1, vec: 1 } : { meta: 0, vec: 0 });
+        });
+
+        it('refuses an upsert with no sourceUpdatedAt when a tombstone exists', () => {
+            index.deleteAndTombstone(PK, 'FILE#a', 100);
+            expect(index.upsert(entry('a', null))).toBe(false);
+            expect(rowCounts()).toEqual({ meta: 0, vec: 0 });
+        });
+
+        it('an upsert on an unrelated key is unaffected by another key\'s tombstone', () => {
+            index.deleteAndTombstone(PK, 'FILE#a', 100);
+            expect(index.upsert(entry('b', null, { sourceUpdatedAt: 1 }))).toBe(true);
+            expect(rowCounts()).toEqual({ meta: 1, vec: 1 });
         });
     });
 

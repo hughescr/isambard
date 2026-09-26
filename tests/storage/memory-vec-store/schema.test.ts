@@ -226,6 +226,52 @@ describe('runSchemaMigration', () => {
         });
     });
 
+    describe('vector_delete_tombstones table (#134)', () => {
+        it('creates vector_delete_tombstones table on first run', () => {
+            runSchemaMigration(db);
+            const row = db.query<{ name: string }, []>(
+                `SELECT name FROM sqlite_master WHERE type='table' AND name='vector_delete_tombstones'`
+            ).get();
+            expect(row).toBeDefined();
+            expect(row?.name).toBe('vector_delete_tombstones');
+        });
+
+        it('creates idx_vector_delete_tombstones_created_at index on first run', () => {
+            runSchemaMigration(db);
+            const row = db.query<{ name: string }, []>(
+                `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_vector_delete_tombstones_created_at'`
+            ).get();
+            expect(row).toBeDefined();
+            expect(row?.name).toBe('idx_vector_delete_tombstones_created_at');
+        });
+
+        it('vector_delete_tombstones has UNIQUE constraint on (pk, sk)', () => {
+            runSchemaMigration(db);
+            db.run(
+                'INSERT INTO vector_delete_tombstones (pk, sk, source_updated_at, created_at) VALUES (?, ?, ?, ?)',
+                ['pk1', 'sk1', 100, 1000]
+            );
+            expect(() => {
+                db.run(
+                    'INSERT INTO vector_delete_tombstones (pk, sk, source_updated_at, created_at) VALUES (?, ?, ?, ?)',
+                    ['pk1', 'sk1', 200, 2000]
+                );
+            }).toThrow();
+        });
+
+        it('is idempotent — running twice keeps the table and does not throw', () => {
+            runSchemaMigration(db);
+            db.run(
+                'INSERT INTO vector_delete_tombstones (pk, sk, source_updated_at, created_at) VALUES (?, ?, ?, ?)',
+                ['pk1', 'sk1', 100, 1000]
+            );
+            expect(() => runSchemaMigration(db)).not.toThrow();
+            expect(db.query('SELECT pk, sk, source_updated_at, created_at FROM vector_delete_tombstones').all()).toEqual([
+                { pk: 'pk1', sk: 'sk1', source_updated_at: 100, created_at: 1000 },
+            ]);
+        });
+    });
+
     describe('legacy schema migration guard', () => {
         it('throws VectorIndexUnavailableError when memory_vectors has an embedding column', () => {
             // Manually create the old schema (with embedding column)

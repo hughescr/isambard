@@ -27,6 +27,14 @@
  * IMMEDIATE transaction, so when Izzy and a tool open the file together the second waits on
  * busy_timeout and then sees the column, instead of failing with "duplicate column name".
  *
+ * Table: vector_delete_tombstones (#134)
+ * - Brand-new, purely additive table: no ALTER needed, created with the rest of the schema on
+ *   every open (old file or new).
+ * - Records the version (epoch ms) a live delete last observed for (pk, sk), so a backfill page
+ *   read before that delete cannot resurrect the row it removed. See backend.ts's
+ *   `deleteAndTombstone()`/`upsert()` for how it is written and consulted, and
+ *   `pruneExpiredTombstones()` for its TTL-bounded cleanup.
+ *
  * Idempotent: all non-migration statements use IF NOT EXISTS.
  */
 import type { Database } from 'bun:sqlite';
@@ -98,6 +106,23 @@ export function runSchemaMigration(db: Database): void {
 
         db.run(`
             CREATE VIRTUAL TABLE IF NOT EXISTS vec_memory USING vec0(embedding bit[1024])
+        `);
+
+        // #134: brand-new table, so plain CREATE ... IF NOT EXISTS suffices (no ALTER needed).
+        db.run(`
+            CREATE TABLE IF NOT EXISTS vector_delete_tombstones (
+                rowid              INTEGER PRIMARY KEY,
+                pk                 TEXT    NOT NULL,
+                sk                 TEXT    NOT NULL,
+                source_updated_at  INTEGER NOT NULL,
+                created_at         INTEGER NOT NULL,
+                UNIQUE(pk, sk)
+            )
+        `);
+
+        db.run(`
+            CREATE INDEX IF NOT EXISTS idx_vector_delete_tombstones_created_at
+            ON vector_delete_tombstones(created_at)
         `);
     }).immediate();
 }

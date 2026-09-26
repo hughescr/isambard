@@ -7,7 +7,7 @@
  */
 
 // Core classes
-export { VectorIndex, PRUNE_EXPIRED_BATCH_SIZE } from './backend.js';
+export { VectorIndex, PRUNE_EXPIRED_BATCH_SIZE, PRUNE_TOMBSTONE_BATCH_SIZE, DELETE_TOMBSTONE_TTL_MS } from './backend.js';
 export { AsyncIndexer } from './indexer.js';
 export {
     createVectorPruneScheduler,

@@ -18,7 +18,7 @@ interface VectorPruneLogger {
 }
 
 export interface VectorPruneSchedulerDeps {
-    vectorIndex: Pick<VectorIndex, 'pruneExpired' | 'isClosed'>
+    vectorIndex: Pick<VectorIndex, 'pruneExpired' | 'pruneExpiredTombstones' | 'isClosed'>
     logger:      VectorPruneLogger
     intervalMs?: number
 }
@@ -49,6 +49,18 @@ export function createVectorPruneScheduler(deps: VectorPruneSchedulerDeps): Vect
             }
         } catch (error) {
             deps.logger.warn({ error, msg: 'Vector-index expiry prune failed; will retry next interval' });
+        }
+        // Independent try/catch (#134): a tombstone-prune failure must never block the expiry
+        // prune above, and vice versa — each kind retries on its own next interval.
+        try {
+            const pruned = deps.vectorIndex.pruneExpiredTombstones();
+            if(pruned > 0) {
+                deps.logger.info({ pruned, msg: 'Pruned expired delete tombstones' });
+            } else {
+                deps.logger.debug({ pruned, msg: 'No expired delete tombstones to prune' });
+            }
+        } catch (error) {
+            deps.logger.warn({ error, msg: 'Vector-index tombstone prune failed; will retry next interval' });
         }
     };
 

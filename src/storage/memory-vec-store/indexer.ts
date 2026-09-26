@@ -24,10 +24,10 @@ interface IndexerLogger {
 
 /** Minimal vector index interface */
 interface VectorIndexLike {
-    getHash:  (pk: string, sk: string) => string | undefined
-    upsert:   (entry: VectorIndexEntry) => void
-    setTtls:  (entries: readonly VectorTtlUpdate[]) => number
-    'delete': (pk: string, sk: string) => void
+    getHash:            (pk: string, sk: string) => string | undefined
+    upsert:             (entry: VectorIndexEntry) => void
+    setTtls:            (entries: readonly VectorTtlUpdate[]) => number
+    deleteAndTombstone: (pk: string, sk: string, sourceUpdatedAt: number) => boolean
 }
 
 /** Dependencies for AsyncIndexer */
@@ -184,7 +184,7 @@ export class AsyncIndexer {
         try {
             const keys = MemoryToolKeyGenerator.createKeys(work.job.path);
             if(work.job.kind === 'delete') {
-                this.#vectorIndex.delete(keys.PK, keys.SK);
+                this.#vectorIndex.deleteAndTombstone(keys.PK, keys.SK, work.job.sourceUpdatedAt);
             } else {
                 const text = `${work.job.path}\n${work.job.content}`;
                 const contentHash = await sha256Hex(text);

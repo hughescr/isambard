@@ -10,6 +10,11 @@
  *   are excluded from queries and removed by `pruneExpired()` with zero DynamoDB reads
  * - Source-version guard (#129): each row carries the DynamoDB item's `updatedAt` it reflects, and
  *   `upsert`/`setTtls` never replace a row with a newer one, so a stale read cannot roll it back
+ * - Delete tombstones (#134): `deleteAndTombstone()` records the version of every live delete in
+ *   `vector_delete_tombstones`, and `upsert()` refuses to recreate a row at an older version than
+ *   the delete it would resurrect — closing the gap where a backfill page read before a live
+ *   delete could otherwise re-insert an orphan row. `pruneExpiredTombstones()` bounds the table's
+ *   size with zero DynamoDB reads, mirroring `pruneExpired()`.
  *
  * Architecture: two tables share a rowid:
  *   memory_vectors  — metadata (pk, sk, layer, content_hash, updated_at, ttl, source_updated_at)
@@ -210,11 +215,32 @@ interface SnapshotRow {
     source_updated_at: number | null
 }
 
+/** Row for a rowid + source-version lookup, used by `deleteAndTombstone` (#134). */
+interface RowIdAndVersionRow {
+    rowid:             number
+    source_updated_at: number | null
+}
+
+/** Row for a delete-tombstone lookup, used by `upsert` (#134). */
+interface TombstoneRow {
+    source_updated_at: number
+}
+
 /** sqlite-vec 0.1.x rejects KNN k values above this ceiling. */
 const SQLITE_VEC_KNN_MAX_K = 4096;
 
 /** Default number of expired rows deleted per IMMEDIATE transaction by `pruneExpired`. */
 export const PRUNE_EXPIRED_BATCH_SIZE = 500;
+
+/** Default number of expired tombstones deleted per IMMEDIATE transaction by `pruneExpiredTombstones` (#134). */
+export const PRUNE_TOMBSTONE_BATCH_SIZE = 500;
+
+/**
+ * How long a delete tombstone (#134) is kept before `pruneExpiredTombstones` removes it: a large
+ * safety margin over the actual race window (one backfill page's read-to-write gap, bounded to
+ * low seconds even with the indexer's retries/backoff), chosen so retuning it later is cheap.
+ */
+export const DELETE_TOMBSTONE_TTL_MS = 15 * 60 * 1000;
 
 export interface VectorIndexOpenDeps {
     configure?:           () => void
@@ -356,7 +382,12 @@ export class VectorIndex {
      * entry's is the same or newer; otherwise neither table changes (the row already reflects a
      * later DynamoDB write than the one this entry was read from).
      *
-     * @returns false when the guard kept a newer row, true when the entry was written.
+     * Delete-tombstone guard (#134): if a live delete tombstoned this (pk, sk) more recently than
+     * this entry's own source version (or the entry has none), the write is refused — a stale
+     * backfill page read before that delete cannot resurrect the row it removed. A tie is let
+     * through, matching the row-vs-row guard's `>=` convention.
+     *
+     * @returns false when a guard kept a newer row (or a delete), true when the entry was written.
      * @throws {VectorIndexError} If the embedding vector is not exactly 128 bytes.
      */
     upsert(entry: VectorIndexEntry): boolean {
@@ -370,6 +401,17 @@ export class VectorIndex {
         }
 
         const upsertTx = this.#db.transaction((): boolean => {
+            // Delete-tombstone guard (#134): an entry with no version, or one older than the most
+            // recent live delete of this key, is refused before it ever touches memory_vectors.
+            const tombstone = this.#db
+                .query<TombstoneRow, [string, string]>(
+                    'SELECT source_updated_at FROM vector_delete_tombstones WHERE pk = ? AND sk = ?'
+                )
+                .get(entry.pk, entry.sk);
+            if(tombstone !== null && (entry.sourceUpdatedAt === undefined || entry.sourceUpdatedAt === null || entry.sourceUpdatedAt < tombstone.source_updated_at)) {
+                return false;
+            }
+
             // Step 1: upsert metadata row; ON CONFLICT updates all fields (ttl included, so a
             // re-put without a TTL clears it, as DynamoDB PutItem does) and preserves rowid —
             // unless the stored row reflects a newer source version, when nothing changes.
@@ -453,6 +495,56 @@ export class VectorIndex {
     }
 
     /**
+     * Live-delete path for the AsyncIndexer (#134): deletes (pk, sk) from both tables — but, unlike
+     * {@link delete}, only when no row exists or the stored row's source version is no newer than
+     * `sourceUpdatedAt` — and always records/advances a tombstone for (pk, sk) at `sourceUpdatedAt`
+     * (or the tombstone's own prior value if that is newer), in the same IMMEDIATE transaction.
+     *
+     * The version guard matters because delete jobs and upsert jobs for the same path are not
+     * always processed in real-time order: if this memory was legitimately recreated with a newer
+     * source version before this (older) delete job reaches the front of the queue, deleting the
+     * newer row would destroy live data. The tombstone is still recorded in that case (advanced,
+     * never regressed) so a backfill page read before this delete's own version keeps being
+     * refused by {@link upsert} even though the row itself was not touched.
+     *
+     * @returns true when a row was actually deleted; false when there was none, or the stored row
+     *   was kept because it is strictly newer than `sourceUpdatedAt`.
+     */
+    deleteAndTombstone(pk: string, sk: string, sourceUpdatedAt: number): boolean {
+        this.#assertOpen();
+        const now = this.#now();
+
+        const tx = this.#db.transaction((): boolean => {
+            const row = this.#db
+                .query<RowIdAndVersionRow, [string, string]>(
+                    'SELECT rowid, source_updated_at FROM memory_vectors WHERE pk = ? AND sk = ?'
+                )
+                .get(pk, sk);
+
+            let deleted = false;
+            // Stryker disable next-line llm: SQLite returns null for a miss and RowIdAndVersionRow is an object, so a falsiness check has identical results.
+            if(row !== null && (row.source_updated_at === null || row.source_updated_at <= sourceUpdatedAt)) {
+                this.#db.run('DELETE FROM memory_vectors WHERE rowid = ?', [row.rowid]);
+                this.#db.run('DELETE FROM vec_memory WHERE rowid = ?', [row.rowid]);
+                deleted = true;
+            }
+
+            this.#db.run(
+                `INSERT INTO vector_delete_tombstones (pk, sk, source_updated_at, created_at)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(pk, sk) DO UPDATE SET
+                     source_updated_at = MAX(source_updated_at, excluded.source_updated_at),
+                     created_at        = excluded.created_at`,
+                [pk, sk, sourceUpdatedAt, now]
+            );
+
+            return deleted;
+        });
+
+        return tx.immediate();
+    }
+
+    /**
      * Deletes every row whose TTL has passed (`ttl <= now`, epoch seconds) from both tables.
      * Each batch selects and deletes inside one IMMEDIATE transaction, so a TTL refreshed by
      * another connection before the batch takes the write lock is honoured, and each lock hold
@@ -485,6 +577,40 @@ export class VectorIndex {
             // vec0's DELETE `changes` over-reports, so the count comes from memory_vectors only.
             this.#db.run('DELETE FROM vec_memory WHERE rowid IN (SELECT value FROM json_each(?))', [ids]);
             return this.#db.run('DELETE FROM memory_vectors WHERE rowid IN (SELECT value FROM json_each(?))', [ids]).changes;
+        });
+        return batchTx.immediate();
+    }
+
+    /**
+     * Deletes every delete-tombstone (#134) older than {@link DELETE_TOMBSTONE_TTL_MS}. Each batch
+     * selects and deletes inside one IMMEDIATE transaction, mirroring {@link pruneExpired}.
+     * Zero DynamoDB reads: the tombstone's own `created_at` is authoritative.
+     *
+     * @returns the number of tombstones deleted.
+     */
+    pruneExpiredTombstones(batchSize: number = PRUNE_TOMBSTONE_BATCH_SIZE): number {
+        this.#assertOpen();
+        const cutoffMs = this.#now() - DELETE_TOMBSTONE_TTL_MS;
+        let total = 0;
+        for(;;) {
+            const deleted = this.#pruneExpiredTombstonesBatch(cutoffMs, batchSize);
+            total += deleted;
+            if(deleted < batchSize) {
+                return total;
+            }
+        }
+    }
+
+    #pruneExpiredTombstonesBatch(cutoffMs: number, batchSize: number): number {
+        const batchTx = this.#db.transaction((): number => {
+            const rowIds = this.#db
+                .query<RowIdRow, [number, number]>(
+                    'SELECT rowid FROM vector_delete_tombstones WHERE created_at <= ? ORDER BY rowid LIMIT ?'
+                )
+                .all(cutoffMs, batchSize)
+                .map(row => row.rowid);
+            const ids = JSON.stringify(rowIds);
+            return this.#db.run('DELETE FROM vector_delete_tombstones WHERE rowid IN (SELECT value FROM json_each(?))', [ids]).changes;
         });
         return batchTx.immediate();
     }
