@@ -553,6 +553,29 @@ describe('createApprovedActionOutcomeDelivery', () => {
             expect(h.send).toHaveBeenCalledTimes(1);
         });
 
+        test('waits for the admin ping even when Izzy refused the interim notification', async () => {
+            const h = escalatedHarness();
+            const sendDone = Promise.withResolvers<unknown>();
+            h.send.mockImplementation(() => sendDone.promise);
+            h.notify.mockImplementation(() => false);
+            let settled = false;
+            const delivery = h.deliver({ ...ESCALATED, outcomeNotified: undefined }).then((result) => {
+                settled = true;
+                return result;
+            });
+            for(let turn = 0; turn < 20; turn++) {
+                // eslint-disable-next-line no-await-in-loop -- drain delivery's microtask hops up to the pending send.
+                await Promise.resolve();
+            }
+            expect(h.send).toHaveBeenCalledTimes(1);
+            expect(settled).toBe(false);
+            expect(h.markAdminNotified).not.toHaveBeenCalled();
+
+            sendDone.resolve({ channelId: PING.channelId, id: PING.messageId });
+            expect(await delivery).toBe(false);
+            expect(h.markAdminNotified).toHaveBeenCalledTimes(1);
+        });
+
         test('then pings only the admin once, linking the card, records the ping and does not tell Izzy again', async () => {
             const h = escalatedHarness();
             const events: string[] = [];

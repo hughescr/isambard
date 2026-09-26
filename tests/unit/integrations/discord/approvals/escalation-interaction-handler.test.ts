@@ -76,6 +76,25 @@ const MARK_SENT = `approved-action-mark-sent:${ID}:${REVISION}`;
 const RESEND = `approved-action-resend:${ID}:${REVISION}`;
 const STALE = { content: 'This action has already moved on — nothing was changed.', flags: MessageFlags.Ephemeral };
 
+async function expectWaitsForPrivateReply(h: Harness, fake: FakeInteraction): Promise<void> {
+    const replyDone = Promise.withResolvers<unknown>();
+    fake.reply.mockImplementation(() => replyDone.promise);
+    let settled = false;
+    const handled = h.handler.handleButton(fake.interaction).then(() => {
+        settled = true;
+        return undefined;
+    });
+    for(let turn = 0; turn < 10; turn++) {
+        // eslint-disable-next-line no-await-in-loop -- drain the click's microtask hops up to the pending reply.
+        await Promise.resolve();
+    }
+    expect(fake.reply).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+    replyDone.resolve({});
+    await handled;
+    expect(settled).toBe(true);
+}
+
 describe('ApprovedActionEscalationHandler', () => {
     beforeEach(() => {
         mockLogger.warn.mockClear();
@@ -94,6 +113,12 @@ describe('ApprovedActionEscalationHandler', () => {
         expect(h.wakeExecutor).not.toHaveBeenCalled();
     });
 
+    test('waits for the non-admin private reply before finishing the click', async () => {
+        const h = makeHarness();
+        await expectWaitsForPrivateReply(h, click(RESEND, '999'));
+        expect(h.get).not.toHaveBeenCalled();
+    });
+
     test('refuses a malformed button id privately, without reading the row', async () => {
         const h = makeHarness();
         const fake = click('garbage');
@@ -101,6 +126,12 @@ describe('ApprovedActionEscalationHandler', () => {
         await h.handler.handleButton(fake.interaction);
 
         expect(fake.reply.mock.calls).toEqual([[{ content: 'This button is not recognised.', flags: MessageFlags.Ephemeral }]]);
+        expect(h.get).not.toHaveBeenCalled();
+    });
+
+    test('waits for the unrecognised-button private reply before finishing the click', async () => {
+        const h = makeHarness();
+        await expectWaitsForPrivateReply(h, click('garbage'));
         expect(h.get).not.toHaveBeenCalled();
     });
 
@@ -213,6 +244,22 @@ describe('ApprovedActionEscalationHandler', () => {
         expect(fake.reply.mock.calls).toEqual([[{ content: 'Could not record that — nothing was changed. Please try again.', flags: MessageFlags.Ephemeral }]]);
         expect(fake.update).not.toHaveBeenCalled();
         expect(h.wakeExecutor).not.toHaveBeenCalled();
+    });
+
+    test('waits for the database-failure private reply before finishing the click', async () => {
+        const h = makeHarness();
+        h.resolve.mockImplementation(async () => {
+            throw new Error('throughput exceeded');
+        });
+        await expectWaitsForPrivateReply(h, click(RESEND));
+        expect(h.cardEdits.pendingEdit('card-msg')).toBeUndefined();
+    });
+
+    test('waits for the stale-action private reply before finishing the click', async () => {
+        const h = makeHarness();
+        h.get.mockImplementation(async () => undefined);
+        await expectWaitsForPrivateReply(h, click(RESEND));
+        expect(h.cardEdits.pendingEdit('card-msg')).toBeUndefined();
     });
 
     test('a failed card update after the decision is recorded is only logged, and the decision still takes effect', async () => {
