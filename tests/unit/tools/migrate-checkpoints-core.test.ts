@@ -525,6 +525,20 @@ describe('listLegacyRows', () => {
         ]);
     });
 
+    test('formats the debt seconds so 999/1000/1001 divisors each print a different value', async () => {
+        const clock = fakeClock();
+        const pages: StatePage[] = [
+            { items: [], lastEvaluatedKey: { page: 2 }, consumedReadUnits: 100 },
+            { items: [], lastEvaluatedKey: undefined, consumedReadUnits: 1 },
+        ];
+        const query = mock(async (_cursor: Record<string, unknown> | undefined) => pages[query.mock.calls.length - 1]);
+        const output: string[] = [];
+        await listLegacyRows(query, createCapacityPacer(1, clock.now, clock.sleep), (message) => {
+            output.push(message);
+        });
+        expect(output[0]).toBe('scanned page 1: 0 state items, 0 legacy rows so far, 100 RCU, next page in 100.0s\n');
+    });
+
     test('refuses to continue when a page reports no consumed capacity', async () => {
         const clock = fakeClock();
         const query = mock(async () => ({ items: [rawItem(DM_PATH, DM_JSON)], lastEvaluatedKey: { page: 2 }, consumedReadUnits: undefined }));
