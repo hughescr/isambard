@@ -21,6 +21,7 @@
     "lint": "eslint --cache --concurrency=auto --format unix . && bun tools/stryker-directive-check.ts",
     "lint:fix": "eslint --cache --fix --format overview .",
     "lint:overview": "eslint --cache --concurrency=auto --format overview . && bun tools/stryker-directive-check.ts",
+    "migrate:checkpoints": "sst shell -- bun tools/migrate-checkpoints.ts",
     "mutate": "tools/run-stryker.sh",
     "mutate:discover": "MUTATE_DISCOVER=1 tools/run-stryker.sh",
     "mutate:discover:wait": "MUTATE_DISCOVER=1 tools/run-stryker.sh --wait",

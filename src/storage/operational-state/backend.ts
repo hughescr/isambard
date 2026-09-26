@@ -1,5 +1,6 @@
 import {
     GetCommand,
+    PutCommand,
     QueryCommand,
     type QueryCommandInput
 } from '@aws-sdk/lib-dynamodb';
@@ -17,6 +18,15 @@ import type {
 
 function partitionKey(owner: OperationalStateOwner): string {
     return `OPERATIONAL_STATE#${owner}`;
+}
+
+function toItem(key: OperationalStateKey, value: unknown): OperationalStateItem {
+    return {
+        PK:        partitionKey(key.owner),
+        SK:        key.name,
+        content:   JSON.stringify(value),
+        updatedAt: new Date().toISOString(),
+    };
 }
 
 /**
@@ -43,13 +53,32 @@ export class OperationalStateBackend extends DynamoTableAccess implements Operat
     }
 
     async put(key: OperationalStateKey, value: unknown): Promise<void> {
-        const item: OperationalStateItem = {
-            PK:        partitionKey(key.owner),
-            SK:        key.name,
-            content:   JSON.stringify(value),
-            updatedAt: new Date().toISOString(),
-        };
-        await this.putItem(item);
+        await this.putItem(toItem(key, value));
+    }
+
+    /**
+     * Writes `value` under `key` only when no row exists there yet, as one conditional PutItem.
+     * It exists for the one-shot checkpoint migration (tools/migrate-checkpoints.ts): a row the bot
+     * wrote since the deploy is newer than any legacy row, so it always wins, even when the bot
+     * writes between a check and the put. Deliberately not on {@link OperationalStateStore}.
+     *
+     * @returns `'created'` when the row was written, `'exists'` when a row was already there.
+     * @throws Any DynamoDB error other than the conditional-check failure.
+     */
+    async putIfAbsent(key: OperationalStateKey, value: unknown): Promise<'created' | 'exists'> {
+        try {
+            await this.docClient.send(new PutCommand({
+                TableName:           this.tableName,
+                Item:                toItem(key, value),
+                ConditionExpression: 'attribute_not_exists(PK)',
+            }));
+            return 'created';
+        } catch (error) {
+            if(error instanceof Error && error.name === 'ConditionalCheckFailedException') {
+                return 'exists';
+            }
+            throw error;
+        }
     }
 
     async listByPrefix<T>(prefix: OperationalStateKey, schema: OperationalStateSchema<T>): Promise<T[]> {
