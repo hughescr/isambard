@@ -3,7 +3,7 @@ import { BatchGetCommand, type BatchGetCommandOutput } from '@aws-sdk/lib-dynamo
 import { decodeStoredMemoryToolItem, storedTtl } from '../memory-tool/decode-stored-item.js';
 import { MemoryToolKeyGenerator } from '../memory-tool/key-generator.js';
 import { classifyMemoryPath, createMemoryPath } from '../memory-tool/types.js';
-import { createRcuPacer, recordRcuPage, requireConsumedReadUnits, sleepRespectingSignal, waitForRcuPacer } from '../utils/rcu-pacing.js';
+import { createRcuPacer, recordRcuPage, sleepRespectingSignal, waitForRcuPacer } from '../utils/rcu-pacing.js';
 import type { VectorIndex } from './backend.js';
 import { sha256Hex } from './hash.js';
 import type { AsyncIndexer } from './indexer.js';
@@ -71,13 +71,23 @@ function candidateKeys(candidates: Candidate[]): { PK: string, SK: string }[] {
     return candidates.map(({ row }) => ({ PK: row.pk, SK: row.sk }));
 }
 
+/** Consecutive BATCH_SIZE slices of `items`, in order; an empty list yields no batch at all. */
+function chunk<T>(items: T[]): T[][] {
+    const batches: T[][] = [];
+    for(let rest = items; rest.length > 0; rest = rest.slice(BATCH_SIZE)) {
+        batches.push(rest.slice(0, BATCH_SIZE));
+    }
+    return batches;
+}
+
 function parseCandidates(page: Snapshot[], counts: Counters): Candidate[] {
     const candidates: Candidate[] = [];
     for(const row of page) {
         try {
             const path = createMemoryPath(MemoryToolKeyGenerator.parsePath(row.pk, row.sk));
-            const keys = MemoryToolKeyGenerator.createKeys(path);
-            if(keys.PK !== row.pk || keys.SK !== row.sk) {
+            // Rebuilding the PK is enough: a '/' in the SK's filename would move the rebuilt PK,
+            // so any key that round-trips to the same PK round-trips to the same SK too.
+            if(MemoryToolKeyGenerator.createKeys(path).PK !== row.pk) {
                 counts.malformed++;
                 continue;
             }
@@ -89,21 +99,27 @@ function parseCandidates(page: Snapshot[], counts: Counters): Candidate[] {
     return candidates;
 }
 
-function decodeCandidate(raw: Record<string, unknown>, candidate: Candidate): NonNullable<ReturnType<typeof decodeStoredMemoryToolItem>> {
+/** The decoded item, or undefined when it fails validation or is stored under another path's keys. */
+function decodeCandidate(raw: Record<string, unknown>, candidate: Candidate): ReturnType<typeof decodeStoredMemoryToolItem> {
     const item = decodeStoredMemoryToolItem(raw);
-    if(item?.path !== candidate.path) {
-        throw new TypeError(`Vector cross-check found malformed DynamoDB memory at ${candidate.path}`);
-    }
-    return item;
+    return item?.path === candidate.path ? item : undefined;
+}
+
+/**
+ * The candidate's index row if one still occupies its rowid slot. A row deleted and recreated
+ * lands at a later rowid; it is not claimed here, and a later run checks it from its new slot.
+ */
+function indexedRow(deps: VectorCrossCheckDeps, row: Snapshot): Snapshot | undefined {
+    return deps.vectorIndex.listRowSnapshotsAfter(row.rowid - 1, 1).find(indexed => indexed.pk === row.pk && indexed.sk === row.sk);
 }
 
 /** A single shared reader/pacer for all phases of a run, including UnprocessedKeys retries. */
-function createReader(deps: VectorCrossCheckDeps, signal: AbortSignal, counts: Counters): (keys: { PK: string, SK: string }[], consistent: boolean) => Promise<Record<string, unknown>[]> {
+function createReader(deps: VectorCrossCheckDeps, signal: AbortSignal, counts: Counters): (keys: { PK: string, SK: string }[], consistent: boolean) => Promise<Map<string, Record<string, unknown>>> {
     const now = deps.now ?? Date.now;
     const sleep = deps.sleep ?? sleepRespectingSignal;
     const pacer = createRcuPacer();
     return async (keys, consistent) => {
-        const found: Record<string, unknown>[] = [];
+        const found = new Map<string, Record<string, unknown>>();
         let pending = keys;
         let retries = 0;
         while(pending.length > 0) {
@@ -117,12 +133,15 @@ function createReader(deps: VectorCrossCheckDeps, signal: AbortSignal, counts: C
                 RequestItems:           { [deps.tableName]: { Keys: pending, ConsistentRead: consistent } },
                 ReturnConsumedCapacity: 'TOTAL',
             }), { abortSignal: signal });
-            const units = requireConsumedReadUnits(response.ConsumedCapacity?.[0]?.CapacityUnits, 'Vector cross-check BatchGetItem');
-            counts.rcu += units;
+            const units = response.ConsumedCapacity?.[0]?.CapacityUnits;
+            // Fail closed: an unreported read must not be followed by an unpaced retry or phase.
             recordRcuPage(pacer, units, RCU_PER_SECOND, true, () => {
-                throw new Error('Missing vector cross-check RCU report');
+                throw new Error('Vector cross-check BatchGetItem reported no ConsumedCapacity; refusing to continue without RCU pacing');
             }, now);
-            found.push(...(response.Responses?.[deps.tableName] ?? []));
+            counts.rcu += units!;
+            for(const item of response.Responses?.[deps.tableName] ?? []) {
+                found.set(keyOf(item), item);
+            }
             pending = (response.UnprocessedKeys?.[deps.tableName]?.Keys ?? []) as { PK: string, SK: string }[];
             if(pending.length > 0) {
                 if(++retries > 10) {
@@ -154,11 +173,9 @@ async function checkPage(deps: VectorCrossCheckDeps, page: Snapshot[], signal: A
     }
     const missing: Candidate[] = [];
     const stale: Candidate[] = [];
-    for(let offset = 0; offset < candidates.length; offset += BATCH_SIZE) {
-        const batch = candidates.slice(offset, offset + BATCH_SIZE);
+    for(const batch of chunk(candidates)) {
         // eslint-disable-next-line no-await-in-loop -- The table's read-capacity debt is shared across batches.
-        const rows = await fetch(candidateKeys(batch), false);
-        const found = new Map(rows.map(item => [keyOf(item), item]));
+        const found = await fetch(candidateKeys(batch), false);
         for(const candidate of batch) {
             counts.checked++;
             const raw = found.get(`${candidate.row.pk}\0${candidate.row.sk}`);
@@ -166,10 +183,8 @@ async function checkPage(deps: VectorCrossCheckDeps, page: Snapshot[], signal: A
                 missing.push(candidate);
                 continue;
             }
-            let item: ReturnType<typeof decodeCandidate>;
-            try {
-                item = decodeCandidate(raw, candidate);
-            } catch{
+            const item = decodeCandidate(raw, candidate);
+            if(item === undefined) {
                 counts.malformed++;
                 continue;
             }
@@ -184,14 +199,12 @@ async function checkPage(deps: VectorCrossCheckDeps, page: Snapshot[], signal: A
     }
     // Fail closed before any tombstone if the configured stage/table may be wrong.
     assertSafeAbsence(candidates.length, missing.length);
-    for(let offset = 0; offset < missing.length; offset += BATCH_SIZE) {
-        const batch = missing.slice(offset, offset + BATCH_SIZE);
+    for(const batch of chunk(missing)) {
         // eslint-disable-next-line no-await-in-loop -- A strong confirmation must precede this batch's synchronous deletes.
         const found = await fetch(candidateKeys(batch), true);
-        const present = new Set(found.map(item => keyOf(item)));
         checkAbort(signal);
         for(const { row } of batch) {
-            if(present.has(`${row.pk}\0${row.sk}`)) {
+            if(found.has(`${row.pk}\0${row.sk}`)) {
                 continue;
             }
             deleteConfirmedOrphan(deps, row, counts);
@@ -199,11 +212,9 @@ async function checkPage(deps: VectorCrossCheckDeps, page: Snapshot[], signal: A
     }
     // Strong full-item reads cannot supersede a newer live write's pending retry with old content.
     const verify: Candidate[] = [];
-    for(let offset = 0; offset < stale.length; offset += BATCH_SIZE) {
-        const batch = stale.slice(offset, offset + BATCH_SIZE);
+    for(const batch of chunk(stale)) {
         // eslint-disable-next-line no-await-in-loop -- Stale candidates share the same table capacity budget.
-        const rows = await fetch(candidateKeys(batch), true);
-        const found = new Map(rows.map(item => [keyOf(item), item]));
+        const found = await fetch(candidateKeys(batch), true);
         for(const candidate of batch) {
             const raw = found.get(`${candidate.row.pk}\0${candidate.row.sk}`);
             if(raw === undefined) {
@@ -211,10 +222,8 @@ async function checkPage(deps: VectorCrossCheckDeps, page: Snapshot[], signal: A
                 deleteConfirmedOrphan(deps, candidate.row, counts);
                 continue;
             }
-            let item: ReturnType<typeof decodeCandidate>;
-            try {
-                item = decodeCandidate(raw, candidate);
-            } catch{
+            const item = decodeCandidate(raw, candidate);
+            if(item === undefined) {
                 counts.malformed++;
                 continue;
             }
@@ -234,35 +243,30 @@ async function checkPage(deps: VectorCrossCheckDeps, page: Snapshot[], signal: A
             }
         }
     }
+    // No abort check is needed here: the reader checks before each request, and the run loop after the page.
     await deps.indexer.drain();
-    checkAbort(signal);
-    for(let offset = 0; offset < verify.length; offset += BATCH_SIZE) {
-        const batch = verify.slice(offset, offset + BATCH_SIZE);
+    for(const batch of chunk(verify)) {
         // eslint-disable-next-line no-await-in-loop -- Recheck persisted results after drain, which can silently drop failed jobs.
-        const rows = await fetch(candidateKeys(batch), true);
-        const found = new Map(rows.map(item => [keyOf(item), item]));
+        const found = await fetch(candidateKeys(batch), true);
         for(const candidate of batch) {
             const raw = found.get(`${candidate.row.pk}\0${candidate.row.sk}`);
             if(raw === undefined) {
-                const indexed = deps.vectorIndex.listRowSnapshotsAfter(candidate.row.rowid - 1, 1)[0];
-                if(indexed?.pk === candidate.row.pk && indexed.sk === candidate.row.sk) {
+                const indexed = indexedRow(deps, candidate.row);
+                if(indexed !== undefined) {
                     checkAbort(signal);
                     deleteConfirmedOrphan(deps, indexed, counts);
                 }
                 continue;
             }
-            let item: ReturnType<typeof decodeCandidate>;
-            try {
-                item = decodeCandidate(raw, candidate);
-            } catch{
+            const item = decodeCandidate(raw, candidate);
+            if(item === undefined) {
                 counts.malformed++;
                 continue;
             }
             // eslint-disable-next-line no-await-in-loop -- Each post-drain comparison hashes locally, not via per-row network calls.
             const hash = await sha256Hex(`${candidate.path}\n${item.content}`);
-            const indexed = deps.vectorIndex.listRowSnapshotsAfter(candidate.row.rowid - 1, 1)[0];
-            if(indexed?.pk !== candidate.row.pk || indexed.sk !== candidate.row.sk
-              || indexed.contentHash !== hash || indexed.ttl !== (storedTtl(raw) ?? null)) {
+            const indexed = indexedRow(deps, candidate.row);
+            if(indexed?.contentHash !== hash || indexed.ttl !== (storedTtl(raw) ?? null)) {
                 throw new Error('Vector cross-check requeue did not converge');
             }
         }
