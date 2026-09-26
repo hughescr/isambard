@@ -15,7 +15,7 @@ import {
 /** A minimal `ConductorStatus` with a chosen `lifecycle` — the only field `notify()` reads. */
 function fakeStatus(lifecycle: ConductorLifecycle): ConductorStatus {
     return {
-        role: 'conversation', sessionId: undefined, lifecycle, opened: false, shuttingDown: false, queueLength: 0, turn: null,
+        role: 'conversation', sessionId: undefined, lifecycle, queueLength: 0, turn: null,
     };
 }
 

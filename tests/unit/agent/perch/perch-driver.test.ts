@@ -85,7 +85,7 @@ function createFakeConductor(): Pick<Conductor, 'submit' | 'interruptCurrent' | 
         })),
         interruptCurrent: mock(() => Promise.resolve()),
         status:           mock(() => ({
-            role: 'perch', sessionId: undefined, lifecycle: 'open', opened: true, shuttingDown: false, queueLength: 0, turn: activeTurn,
+            role: 'perch', sessionId: undefined, lifecycle: 'open', queueLength: 0, turn: activeTurn,
         })),
         setActiveTurn(turn: FakeActiveTurn | null): void {
             activeTurn = turn;
@@ -119,7 +119,6 @@ function makeConfig(overrides: Partial<PerchConfig> = {}): PerchConfig {
         enabled:               true,
         timezone:              'America/Los_Angeles',
         intervalMinutes:       60,
-        jitterMinutes:         15,
         slotWindowMinutes:     MAX_SESSION_MINUTES,
         wrapUpLeadMinutes:     WRAP_UP_TIMEOUT_MINUTES,
         interruptGraceMinutes: INTERRUPT_GRACE_MINUTES,

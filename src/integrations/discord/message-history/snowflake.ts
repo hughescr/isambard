@@ -2,17 +2,11 @@ import { DiscordSnowflake } from '@sapphire/snowflake';
 import { discordSnowflakeSchema } from '@/config';
 import { InvalidSnowflakeError, InvariantViolationError } from '@/errors';
 
-// Re-export error class for backward compatibility
-
 /**
  * Discord epoch: January 1, 2015 00:00:00 UTC in milliseconds.
  * This is the base timestamp used for Discord snowflake ID generation.
- * Re-exported from @sapphire/snowflake for backward compatibility.
  */
 export const DISCORD_EPOCH = DiscordSnowflake.epoch;
-
-/** Compatibility name for the canonical Discord snowflake schema. */
-export const snowflakeSchema = discordSnowflakeSchema;
 
 /**
  * Converts a Discord snowflake ID to a Date timestamp.
@@ -31,7 +25,7 @@ export const snowflakeSchema = discordSnowflakeSchema;
  * ```
  */
 export function snowflakeToTimestamp(snowflake: string): Date {
-    const validation = snowflakeSchema.safeParse(snowflake);
+    const validation = discordSnowflakeSchema.safeParse(snowflake);
     if(!validation.success) {
         throw new InvalidSnowflakeError(snowflake);
     }

@@ -19,8 +19,8 @@ export const serializedDiscordPayloadSchema = z.object({
     embeds:           z.array(apiEmbedSchema).optional(),
     components:       z.array(apiActionRowSchema).optional(),
     /**
-     * Discord message the first delivered text part replies to. Absent on legacy rows and on
-     * non-reply items, so rows written before this field existed still parse unchanged.
+     * Discord message the first delivered text part replies to. Absent on items that are not
+     * replies.
      */
     replyToMessageId: z.string().min(1).optional(),
 });

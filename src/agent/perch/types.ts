@@ -105,8 +105,6 @@ export interface PerchConfig {
     timezone:               string
     /** Minutes between perch triggers (default: 60) */
     intervalMinutes:        number
-    /** @deprecated No longer used - cron-parser's H option provides full 0-59 minute range for jitter */
-    jitterMinutes:          number
     /** Scheduled slot duration in minutes (default: 45) */
     slotWindowMinutes:      number
     /** Lead time before a slot ends for its wrap-up turn, in minutes (default: 5) */

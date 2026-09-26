@@ -19,10 +19,6 @@ const config: KnipConfig = {
     ],
     ignoreDependencies: [
         'eslint-plugin-package-json',
-        '@stryker-mutator/bun-runner',
-    ],
-    ignoreBinaries: [
-        'tools/run-stryker.sh',
     ],
     tags: ['internal'],
     bun:  true,

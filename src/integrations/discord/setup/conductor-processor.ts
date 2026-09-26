@@ -15,11 +15,9 @@
  * `buildContinuationNote`) on the resubmitted envelope, so the interruption's progress still reaches
  * Claude even though the interrupting messages arrive as a fresh envelope.
  *
- * Deliberately does none of the legacy processor's other work: no channel list folded into a
- * system prompt, no `contextNote` for a suspended perch/catch-up session, no cross-platform
- * person-history race, and — critically — no separate state-machine writes at all; presence and
- * activity-phase transitions are read directly off the conductor's own ledger (composed by
- * `presence-setup.ts`'s `setupConductorPresence`), never written by this processor.
+ * It writes no state-machine state at all: presence and activity-phase transitions are read
+ * directly off the conductor's own ledger (composed by `presence-setup.ts`'s
+ * `setupConductorPresence`), never written by this processor.
  *
  * @module integrations/discord/setup/conductor-processor
  */

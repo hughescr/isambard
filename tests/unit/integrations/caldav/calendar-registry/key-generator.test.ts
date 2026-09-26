@@ -69,13 +69,6 @@ describe('CalendarRegistryKeyGenerator', () => {
         });
     });
 
-    describe('legacyUserId', () => {
-        it('writes SHARED for the shared scope and the user ID for a personal scope', () => {
-            expect(CalendarRegistryKeyGenerator.legacyUserId({ kind: 'shared' })).toBe('SHARED');
-            expect(CalendarRegistryKeyGenerator.legacyUserId({ kind: 'personal', userId: 'u1' })).toBe('u1');
-        });
-    });
-
     describe('parseScope', () => {
         it('decodes CALCAL#SHARED to the shared scope', () => {
             expect(CalendarRegistryKeyGenerator.parseScope('CALCAL#SHARED')).toEqual({ kind: 'shared' });

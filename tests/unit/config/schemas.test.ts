@@ -717,25 +717,16 @@ describe('configSchema', () => {
 });
 
 describe('perchConfigSchema', () => {
-    test('normalizes deprecated duration aliases without exposing them in the parsed output', () => {
-        const result = perchConfigSchema.parse({ maxSessionMinutes: 30, wrapUpTimeoutMinutes: 7 })!;
+    test('keeps provided duration fields', () => {
+        const result = perchConfigSchema.parse({ slotWindowMinutes: 30, wrapUpLeadMinutes: 7 })!;
 
         expect(result.slotWindowMinutes).toBe(30);
         expect(result.wrapUpLeadMinutes).toBe(7);
-        expect(result).not.toHaveProperty('maxSessionMinutes');
-        expect(result).not.toHaveProperty('wrapUpTimeoutMinutes');
     });
 
-    test('prefers canonical duration fields over deprecated aliases', () => {
-        const result = perchConfigSchema.parse({
-            slotWindowMinutes:    30,
-            maxSessionMinutes:    10,
-            wrapUpLeadMinutes:    7,
-            wrapUpTimeoutMinutes: 3,
-        })!;
-
-        expect(result.slotWindowMinutes).toBe(30);
-        expect(result.wrapUpLeadMinutes).toBe(7);
+    test('rejects non-positive duration fields', () => {
+        expect(perchConfigSchema.safeParse({ slotWindowMinutes: 0 }).success).toBe(false);
+        expect(perchConfigSchema.safeParse({ wrapUpLeadMinutes: 0 }).success).toBe(false);
     });
 
     test('supplies canonical duration defaults when no duration fields are provided', () => {
@@ -752,7 +743,6 @@ describe('perchConfigSchema', () => {
         if(result.success) {
             expect(result.data).toMatchObject({
                 intervalMinutes:   60,
-                jitterMinutes:     15,
                 slotWindowMinutes: 45,
                 wrapUpLeadMinutes: 5,
             });
@@ -763,7 +753,6 @@ describe('perchConfigSchema', () => {
         const configWithoutEnabled = {
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
         };
 
@@ -779,7 +768,6 @@ describe('perchConfigSchema', () => {
             enabled:           true,
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
         };
 
@@ -794,7 +782,6 @@ describe('perchConfigSchema', () => {
         const configWithoutTimezone = {
             enabled:           true,
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
         };
 
@@ -810,7 +797,6 @@ describe('perchConfigSchema', () => {
             enabled:           true,
             timezone:          'Europe/London',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
         };
 
@@ -826,7 +812,6 @@ describe('perchConfigSchema', () => {
             enabled:           true,
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
             testMode:          {
                 triggerOnStartup: true,
@@ -846,7 +831,6 @@ describe('perchConfigSchema', () => {
             enabled:           true,
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
             testMode:          {
                 triggerOnStartup: true,
@@ -866,7 +850,6 @@ describe('perchConfigSchema', () => {
                 enabled:           true,
                 timezone:          'America/Los_Angeles',
                 intervalMinutes:   60,
-                jitterMinutes:     15,
                 slotWindowMinutes: 45,
                 testMode:          {
                     triggerOnStartup: true,
@@ -910,7 +893,6 @@ describe('perchConfigSchema', () => {
             enabled:           true,
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
             testMode:          {},
         };
@@ -927,7 +909,6 @@ describe('perchConfigSchema', () => {
             enabled:           true,
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
             testMode:          {
                 triggerOnStartup: true,
@@ -946,7 +927,6 @@ describe('perchConfigSchema', () => {
             enabled:           true,
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
             testMode:          {
                 triggerOnStartup: true,
@@ -967,7 +947,6 @@ describe('perchConfigSchema', () => {
             enabled:           true,
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
         };
 
@@ -983,7 +962,6 @@ describe('perchConfigSchema', () => {
             enabled:               true,
             timezone:              'America/Los_Angeles',
             intervalMinutes:       60,
-            jitterMinutes:         15,
             slotWindowMinutes:     45,
             interruptGraceMinutes: 7,
         };
@@ -1000,7 +978,6 @@ describe('perchConfigSchema', () => {
             enabled:               true,
             timezone:              'America/Los_Angeles',
             intervalMinutes:       60,
-            jitterMinutes:         15,
             slotWindowMinutes:     45,
             interruptGraceMinutes: 0,
         };

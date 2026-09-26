@@ -377,7 +377,7 @@ describe('Bot Lifecycle Integration', () => {
 
     describe('Perch conductor component wiring (P12, P13b: the only path)', () => {
         const mockPerchConfig = {
-            enabled: true, timezone: 'UTC', intervalMinutes: 60, jitterMinutes: 15, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2,
+            enabled: true, timezone: 'UTC', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2,
         };
 
         function fakeConductor(sessionId: string): Conductor {

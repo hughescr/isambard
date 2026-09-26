@@ -14,8 +14,13 @@ export interface CalendarRegistryKeys {
 
 const PREFIX_CALCAL   = 'CALCAL';
 const SK_CALENDARS    = 'CALENDARS';
-/** The persisted form of the shared scope: the PK suffix and the legacy `userId` body attribute. */
+/** The persisted form of the shared scope: its PK suffix. */
 const SHARED_USER_ID  = 'SHARED';
+
+/** The PK suffix for a scope: the user ID for a personal scope, `SHARED` for the shared scope. */
+function pkSuffix(scope: CalendarRegistryScope): string {
+    return scope.kind === 'shared' ? SHARED_USER_ID : scope.userId;
+}
 
 /**
  * Generates and decodes DynamoDB keys for Calendar Registry items. The PK is the authoritative
@@ -23,14 +28,6 @@ const SHARED_USER_ID  = 'SHARED';
  * `CALCAL#SHARED` forms keep existing rows readable with no backfill.
  */
 export const CalendarRegistryKeyGenerator = {
-    /**
-     * The legacy `userId` value for a scope (`SHARED` for the shared scope). Pre-scope builds read
-     * this body attribute, so every write keeps it for rollout and rollback; it is also the PK suffix.
-     */
-    legacyUserId(scope: CalendarRegistryScope): string {
-        return scope.kind === 'shared' ? SHARED_USER_ID : scope.userId;
-    },
-
     /**
      * Creates DynamoDB keys for a scope's calendar registry record.
      *
@@ -43,7 +40,7 @@ export const CalendarRegistryKeyGenerator = {
             throw new InvariantViolationError('CalendarRegistryKeyGenerator.createKeys', `Personal user ID ${SHARED_USER_ID} collides with the shared registry key`);
         }
         return {
-            PK: createPrefixedKey(PREFIX_CALCAL, CalendarRegistryKeyGenerator.legacyUserId(valid)),
+            PK: createPrefixedKey(PREFIX_CALCAL, pkSuffix(valid)),
             SK: SK_CALENDARS,
         };
     },

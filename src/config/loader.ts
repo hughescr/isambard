@@ -7,20 +7,8 @@ import { resolveTimezone } from '@/utils';
 /**
  * Keys in SST Resource that have a value property (configs and secrets).
  * Excludes App and IsambardMemory which have different shapes.
- * Also excludes planned-but-not-implemented secrets and deprecated/removed configs.
  */
-type ConfigKeys = Exclude<keyof SstResource,
-  | 'App' | 'IsambardMemory'
-  // Deprecated/removed (moved to env vars):
-  | 'LogTimezone' | 'PerchEnabled' | 'PerchTestModeForceSlot' | 'PerchTestModeTriggerOnStartup'
-  // Stale entries from sst-env.d.ts (not in actual config):
-  | 'DiscordMonitoredChannels' | 'DynamoDBEndpoint' | 'DynamoDBRegion' | 'DynamoDBTableName'
-  // Removed (SMTP replaced by WildDuck):
-  | 'SmtpHost' | 'SmtpPort'
-  // Planned integrations (not yet implemented):
-  | 'CaldavUrl' | 'CaldavUsername' | 'CaldavPassword'
-  | 'BoxClientId' | 'BoxClientSecret'
->;
+type ConfigKeys = Exclude<keyof SstResource, 'App' | 'IsambardMemory'>;
 
 /**
  * Extract value type from SST Resource property.
@@ -98,7 +86,6 @@ export function loadConfig(resources: SstResources = Resource): Config {
                 enabled:               true,
                 timezone:              resolveTimezone(),
                 intervalMinutes:       60,
-                jitterMinutes:         15,
                 slotWindowMinutes:     45,
                 interruptGraceMinutes: env.get('PERCH_INTERRUPT_GRACE_MINUTES').default('2').asIntPositive(),
                 testMode:              env.get('PERCH_TEST_MODE_TRIGGER_ON_STARTUP').default('false').asBool()

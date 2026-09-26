@@ -18,14 +18,9 @@ import type { EnvelopeKind, JournalEntry, SessionRole } from '@/agent';
 
 /**
  * Mirrors {@link EnvelopeKind} (src/agent/session/types.ts) as literal values — the type itself
- * stays owned there; this is just the runtime list a zod schema needs. Also accepts the legacy
- * pre-#76 `'resume'` kind (written before the turn-side rename to `continuation`) and normalises
- * it on read — safely deletable once every legacy row has expired by TTL (30 days,
- * src/storage/session-journal/backend.ts:33-41; #76 landed 2026-09-23, so this alias can be
- * removed 2026-10-23).
+ * stays owned there; this is just the runtime list a zod schema needs.
  */
-const envelopeKindSchema = z.enum(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'continuation', 'compact', 'boot', 'task', 'peer', 'resume'])
-    .transform((kind): EnvelopeKind => (kind === 'resume' ? 'continuation' : kind));
+const envelopeKindSchema = z.enum(['discord', 'perch', 'notification', 'catchup', 'wrapup', 'continuation', 'compact', 'boot', 'task', 'peer']) satisfies z.ZodType<EnvelopeKind>;
 
 /** Mirrors {@link SessionRole} (src/agent/session/types.ts) as literal values, for the same reason as {@link envelopeKindSchema}. */
 const sessionRoleSchema = z.enum(['conversation', 'perch']);

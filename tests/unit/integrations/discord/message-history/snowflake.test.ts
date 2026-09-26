@@ -1,11 +1,9 @@
 import { describe, test, expect } from 'bun:test';
-import { discordSnowflakeSchema } from '@/config/discord-ids';
 import { ErrorCode } from '@/errors/codes';
 import {
     DISCORD_EPOCH,
     timestampToSnowflake,
     snowflakeToTimestamp,
-    snowflakeSchema,
     InvalidSnowflakeError
 } from '@/integrations/discord/message-history/snowflake';
 
@@ -19,17 +17,6 @@ describe.concurrent('DISCORD_EPOCH', () => {
 });
 
 describe('snowflakeToTimestamp', () => {
-    test('uses the canonical Discord snowflake schema', () => {
-        expect(snowflakeSchema).toBe(discordSnowflakeSchema);
-    });
-
-    test.each(['', 'abc'])('preserves the canonical validation diagnostic for %p', (input) => {
-        const result = snowflakeSchema.safeParse(input);
-        expect(result.success).toBe(false);
-        if(!result.success) {
-            expect(result.error.issues[0]?.message).toBe('Discord ID must be a decimal snowflake');
-        }
-    });
     test.each([
         // Known Discord snowflake: 175928847299117063
         // This is a well-known Discord snowflake (Discord's announcement of snowflakes)

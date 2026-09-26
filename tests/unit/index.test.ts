@@ -115,7 +115,6 @@ const defaultPerchConfig = {
     enabled:               true,
     timezone:              'UTC',
     intervalMinutes:       60,
-    jitterMinutes:         15,
     slotWindowMinutes:     45,
     wrapUpLeadMinutes:     5,
     interruptGraceMinutes: 2,

@@ -21,7 +21,6 @@ const PERCH_CONFIG: PerchConfig = {
     enabled:               true,
     timezone:              'America/Los_Angeles',
     intervalMinutes:       60,
-    jitterMinutes:         15,
     slotWindowMinutes:     45,
     wrapUpLeadMinutes:     5,
     interruptGraceMinutes: 2,
@@ -71,7 +70,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         const createPerchSchedulerSpy = jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
 
         const result = setupPerchDriverAndScheduler({
@@ -101,7 +100,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
         const timeHeader = (): string => 'AMBIENT-HEADER';
 
@@ -117,7 +116,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
         const slotHooks = { onSlotStart: mock(), onSlotEnd: mock() };
 
@@ -133,7 +132,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
 
         setupPerchDriverAndScheduler({
@@ -148,7 +147,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         const createPerchDriverSpy = jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
 
         setupPerchDriverAndScheduler({
@@ -163,7 +162,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const fakeScheduler = { start: mock(), stop: mock(), getState: mock(), triggerNow: mock(), triggerTestPerch: mock() };
         jest.spyOn(agentModule, 'createPerchDriver').mockReturnValue(fakeDriver);
         const createPerchSchedulerSpy = jest.spyOn(agentModule, 'createPerchScheduler').mockReturnValue(fakeScheduler);
-        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
+        const conductor = { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) };
         const clock = { now: () => 0, setTimer: mock(), clearTimer: mock() };
         const isPerchPaused = (): boolean => true;
 
@@ -185,7 +184,7 @@ describe('setupPerchDriverAndScheduler', () => {
         });
 
         setupPerchDriverAndScheduler({
-            conductor:   { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) },
+            conductor:   { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) },
             perchConfig: PERCH_CONFIG,
             clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
             ...deliveryDeps(),
@@ -203,7 +202,7 @@ describe('setupPerchDriverAndScheduler', () => {
         const activityLogger = { log: mock(async () => undefined) };
 
         setupPerchDriverAndScheduler({
-            conductor:   { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) },
+            conductor:   { submit: mock(async () => makeTurnResult()), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const })) },
             perchConfig: PERCH_CONFIG,
             clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
             contextBuilder,
@@ -237,7 +236,7 @@ describe('setupPerchDriverAndScheduler', () => {
                 return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
             setupPerchDriverAndScheduler({
-                conductor:   { submit: innerSubmit, interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                conductor:   { submit: innerSubmit, interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
                 ...deliveryDeps(),
@@ -262,7 +261,7 @@ describe('setupPerchDriverAndScheduler', () => {
                 return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
             setupPerchDriverAndScheduler({
-                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-perch-origin', response: 'Perch reply' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-perch-origin', response: 'Perch reply' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
                 ...deliveryDeps(),
@@ -287,7 +286,7 @@ describe('setupPerchDriverAndScheduler', () => {
                 return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
             setupPerchDriverAndScheduler({
-                conductor:   { submit: innerSubmit, interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                conductor:   { submit: innerSubmit, interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
                 ...deliveryDeps(),
@@ -309,7 +308,7 @@ describe('setupPerchDriverAndScheduler', () => {
             const innerDeliver = mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const }));
 
             setupPerchDriverAndScheduler({
-                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-discord-1', response: 'hi' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-discord-1', response: 'hi' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
                 ...deliveryDeps(),
@@ -327,7 +326,7 @@ describe('setupPerchDriverAndScheduler', () => {
             const innerDeliver = mock(async () => ({ outcome: 'committed' as const, disposition: 'sent' as const }));
 
             setupPerchDriverAndScheduler({
-                conductor:   { submit: mock(async () => makeInterruptedTurnResult('env-perch-2')), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                conductor:   { submit: mock(async () => makeInterruptedTurnResult('env-perch-2')), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
                 ...deliveryDeps(),
@@ -349,7 +348,7 @@ describe('setupPerchDriverAndScheduler', () => {
             });
 
             setupPerchDriverAndScheduler({
-                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-perch-3', response: 'text' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-perch-3', response: 'text' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
                 ...deliveryDeps(),
@@ -373,7 +372,7 @@ describe('setupPerchDriverAndScheduler', () => {
             });
 
             setupPerchDriverAndScheduler({
-                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-perch-4', response: 'text' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                conductor:   { submit: mock(async () => makeTurnResult({ envelopeId: 'env-perch-4', response: 'text' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
                 ...deliveryDeps(),
@@ -394,7 +393,7 @@ describe('setupPerchDriverAndScheduler', () => {
                 return { outcome: 'committed' as const, disposition: 'sent' as const };
             });
             setupPerchDriverAndScheduler({
-                conductor:   { submit: mock(async () => makeTurnResult({ response: 'queued' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, opened: true, shuttingDown: false, queueLength: 0, turn: null })), deliver: innerDeliver },
+                conductor:   { submit: mock(async () => makeTurnResult({ response: 'queued' })), interruptCurrent: mock(), status: mock(() => ({ role: 'perch' as const, sessionId: undefined, lifecycle: 'open' as const, queueLength: 0, turn: null })), deliver: innerDeliver },
                 perchConfig: PERCH_CONFIG,
                 clock:       { now: () => 0, setTimer: mock(), clearTimer: mock() },
                 ...deliveryDeps(),

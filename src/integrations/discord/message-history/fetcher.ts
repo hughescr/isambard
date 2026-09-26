@@ -6,8 +6,6 @@ import type { DiscordSearchResult, DiscordAttachment, DiscordEmbed, DiscordReact
 import { withDiscordRetry } from '@/integrations/discord/retry';
 import { channelIdSchema, guildIdSchema } from '@/integrations/discord/types';
 
-// Re-export error classes for backward compatibility
-
 /**
  * Maximum number of messages Discord API returns per request.
  */

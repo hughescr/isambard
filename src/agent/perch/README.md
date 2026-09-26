@@ -143,9 +143,6 @@ interface PerchConfig {
   /** Minutes between triggers */
   intervalMinutes: number;    // Default: 60
 
-  /** @deprecated No longer used - cron-parser's H option provides full jitter */
-  jitterMinutes: number;      // Default: 15
-
   /** Max slot turn duration, measured from the trigger time */
   slotWindowMinutes: number;  // Default: 45
 
@@ -266,7 +263,6 @@ const scheduler = createPerchScheduler({
     enabled: true,
     timezone: 'America/Los_Angeles',
     intervalMinutes: 60,
-    jitterMinutes: 15, // deprecated, unused
     slotWindowMinutes: 45,
     wrapUpLeadMinutes: 5,
     interruptGraceMinutes: 2,

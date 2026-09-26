@@ -1332,7 +1332,7 @@ describe('createDiscordBot', () => {
             const bot = createDiscordBot({
                 config:           { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                 client, channelRegistry, identityContext:  'Test identity',
-                perchConfig:      { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5 },
+                perchConfig:      { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5 },
                 questionRegistry: { stop: failure('question registry') } as unknown as DiscordBotOptions['questionRegistry'],
                 ...deps,
             });
@@ -2256,7 +2256,7 @@ describe('createDiscordBot', () => {
 
         describe('P11: ledger-driven ring buffers', () => {
             const minimalPerchConfig = {
-                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5,
+                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5,
             };
 
             /** Spies on `agentModule.LiveSignals`'s constructor and captures the `getRecentTools`/`getRecentChannels` closures it was built with. */
@@ -2541,7 +2541,7 @@ describe('createDiscordBot', () => {
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
                     identityContext: 'Test identity',
-                    perchConfig:     { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                    perchConfig:     { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
                     isPerchPaused,
                     ...deps,
                 });
@@ -2571,7 +2571,7 @@ describe('createDiscordBot', () => {
                     config:          { ...mockConfig, presence: { updateThrottleMs: 12_000, idleTimeoutMs: 60_000, idleRefreshIntervalMs: 300_000 } },
                     channelRegistry: mockChannelRegistry,
                     identityContext: 'Test identity',
-                    perchConfig:     { enabled: false, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                    perchConfig:     { enabled: false, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
                     isPerchPaused,
                     ...deps,
                 });
@@ -2724,7 +2724,7 @@ describe('createDiscordBot', () => {
                 createDiscordBot({
                     config:          { ...mockConfig, taskBoard: { enabled: true, editIntervalMs: 250, refreshIntervalMs: 750 } },
                     channelRegistry: mockChannelRegistry,
-                    perchConfig:     { enabled: true, timezone: 'Pacific/Auckland', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                    perchConfig:     { enabled: true, timezone: 'Pacific/Auckland', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
                     ...deps,
                 });
 
@@ -2896,7 +2896,7 @@ describe('createDiscordBot', () => {
 
         describe('Perch conductor (P12)', () => {
             const minimalPerchConfig = {
-                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2,
+                enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2,
             };
 
             function fakePerchDriver() {
@@ -3418,7 +3418,7 @@ describe('createDiscordBot', () => {
                 });
 
                 createDiscordBot({
-                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 }, setPerchWakeTurnDelivery, ...deps,
+                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 }, setPerchWakeTurnDelivery, ...deps,
                 });
                 await triggerReady(client);
 
@@ -3477,7 +3477,7 @@ describe('createDiscordBot', () => {
                 });
 
                 createDiscordBot({
-                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 }, ...deps,
+                    config: mockConfig, channelRegistry: mockChannelRegistry, perchConfig: { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 }, ...deps,
                 });
 
                 await expect(triggerReady(client)).resolves.toBeUndefined();
@@ -3593,7 +3593,7 @@ describe('createDiscordBot', () => {
                 channelRegistry,
                 identityContext:      'Test identity',
                 adminReviewChannelId: createChannelId('333444555666777888'),
-                perchConfig:          { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                perchConfig:          { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
                 ...conductorDeps({ perchConductor: makeFakeConductor(), perchLedgerStore: makeFakeLedgerStore('perch') }),
             });
             await fireReady(client, bot);
@@ -3626,7 +3626,7 @@ describe('createDiscordBot', () => {
                 config:          mockConfig,
                 client,
                 channelRegistry: mockChannelRegistry,
-                perchConfig:     { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
+                perchConfig:     { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5, interruptGraceMinutes: 2 },
                 ...conductorDeps({ perchConductor: makeFakeConductor(), perchLedgerStore: makeFakeLedgerStore('perch') }),
             });
             await fireReady(client, bot);
@@ -5278,7 +5278,7 @@ describe('createDiscordBot', () => {
                 client,
                 channelRegistry,
                 inboxManager: { loadUnread: mock(async () => undefined), getUnreadOverview: mock(() => ({ totalUnread: 0, channels: [] })) } as unknown as InboxManager,
-                perchConfig:  { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, jitterMinutes: 0, slotWindowMinutes: 45, wrapUpLeadMinutes: 5 },
+                perchConfig:  { enabled: true, timezone: 'America/Los_Angeles', intervalMinutes: 60, slotWindowMinutes: 45, wrapUpLeadMinutes: 5 },
                 ...conductorDeps({ perchConductor: makeFakeConductor(), perchLedgerStore: makeFakeLedgerStore('perch'), perchJournal: { append: mock(() => undefined), flush: mock(async () => undefined), readSince: mock(async () => []) } }),
             });
 

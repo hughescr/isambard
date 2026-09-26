@@ -903,10 +903,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     const { browserAdapter, browserPolicy } = createBrowserIntegration();
     registerCleanup({ name: 'browser adapter', run: () => browserAdapter?.close() });
 
-    // Shared once (P9 verifier correction): built here so both the legacy agent's own
-    // 'conversation'-role MCP instance set (below, unchanged from the old createMCPServers()
-    // wrapper's behaviour) and createConversationConductor's own, separate instance set (built
-    // further below, in conductor mode only) reuse the same singleton state (DMTracker,
+    // Shared once: built here so the conversation and perch conductors (built further below),
+    // each of which builds its own MCP instance set, reuse the same singleton state (DMTracker,
     // BskyCheckpointManager) rather than constructing it twice.
     function buildMcpSharedDeps(): ReturnType<typeof createMcpSharedDeps> {
         return createMcpSharedDeps({
@@ -945,9 +943,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     }
     const mcpSharedDeps = buildMcpSharedDeps();
 
-    // Load plugins for the conductor build below (P13b: the one-shot agent that used to consume
-    // this — and the createMCPServers()/createMcpServerInstances() per-session set it built — is
-    // gone; the conductor builds its own MCP instance set from mcpSharedDeps).
+    // Load plugins for the conductor builds below; each conductor builds its own MCP instance set
+    // from mcpSharedDeps.
     logger.info('Loading plugins...');
     const plugins = await loadPlugins(path.join(path.resolve(import.meta.dir, '..'), 'agents-skills-plugins', 'plugins'));
     logger.info('Plugins loaded');
@@ -968,8 +965,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
 
     // P9: build (never open) the long-lived conversation conductor — after the OAuth env write
     // (top of this function) and mcpSharedDeps (above), and before createDiscordBot and the
-    // session supervisor, which opens it once the bot signals readiness (#41). P13b: the
-    // conductor is the only path now — the one-shot legacy agent it used to sit beside is gone.
+    // session supervisor, which opens it once the bot signals readiness (#41).
     //
     // #39: the last thinking content either session's turn synopsis producer saw (last writer
     // wins), for the idle Discord status generator's context. Both conductor factories feed it;

@@ -309,15 +309,11 @@ export function lifecycleAcceptsWork(lifecycle: ConductorLifecycle): boolean {
 
 /** A snapshot of the conductor's current state, returned by {@link Conductor.status}. */
 export interface ConductorStatus {
-    role:         SessionRole
-    sessionId:    string | undefined
+    role:        SessionRole
+    sessionId:   string | undefined
     /** Where the conductor is in its lifecycle — see {@link ConductorLifecycle} and `Conductor.status`'s projection. */
-    lifecycle:    ConductorLifecycle
-    /** @deprecated Use `lifecycle` (with {@link lifecycleAcceptsWork}); derived from it as `lifecycle === 'open' || lifecycle === 'reopening'`. */
-    opened:       boolean
-    /** @deprecated Use `lifecycle`; derived from it as `lifecycle === 'closing' || lifecycle === 'closed'`. */
-    shuttingDown: boolean
-    queueLength:  number
+    lifecycle:   ConductorLifecycle
+    queueLength: number
     turn: {
         kind:        TurnKind
         channelId?:  ChannelId
@@ -2489,12 +2485,10 @@ export function createConductor(params: CreateConductorParams): Conductor {
         const lifecycle = currentLifecycle();
         return {
             role,
-            sessionId:    currentSessionId,
+            sessionId:   currentSessionId,
             lifecycle,
-            opened:       lifecycleAcceptsWork(lifecycle),
-            shuttingDown: lifecycle === 'closing' || lifecycle === 'closed',
-            queueLength:  pendingQueue.length,
-            turn:         currentTurn === null
+            queueLength: pendingQueue.length,
+            turn:        currentTurn === null
                 ? null
                 : {
                     kind: currentTurn.kind, channelId: currentTurn.channelId, envelopeId: currentTurn.item?.envelope.id, authorId: currentTurn.authorId,

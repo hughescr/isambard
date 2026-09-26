@@ -30,7 +30,6 @@ describe('PerchScheduler', () => {
             enabled:           true,
             timezone:          'America/Los_Angeles',
             intervalMinutes:   60,
-            jitterMinutes:     15,
             slotWindowMinutes: 45,
             wrapUpLeadMinutes: 5,
         };

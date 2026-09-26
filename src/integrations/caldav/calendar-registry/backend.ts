@@ -191,10 +191,9 @@ export class CalendarRegistryBackend extends DynamoTableAccess {
             return null;
         }
 
-        // Tolerant read: the PK is the authoritative scope. A legacy row carries only `userId`
-        // (`SHARED` for the shared record), and any stored `userId`/`scope` body attribute is ignored.
-        const { userId: _legacyUserId, ...body } = stripDynamoKeys(result);
-        const candidate = { ...body, scope: CalendarRegistryKeyGenerator.parseScope(keys.PK) };
+        // The PK is the authoritative scope: any stored `scope` body attribute is replaced by it,
+        // and the record schema drops unknown attributes (such as an old row's `userId`).
+        const candidate = { ...stripDynamoKeys(result), scope: CalendarRegistryKeyGenerator.parseScope(keys.PK) };
         const parsed = calendarRegistryRecordSchema.safeParse(candidate);
         if(!parsed.success) {
             logger.warn({ pk: keys.PK, issues: parsed.error.issues }, 'CalendarRegistryBackend.getRecord: stored row failed validation');
@@ -204,9 +203,8 @@ export class CalendarRegistryBackend extends DynamoTableAccess {
     }
 
     async #putRecord(keys: CalendarRegistryKeys, record: CalendarRegistryRecord): Promise<void> {
-        // Dual write: the legacy `userId` attribute stays on every row so a pre-scope build can still read it during rollout or after a rollback.
         await this.putItem(
-            { ...record, userId: CalendarRegistryKeyGenerator.legacyUserId(record.scope), PK: keys.PK, SK: keys.SK },
+            { ...record, PK: keys.PK, SK: keys.SK },
             'CalendarRegistry.putRecord'
         );
     }

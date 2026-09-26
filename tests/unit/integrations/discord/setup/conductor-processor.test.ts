@@ -90,7 +90,7 @@ class FakeConductor implements Conductor {
     deliver = (): Promise<never> => Promise.reject(new Error('FakeConductor.deliver is unused by conductor-processor.ts'));
     interruptCurrent = (): Promise<void> => Promise.resolve();
     status = (): ConductorStatus => ({
-        role: 'conversation', sessionId: 'sess-1', lifecycle: 'open', opened: true, shuttingDown: false, queueLength: this.pending.length, turn: null,
+        role: 'conversation', sessionId: 'sess-1', lifecycle: 'open', queueLength: this.pending.length, turn: null,
     });
 
     shutdown = (): Promise<void> => Promise.resolve();

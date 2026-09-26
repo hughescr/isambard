@@ -28,8 +28,8 @@ function channelListHydratingMarker(): string {
 export const CHANNEL_LIST_HYDRATING_MARKER = channelListHydratingMarker();
 
 /**
- * `channelName (guildName) [well-known: type]` — matches coordinator-setup.ts's legacy format
- * exactly (no leading `#`). Guild-name lookup is cosmetic disambiguation only: a `guilds.cache`
+ * `channelName (guildName) [well-known: type]`, with no leading `#`; the guild suffix is omitted
+ * for DMs. Guild-name lookup is cosmetic disambiguation only: a `guilds.cache`
  * miss or throw (stale cache entry, corrupted guild object) silently omits the suffix rather
  * than failing the whole channel list.
  */

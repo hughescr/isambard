@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { snowflakeSchema } from '@/integrations/discord/message-history/snowflake';
+import { discordSnowflakeSchema } from '@/config';
 import { channelIdSchema, channelScopeSchema } from '@/integrations/discord/types';
 
 /**
@@ -18,7 +18,7 @@ export const discordChannelCheckpointSchema = z
         /** ISO 8601 timestamp when the channel was last seen */
         lastSeenAt:        z.iso.datetime(),
         /** Discord message ID (snowflake) of the last seen message (optional) */
-        lastSeenMessageId: snowflakeSchema.optional(),
+        lastSeenMessageId: discordSnowflakeSchema.optional(),
         /** ISO 8601 timestamp when this checkpoint was last updated */
         updatedAt:         z.iso.datetime(),
         /**
@@ -30,7 +30,7 @@ export const discordChannelCheckpointSchema = z
         handled:           z
             .object({
                 /** Discord message ID (snowflake) of the newest handled message in the batch */
-                messageId: snowflakeSchema,
+                messageId: discordSnowflakeSchema,
                 /** ISO 8601 timestamp when the batch was handled */
                 at:        z.iso.datetime(),
             })
@@ -47,7 +47,7 @@ export type DiscordChannelCheckpoint = z.infer<typeof discordChannelCheckpointSc
 export const unreadMessageSchema = z
     .object({
         /** Discord message ID (snowflake) */
-        id:          snowflakeSchema,
+        id:          discordSnowflakeSchema,
         /** Channel ID where the message was sent */
         channelId:   channelIdSchema,
         /** Human-readable channel name */
@@ -62,7 +62,7 @@ export const unreadMessageSchema = z
          * `replayUnhandled` (P10), whose envelope-attribution callers need an id, not a display
          * name.
          */
-        authorId:    snowflakeSchema.optional(),
+        authorId:    discordSnowflakeSchema.optional(),
         /** Message text content */
         content:     z.string(),
         /** ISO 8601 timestamp when the message was created */
@@ -108,7 +108,7 @@ export const channelSummarySchema = z
 export const messageMetadataSchema = z
     .object({
         /** Discord message ID (snowflake) */
-        id:        snowflakeSchema,
+        id:        discordSnowflakeSchema,
         /** Author's display name */
         author:    z.string().min(1, 'Author cannot be empty'),
         /** ISO 8601 timestamp when the message was created */

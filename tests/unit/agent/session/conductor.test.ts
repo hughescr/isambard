@@ -3074,7 +3074,7 @@ describe('createConductor', () => {
     describe('status()', () => {
         it('reports role, sessionId, queue length and the running turn', async () => {
             const h = build();
-            expect(h.conductor.status()).toMatchObject({ role: 'conversation', lifecycle: 'new', opened: false, turn: null });
+            expect(h.conductor.status()).toMatchObject({ role: 'conversation', lifecycle: 'new', turn: null });
 
             await openWith(h, 'sess-status');
             const envelope = discordEnvelope({ authorId: createUserId('user-status') });
@@ -3082,7 +3082,7 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.conductor.status()).toMatchObject({
-                role: 'conversation', sessionId: 'sess-status', lifecycle: 'open', opened: true, turn: { kind: 'discord', channelId: createChannelId('chan-1'), envelopeId: envelope.id, authorId: createUserId('user-status') },
+                role: 'conversation', sessionId: 'sess-status', lifecycle: 'open', turn: { kind: 'discord', channelId: createChannelId('chan-1'), envelopeId: envelope.id, authorId: createUserId('user-status') },
             });
         });
     });
@@ -3091,7 +3091,7 @@ describe('createConductor', () => {
         it('lifecycle: a freshly built conductor is new', () => {
             const h = build();
 
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'new', opened: false, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'new' });
         });
 
         it('lifecycle: open() in flight before init is opening, then open once it resolves', async () => {
@@ -3099,12 +3099,12 @@ describe('createConductor', () => {
             const openPromise = h.conductor.open();
             await flush();
 
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening', opened: false, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening' });
 
             h.instances[0].emit(frames.init('sess-1'));
             await openPromise;
 
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open', opened: true, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open' });
         });
 
         it('lifecycle: between system/init and open() finishing it stays opening while submit still rejects as not open', async () => {
@@ -3141,11 +3141,11 @@ describe('createConductor', () => {
 
             h.instances[0].fail(new Error('worker crashed'));
             await flush();
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'reopening', opened: true, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'reopening' });
 
             h.instances[1].emit(frames.init('sess-1'));
             await flush();
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open', opened: true, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open' });
         });
 
         it('lifecycle: an exhausted reopen is failed, and a later open() moves it back through opening to open', async () => {
@@ -3158,15 +3158,15 @@ describe('createConductor', () => {
             h.instances[2].fail(new Error('fresh open also failed'));
             await flush();
 
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed', opened: false, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed' });
 
             const reopened = h.conductor.open();
             await flush();
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening', opened: false, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening' });
 
             h.instances[3].emit(frames.init('sess-1'));
             await reopened;
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open', opened: true, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open' });
         });
 
         it('lifecycle: open() rejecting before its session ever initialised is failed', async () => {
@@ -3176,7 +3176,7 @@ describe('createConductor', () => {
             h.instances[0].fail(new Error('boom'));
             await expect(openPromise).rejects.toThrow('boom');
 
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed', opened: false, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed' });
         });
 
         it('lifecycle: a failed resume whose handle was discarded is opening (not open) while the fresh fallback is in flight, and failed once that fallback fails too', async () => {
@@ -3191,12 +3191,12 @@ describe('createConductor', () => {
             // finishOpen set the internal opened flag before its save rejected and the resumed
             // handle was discarded; no handle is current, so the projection is not 'open'.
             expect(h.instances[0].closeCalls).toBe(1);
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening', opened: false, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'opening' });
 
             h.instances[1].fail(new Error('fresh fallback failed'));
             await expect(openPromise).rejects.toThrow('fresh fallback failed');
 
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed', opened: false, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'failed' });
         });
 
         it('lifecycle: a fresh open whose handle stayed live is open even though open() rejected on its resume-store save', async () => {
@@ -3208,7 +3208,7 @@ describe('createConductor', () => {
             await expect(openPromise).rejects.toThrow('DynamoDB throttled');
 
             expect(h.instances[0].closeCalls).toBe(0);
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open', opened: true, shuttingDown: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'open' });
         });
 
         it('lifecycle: shutdown() after open is closing at once and closed after it resolves', async () => {
@@ -3216,10 +3216,10 @@ describe('createConductor', () => {
             await openWith(h);
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closing', opened: false, shuttingDown: true });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closing' });
 
             await shutdownPromise;
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed', opened: false, shuttingDown: true });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed' });
         });
 
         it('lifecycle: shutdown() during a crash reopen is closing while the reopen is still in flight, then closed', async () => {
@@ -3230,12 +3230,12 @@ describe('createConductor', () => {
 
             const shutdownPromise = h.conductor.shutdown({ turnWaitMs: 60_000, deadlineMs: 120_000 });
             await flush();
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closing', opened: false, shuttingDown: true });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closing' });
 
             h.instances[1].emit(frames.init('sess-1'));
             await flush();
             await shutdownPromise;
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed', opened: false, shuttingDown: true });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed' });
         });
 
         it('lifecycle: shutdown() before any open goes closing then closed', async () => {
@@ -7226,7 +7226,7 @@ describe('createConductor', () => {
             await flush();
 
             expect(h.instances[0].closeCalls).toBe(1);
-            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed', opened: false });
+            expect(h.conductor.status()).toMatchObject({ lifecycle: 'closed' });
             expect(h.journal.byKind('session_opened')).toEqual([]);
             expect(await openOutcome).toEqual(new Error('Conductor is shutting down; the session was not opened'));
         });

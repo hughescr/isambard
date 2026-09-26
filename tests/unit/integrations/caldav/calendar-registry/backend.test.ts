@@ -78,7 +78,7 @@ describe('CalendarRegistryBackend', () => {
         expect(await backend.getSharedRecord()).toEqual(makeRecord('SHARED', [makeServer()]));
     });
 
-    test('rewriting a pre-scope row writes the scope and keeps the legacy userId', async () => {
+    test('rewriting a pre-scope row writes the scope and drops the old userId attribute', async () => {
         const { scope: _scope, ...legacyBody } = makeRecord('SHARED', [makeServer()]);
         ddbMock.on(GetCommand).resolves({ Item: { ...legacyBody, userId: 'SHARED', PK: 'CALCAL#SHARED', SK: 'CALENDARS' } });
         ddbMock.on(PutCommand).resolves({});
@@ -86,7 +86,8 @@ describe('CalendarRegistryBackend', () => {
         expect(await backend.removeSharedServer(VALID_UUID_1)).toBe(true);
 
         const putItem = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item;
-        expect(putItem).toEqual({ scope: { kind: 'shared' }, userId: 'SHARED', servers: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: expect.any(String), PK: 'CALCAL#SHARED', SK: 'CALENDARS' });
+        expect(putItem).toEqual({ scope: { kind: 'shared' }, servers: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: expect.any(String), PK: 'CALCAL#SHARED', SK: 'CALENDARS' });
+        expect(putItem).not.toHaveProperty('userId');
     });
 
     test('legacy shared body decodes from its PK despite a conflicting personal owner', async () => {
@@ -313,7 +314,7 @@ describe('CalendarRegistryBackend', () => {
             const putItem = putCalls[0].args[0].input.Item;
             expect(putItem?.PK).toBe('CALCAL#user-123');
             expect(putItem?.SK).toBe('CALENDARS');
-            expect(putItem?.userId).toBe('user-123');
+            expect(putItem).not.toHaveProperty('userId');
             expect(putItem?.scope).toEqual({ kind: 'personal', userId: 'user-123' });
             expect(putItem?.servers).toHaveLength(1);
             expect(putItem?.servers[0].serverId).toBe(VALID_UUID_1);
@@ -343,7 +344,7 @@ describe('CalendarRegistryBackend', () => {
             const putItem = putCalls[0].args[0].input.Item;
             expect(putItem?.servers).toHaveLength(2);
             expect(putItem?.scope).toEqual({ kind: 'personal', userId: 'user-123' });
-            expect(putItem?.userId).toBe('user-123');
+            expect(putItem).not.toHaveProperty('userId');
         });
 
         test('should pass operation name to withDynamoTimeout', async () => {
@@ -730,7 +731,7 @@ describe('CalendarRegistryBackend', () => {
             const putItem = putCalls[0].args[0].input.Item;
             expect(putItem?.PK).toBe('CALCAL#SHARED');
             expect(putItem?.SK).toBe('CALENDARS');
-            expect(putItem?.userId).toBe('SHARED');
+            expect(putItem).not.toHaveProperty('userId');
             expect(putItem?.scope).toEqual({ kind: 'shared' });
             expect(putItem?.servers).toHaveLength(1);
         });
@@ -749,7 +750,7 @@ describe('CalendarRegistryBackend', () => {
             const putItem = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item;
             expect(putItem?.servers).toHaveLength(2);
             expect(putItem?.scope).toEqual({ kind: 'shared' });
-            expect(putItem?.userId).toBe('SHARED');
+            expect(putItem).not.toHaveProperty('userId');
         });
     });
 
@@ -768,7 +769,7 @@ describe('CalendarRegistryBackend', () => {
             const putItem = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item;
             expect(putItem?.servers).toHaveLength(0);
             expect(putItem?.scope).toEqual({ kind: 'shared' });
-            expect(putItem?.userId).toBe('SHARED');
+            expect(putItem).not.toHaveProperty('userId');
         });
 
         test('should return false when server not found in shared record', async () => {
