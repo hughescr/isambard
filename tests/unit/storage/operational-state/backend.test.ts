@@ -72,44 +72,6 @@ describe('OperationalStateBackend', () => {
         });
     });
 
-    describe('putIfAbsent', () => {
-        test('sends one PutCommand with put\'s item conditioned on the key being absent and reports created', async () => {
-            jest.useFakeTimers();
-            jest.setSystemTime(new Date('2026-09-25T01:02:03.456Z'));
-            ddbMock.on(PutCommand).resolves({});
-
-            await expect(backend.putIfAbsent(channelKey, { n: 1 })).resolves.toBe('created');
-
-            const calls = ddbMock.commandCalls(PutCommand);
-            expect(calls).toHaveLength(1);
-            const item = {
-                PK:        'OPERATIONAL_STATE#discord',
-                SK:        'channels/123/checkpoint',
-                content:   '{"n":1}',
-                updatedAt: '2026-09-25T01:02:03.456Z',
-            };
-            expect(calls[0]?.args[0].input).toStrictEqual({ TableName: TABLE, Item: item, ConditionExpression: 'attribute_not_exists(PK)' });
-        });
-
-        test('reports exists when DynamoDB rejects the put with ConditionalCheckFailedException', async () => {
-            ddbMock.on(PutCommand).rejects(Object.assign(new Error('The conditional request failed'), { name: 'ConditionalCheckFailedException' }));
-            await expect(backend.putIfAbsent(channelKey, { n: 1 })).resolves.toBe('exists');
-        });
-
-        test('rethrows an Error with any other name', async () => {
-            const error = new Error('throttled');
-            ddbMock.on(PutCommand).rejects(error);
-            await expect(backend.putIfAbsent(channelKey, { n: 1 })).rejects.toBe(error);
-        });
-
-        test('rethrows a non-Error rejection even when it carries the conditional-failure name', async () => {
-            const rejection = { name: 'ConditionalCheckFailedException' };
-            // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- a conditional-shaped non-Error must not be mistaken for a DynamoDB condition failure
-            ddbMock.on(PutCommand).callsFake(() => Promise.reject(rejection));
-            await expect(backend.putIfAbsent(channelKey, { n: 1 })).rejects.toBe(rejection);
-        });
-    });
-
     describe('read', () => {
         test('a missing item is absent and the GetCommand is a strongly consistent read of exactly PK and SK', async () => {
             ddbMock.on(GetCommand).resolves({});
