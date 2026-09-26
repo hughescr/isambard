@@ -66,6 +66,29 @@ describe('outboxItemSchema', () => {
             expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['progress', 'deliveryToken'], code: 'too_small', minimum: 1 }));
         }
     });
+
+    test('a legacy row without replyToMessageId or deliveredParts parses unchanged', () => {
+        const legacy = { ...validItem, epoch: 0, progress: { attemptCount: 2, deliveryToken: '0123456789abcdef' } };
+
+        expect(outboxItemSchema.parse(legacy) as unknown).toEqual(legacy);
+    });
+
+    test('keeps a reply reference and a delivered-part count', () => {
+        const item = { ...validItem, epoch: 0, payload: { text: 'Hi', replyToMessageId: '1234567890' }, progress: { attemptCount: 1, deliveredParts: 2 } };
+
+        expect(outboxItemSchema.parse(item) as unknown).toEqual(item);
+    });
+
+    test('progress.deliveredParts accepts zero and rejects negative and fractional counts', () => {
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveredParts: 0 } }).success).toBe(true);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveredParts: -1 } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { deliveredParts: 1.5 } }).success).toBe(false);
+    });
+
+    test('payload.replyToMessageId rejects an empty id', () => {
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, payload: { text: 'Hi', replyToMessageId: '' } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, payload: { text: 'Hi', replyToMessageId: '1' } }).success).toBe(true);
+    });
 });
 
 describe('serializedDiscordPayloadSchema', () => {

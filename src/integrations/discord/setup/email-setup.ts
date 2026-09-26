@@ -71,6 +71,10 @@ export interface EmailSetupOptions {
      * Optional Discord capability facade.
      * When provided, admin channel notifications use the facade (with outbox fallback
      * when Discord is offline) instead of calling channel.send() directly.
+     * Production (src/index.ts) always passes it, so the direct channel.send() fallback only
+     * runs for callers that omit it (tests and embedders). Those fallbacks are admin approval
+     * cards and email notifications, not sends Izzy starts through a tool, so they are not
+     * routed through the outbox (#138).
      */
     discordCapability?:          DiscordCapability
     /** Records admin-approved outbound actions for the services executor (and wakes it) */
@@ -315,7 +319,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
                 .setStyle(ButtonStyle.Danger)
         );
 
-        // When capability is available, use it for outbox fallback; otherwise retry channel.send() up to 3 times
+        // When capability is available, use it for outbox fallback; otherwise retry channel.send() up to 3 times.
+        // Production always wires the capability; the direct fallback serves callers that omit it.
         await (options.discordCapability
             ? options.discordCapability.sendToChannel(
                 adminDiscordChannelId,
@@ -397,7 +402,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
 
 /**
  * Fetch the admin Discord channel and send a message payload to it.
- * When a capability facade is provided, uses it for outbox fallback support.
+ * When a capability facade is provided, uses it for outbox fallback support. Production always
+ * provides it; the direct channel.send() branch serves callers that omit it (tests and embedders).
  * Errors are non-fatal — logs the provided error message and returns.
  */
 async function sendToAdminChannel(

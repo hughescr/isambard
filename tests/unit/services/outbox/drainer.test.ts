@@ -3,7 +3,7 @@ import { createChannelId } from '@/agent/types';
 import { ChannelNotFoundByIdError } from '@/errors';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 import type { OutboxBackend } from '@/services/outbox/backend';
-import { createOutboxDrainer, OutboxVerificationPendingError, type OutboxDrainerDeps, type OutboxDrainer } from '@/services/outbox/drainer';
+import { createOutboxDrainer, OutboxDeliveryDeferredError, OutboxDiscardRequestedError, OutboxVerificationPendingError, OUTBOX_DEFERRED_RETRY_DELAY_MS, type OutboxDrainerDeps, type OutboxDrainer } from '@/services/outbox/drainer';
 import type { OutboxItem } from '@/services/outbox/types';
 import type { ServiceName } from '@/services/types';
 
@@ -43,6 +43,7 @@ describe('createOutboxDrainer', () => {
         discard:              ReturnType<typeof mock>
         markFailed:           ReturnType<typeof mock>
         markUnknown:          ReturnType<typeof mock>
+        defer:                ReturnType<typeof mock>
     };
     let registry: {
         isAvailable: ReturnType<typeof mock>
@@ -65,6 +66,7 @@ describe('createOutboxDrainer', () => {
             discard:              mock(async (): Promise<void> => undefined),
             markFailed:           mock(async (): Promise<void> => undefined),
             markUnknown:          mock(async (): Promise<void> => undefined),
+            defer:                mock(async (): Promise<void> => undefined),
         };
         registry = {
             isAvailable: mock((): boolean => true),
@@ -782,7 +784,7 @@ describe('createOutboxDrainer', () => {
 
             await defaultDrainer.drain(SERVICE);
 
-            expect(outboxBackend.dequeue).toHaveBeenCalledWith(SERVICE, 10);
+            expect(outboxBackend.dequeue).toHaveBeenCalledWith(SERVICE, 10, expect.any(Function));
             expect(jest.getTimerCount()).toBe(1);
 
             jest.advanceTimersByTime(999);
@@ -869,6 +871,233 @@ describe('createOutboxDrainer', () => {
 
             await drainer.drain(SERVICE);
 
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+
+    describe('drain() — requested discards and deferrals', () => {
+        test('discards an item whose delivery requested it, without classifying or recording a failure', async () => {
+            const item = makeItem();
+            const classify = mock(async () => ({ disposition: 'retry' as const, confidence: 0.9 }));
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw Object.assign(new OutboxDiscardRequestedError('reply_target_deleted'), { code: 10_008 });
+            });
+            const classified = createOutboxDrainer({ ...deps, failureClassifier: { classify } });
+
+            expect(await classified.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 1, unacknowledged: 0 });
+            expect(outboxBackend.discard).toHaveBeenCalledTimes(1);
+            expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'reply_target_deleted');
+            expect(classify).not.toHaveBeenCalled();
+            expect(outboxBackend.markFailed).not.toHaveBeenCalled();
+            expect(outboxBackend.markUnknown).not.toHaveBeenCalled();
+            expect(outboxBackend.acknowledgeDelivered).not.toHaveBeenCalled();
+            classified.stop();
+        });
+
+        test('names the requested discard reason in its default error message', () => {
+            const error = new OutboxDiscardRequestedError('reply_target_deleted');
+
+            expect(error.message).toBe('Outbox item discard requested: reply_target_deleted');
+            expect(error.name).toBe('OutboxDiscardRequestedError');
+            expect(error.reason).toBe('reply_target_deleted');
+            expect(new OutboxDiscardRequestedError('stale_epoch', 'custom').message).toBe('custom');
+        });
+
+        test('logs a failed requested discard and does not continue a full batch', async () => {
+            const items = [makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001' }), makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' }), makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000003' })];
+            const failure = new Error('delete failed');
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => items);
+            outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
+                throw failure;
+            });
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new OutboxDiscardRequestedError('reply_target_deleted');
+            });
+
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 2, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(logger.error).toHaveBeenCalledWith({ service: SERVICE, itemId: items[0].id, reason: 'reply_target_deleted', error: failure }, 'Failed to discard outbox item');
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('defers an item for thirty seconds without counting it or spending an attempt', async () => {
+            const item = makeItem();
+            const classify = mock(async () => ({ disposition: 'abandon' as const, confidence: 0.9 }));
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (): Promise<OutboxItem[]> => [item])
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new OutboxDeliveryDeferredError('Izzy not yet notified');
+            });
+            const deferring = createOutboxDrainer({ ...deps, failureClassifier: { classify }, now: () => 1000 });
+
+            expect(await deferring.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.defer).toHaveBeenCalledWith(item, 'Izzy not yet notified', '1970-01-01T00:00:31.000Z');
+            expect(outboxBackend.markFailed).not.toHaveBeenCalled();
+            expect(outboxBackend.markUnknown).not.toHaveBeenCalled();
+            expect(outboxBackend.discard).not.toHaveBeenCalled();
+            expect(classify).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(OUTBOX_DEFERRED_RETRY_DELAY_MS - 1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            deferring.stop();
+        });
+
+        test('deferral has a default message and a thirty-second delay', () => {
+            const error = new OutboxDeliveryDeferredError();
+
+            expect(error.message).toBe('Outbox delivery deferred');
+            expect(error.name).toBe('OutboxDeliveryDeferredError');
+            expect(OUTBOX_DEFERRED_RETRY_DELAY_MS).toBe(30_000);
+        });
+
+        test('logs a failed deferral and still resolves the drain without continuing a full batch', async () => {
+            const items = [makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001' }), makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' }), makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000003' })];
+            const failure = new Error('put failed');
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => items);
+            outboxBackend.defer.mockImplementationOnce(async (): Promise<void> => {
+                throw failure;
+            });
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new OutboxDeliveryDeferredError();
+            });
+
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 2, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(logger.error).toHaveBeenCalledWith({ service: SERVICE, itemId: items[0].id, error: failure }, 'Failed to defer outbox item');
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('re-arms a deferred row\'s retry after a full-batch continuation displaced its timer', async () => {
+            const items = [makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001' }), makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' }), makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000003' })];
+            let clock = 1000;
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (_service: unknown, _limit: unknown, onDeferred: (at: string) => void): Promise<OutboxItem[]> => {
+                    onDeferred('1970-01-01T00:00:31.000Z');
+                    return items;
+                })
+                .mockImplementationOnce(async (_service: unknown, _limit: unknown, onDeferred: (at: string) => void): Promise<OutboxItem[]> => {
+                    onDeferred('1970-01-01T00:00:31.000Z');
+                    return [];
+                })
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+            const retrying = createOutboxDrainer({ ...deps, now: () => clock });
+
+            expect(await retrying.drain(SERVICE)).toEqual({ delivered: 3, failed: 0, discarded: 0, unacknowledged: 0 });
+            clock += 100;
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            expect(outboxBackend.dequeue).toHaveBeenNthCalledWith(2, SERVICE, 3, expect.any(Function));
+            clock += 29_899;
+            jest.advanceTimersByTime(29_899);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(3);
+            retrying.stop();
+        });
+
+        test('re-arms immediately for a deferred row that is already due by the drainer clock', async () => {
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (_service: unknown, _limit: unknown, onDeferred: (at: string) => void): Promise<OutboxItem[]> => {
+                    onDeferred('1970-01-01T00:00:00.500Z');
+                    return [];
+                })
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+            const retrying = createOutboxDrainer({ ...deps, now: () => 1000 });
+
+            await retrying.drain(SERVICE);
+            jest.advanceTimersByTime(0);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            retrying.stop();
+        });
+    });
+
+    describe('drain() — requests during an active drain', () => {
+        test('runs a deferred row\'s retry that fired mid-drain once the active drain settles', async () => {
+            let clock = 1000;
+            const gate = Promise.withResolvers<void>();
+            deliverFn.mockImplementation((): Promise<void> => gate.promise);
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (_service: unknown, _limit: unknown, onDeferred: (at: string) => void): Promise<OutboxItem[]> => {
+                    onDeferred('1970-01-01T00:00:31.000Z');
+                    return [makeItem()];
+                })
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+            const retrying = createOutboxDrainer({ ...deps, now: () => clock });
+
+            const active = retrying.drain(SERVICE);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(jest.getTimerCount()).toBe(1);
+            clock += 30_000;
+            jest.advanceTimersByTime(30_000);
+            expect(jest.getTimerCount()).toBe(0);
+            gate.resolve();
+            expect(await active).toEqual({ delivered: 1, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(jest.getTimerCount()).toBe(1);
+            jest.advanceTimersByTime(99);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(jest.getTimerCount()).toBe(0);
+            retrying.stop();
+        });
+
+        test('runs a drain requested mid-drain exactly once', async () => {
+            const gate = Promise.withResolvers<void>();
+            deliverFn.mockImplementation((): Promise<void> => gate.promise);
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (): Promise<OutboxItem[]> => [makeItem()])
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+
+            const active = drainer.drain(SERVICE);
+            await Promise.resolve();
+            await Promise.resolve();
+            await drainer.drain(SERVICE);
+            await drainer.drain(SERVICE);
+            gate.resolve();
+            await active;
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            jest.advanceTimersByTime(1000);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('does not run a mid-drain request once the drainer is stopped', async () => {
+            const gate = Promise.withResolvers<void>();
+            deliverFn.mockImplementation((): Promise<void> => gate.promise);
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [makeItem()]);
+
+            const active = drainer.drain(SERVICE);
+            await Promise.resolve();
+            await Promise.resolve();
+            await drainer.drain(SERVICE);
+            drainer.stop();
+            gate.resolve();
+            await active;
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('does not run a drain after one that had no mid-drain request', async () => {
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [makeItem()]);
+
+            await drainer.drain(SERVICE);
             expect(jest.getTimerCount()).toBe(0);
         });
     });

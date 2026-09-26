@@ -14,6 +14,7 @@ import * as memoryMcpModule from '@/agent/memory-mcp-server';
 import type { createMemoryMCPServer } from '@/agent/memory-mcp-server';
 import * as personContextMcpModule from '@/agent/person-context-mcp-server';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
+import { createChannelId } from '@/agent/types';
 import * as wikipediaMcpModule from '@/agent/wikipedia-mcp-server';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { MCPServersOptions } from '@/app/mcp-servers';
@@ -62,6 +63,7 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
             operationalStateStore: {} as unknown as OperationalStateStore,
             messageSearchService:  {} as unknown as MessageSearchService,
             discordClient:         {} as unknown as Client,
+            discordCapability:     { isReady: mock(() => true), sendText: mock(async () => ({ status: 'sent' as const, messageIds: [], chunkCount: 0 })) },
             questionRegistry:      {} as unknown as QuestionRegistry,
             channelRegistry:       {} as unknown as ChannelRegistryManager,
             inboxManager:          {} as unknown as InboxManager,
@@ -233,6 +235,30 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
                 timezone:         mockOptions.timezone,
             })
         );
+    });
+
+    test('adapts the Discord capability into the outbound sender with reply priority and type', async () => {
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createDiscordMcpServerSpy,
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+        );
+        const queued = { status: 'queued' as const, outboxId: 'outbox-1', sentMessageIds: [], chunkCount: 1 };
+        let ready = true;
+        const discordCapability = {
+            isReady:  mock(() => ready),
+            sendText: mock(async () => queued),
+        };
+
+        buildConversationServers({ ...mockOptions, discordCapability });
+
+        const { outboundSender } = createDiscordMcpServerSpy.mock.calls[0][0];
+        expect(await outboundSender.sendText(createChannelId('ch-1'), 'hello', { replyToMessageId: 'r-1' })).toBe(queued);
+        expect(discordCapability.sendText).toHaveBeenCalledWith('ch-1', 'hello', { replyToMessageId: 'r-1', priority: 'high', type: 'agent_response' });
+        expect(outboundSender.isReady()).toBe(true);
+        ready = false;
+        expect(outboundSender.isReady()).toBe(false);
     });
 
     test('should pass personAllowlist through to createDiscordMCPServer', () => {
@@ -548,6 +574,7 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
             operationalStateStore: {} as unknown as OperationalStateStore,
             messageSearchService:  {} as unknown as MessageSearchService,
             discordClient:         {} as unknown as Client,
+            discordCapability:     { isReady: mock(() => true), sendText: mock(async () => ({ status: 'sent' as const, messageIds: [], chunkCount: 0 })) },
             questionRegistry:      {} as unknown as QuestionRegistry,
             channelRegistry:       {} as unknown as ChannelRegistryManager,
             inboxManager:          {} as unknown as InboxManager,

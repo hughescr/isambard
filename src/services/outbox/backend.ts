@@ -68,8 +68,10 @@ export class OutboxBackend extends DynamoTableAccess {
     /**
      * Returns the next `limit` valid items in key order (priority, then dedupe key).
      * Valid items remain in the outbox; malformed rows are deleted after validation fails.
+     * `onDeferred` receives the `nextAttemptAt` of every scanned row that is not yet due, so the
+     * drainer can re-arm a retry timer that an earlier, shorter timer displaced.
      */
-    async dequeue(service: OutboxService, limit = 10): Promise<OutboxItem[]> {
+    async dequeue(service: OutboxService, limit = 10, onDeferred?: (nextAttemptAt: string) => void): Promise<OutboxItem[]> {
         const valid: OutboxItem[] = [];
         let cursor: Record<string, unknown> | undefined;
         do {
@@ -90,6 +92,8 @@ export class OutboxBackend extends DynamoTableAccess {
                     const nextAttemptAt = parsed.data.progress.nextAttemptAt;
                     if(nextAttemptAt === undefined || new Date(nextAttemptAt).getTime() <= Date.now()) {
                         valid.push(parsed.data);
+                    } else {
+                        onDeferred?.(nextAttemptAt);
                     }
                 } else {
                     // eslint-disable-next-line no-await-in-loop -- malformed rows are deleted before advancing the paginated read loop
@@ -130,6 +134,10 @@ export class OutboxBackend extends DynamoTableAccess {
                 lastAttemptAt: new Date().toISOString(),
                 outcome:       'retryable',
                 ...(options.nextAttemptAt === undefined ? {} : { nextAttemptAt: options.nextAttemptAt }),
+                // Part boundaries are sized from the delivery token, so a resumed replay must keep
+                // both or it could skip or duplicate text after a partial delivery.
+                ...(item.progress.deliveryToken === undefined ? {} : { deliveryToken: item.progress.deliveryToken }),
+                ...(item.progress.deliveredParts === undefined ? {} : { deliveredParts: item.progress.deliveredParts }),
             },
         };
         if(options.retryable) {
@@ -143,6 +151,14 @@ export class OutboxBackend extends DynamoTableAccess {
             await this.persistFailure(updated);
             throw deleteError;
         }
+    }
+
+    /**
+     * Postpone an item without spending a delivery attempt: every other progress field
+     * (attemptCount, outcome, deliveryToken, deliveredParts) is kept as it was.
+     */
+    async defer(item: OutboxItem, reason: string, nextAttemptAt: string): Promise<void> {
+        await this.persistFailure({ ...item, progress: { ...item.progress, lastError: reason, nextAttemptAt } });
     }
 
     /** Persist an ambiguous send outcome; it is never eligible for blind replay. */

@@ -15,8 +15,13 @@ const apiActionRowSchema = z.custom<APIActionRowComponent<APIComponentInMessageA
 
 /** Durable Discord API payload stored in the generic outbox. */
 export const serializedDiscordPayloadSchema = z.object({
-    text:       z.string().optional(),
-    embeds:     z.array(apiEmbedSchema).optional(),
-    components: z.array(apiActionRowSchema).optional(),
+    text:             z.string().optional(),
+    embeds:           z.array(apiEmbedSchema).optional(),
+    components:       z.array(apiActionRowSchema).optional(),
+    /**
+     * Discord message the first delivered text part replies to. Absent on legacy rows and on
+     * non-reply items, so rows written before this field existed still parse unchanged.
+     */
+    replyToMessageId: z.string().min(1).optional(),
 });
 export type SerializedDiscordPayload = z.infer<typeof serializedDiscordPayloadSchema>;

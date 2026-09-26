@@ -47,6 +47,9 @@ export interface BskySetupOptions {
      * Optional Discord capability facade.
      * When provided, approval embeds are sent via the facade (with outbox fallback
      * when Discord is offline) instead of calling channel.send() directly.
+     * Production (src/index.ts) always passes it, so the direct channel.send() fallback only
+     * runs for callers that omit it (tests and embedders). These are admin approval cards, not
+     * sends Izzy starts through a tool, so the fallback is not routed through the outbox (#138).
      */
     discordCapability?:          DiscordCapability
     /** @internal Dependency injection for testing (e.g. fast sleep) */

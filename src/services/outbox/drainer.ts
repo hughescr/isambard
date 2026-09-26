@@ -12,6 +12,34 @@ export class OutboxVerificationPendingError extends Error {
     }
 }
 
+/**
+ * Raised by a delivery function that has settled an item's fate itself (for example after
+ * telling Izzy that a queued reply's target was deleted): the drainer discards the item with
+ * `reason` and never classifies the error, so it cannot be retried or silently abandoned.
+ */
+export class OutboxDiscardRequestedError extends Error {
+    constructor(readonly reason: OutboxDiscardReason, message = `Outbox item discard requested: ${reason}`) {
+        super(message);
+        this.name = 'OutboxDiscardRequestedError';
+    }
+}
+
+/** How long {@link OutboxDeliveryDeferredError} postpones an item. */
+export const OUTBOX_DEFERRED_RETRY_DELAY_MS = 30_000;
+
+/**
+ * Raised by a delivery function that cannot finish an item yet for a reason that is not a
+ * delivery failure (for example Izzy cannot be told about a dropped reply until the conductor
+ * accepts work). The drainer postpones the item by {@link OUTBOX_DEFERRED_RETRY_DELAY_MS}
+ * without spending one of its attempts.
+ */
+export class OutboxDeliveryDeferredError extends Error {
+    constructor(message = 'Outbox delivery deferred') {
+        super(message);
+        this.name = 'OutboxDeliveryDeferredError';
+    }
+}
+
 export interface OutboxDrainerDeps {
     outboxBackend:      OutboxBackend
     registry:           ServiceHealthRegistry
@@ -50,6 +78,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
     const failureClassifier = deps.failureClassifier;
     let stopped = false;
     let draining = false;
+    let drainRequested = false;
     let pendingTimer: ReturnType<typeof setTimeout> | undefined;
     let pendingAt: number | undefined;
 
@@ -71,10 +100,20 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
         }
     }
 
+    function scheduleAt(service: OutboxService, nextAttemptAt: string): void {
+        schedule(service, Math.max(0, new Date(nextAttemptAt).getTime() - now()));
+    }
+
     // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- sequential send, retry, discard and acknowledgement have distinct failure contracts
     async function drain(service: OutboxService): Promise<DrainResult> {
         const result: DrainResult = { delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 };
-        if(draining || stopped) {
+        if(stopped) {
+            return result;
+        }
+        if(draining) {
+            // A request that arrives mid-drain (a retry timer firing, an enqueue wakeup) may concern
+            // a row the active scan already passed over, so it runs once that drain settles.
+            drainRequested = true;
             return result;
         }
         draining = true;
@@ -83,7 +122,11 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                 return result;
             }
             const currentEpoch = registry.getEntry(service).epoch;
-            const items = await outboxBackend.dequeue(service, batchSize);
+            // schedule() keeps only its earliest timer, so a shorter continuation can displace a
+            // retry deadline; every scan re-arms the deadlines of the rows it skipped as not yet due.
+            const items = await outboxBackend.dequeue(service, batchSize, (nextAttemptAt) => {
+                scheduleAt(service, nextAttemptAt);
+            });
             let dispositionError = false;
             for(const item of items) {
                 if(!registry.isAvailable(service)) {
@@ -112,12 +155,35 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                     await deliverFn(item);
                 } catch (err: unknown) {
                     const message = err instanceof Error ? err.message : String(err);
+                    if(err instanceof OutboxDiscardRequestedError) {
+                        try {
+                            // eslint-disable-next-line no-await-in-loop -- discard must complete before continuing with later work
+                            await outboxBackend.discard(item, err.reason);
+                            result.discarded += 1;
+                        } catch (error: unknown) {
+                            dispositionError = true;
+                            logger.error({ service, itemId: item.id, reason: err.reason, error }, 'Failed to discard outbox item');
+                        }
+                        continue;
+                    }
+                    if(err instanceof OutboxDeliveryDeferredError) {
+                        const deferredUntil = new Date(now() + OUTBOX_DEFERRED_RETRY_DELAY_MS).toISOString();
+                        try {
+                            // eslint-disable-next-line no-await-in-loop -- persist the deferral before processing later work
+                            await outboxBackend.defer(item, message, deferredUntil);
+                            scheduleAt(service, deferredUntil);
+                        } catch (error: unknown) {
+                            dispositionError = true;
+                            logger.error({ service, itemId: item.id, error }, 'Failed to defer outbox item');
+                        }
+                        continue;
+                    }
                     const nextAttemptAt = retryAt(item);
                     if(err instanceof OutboxVerificationPendingError) {
                         try {
                             // eslint-disable-next-line no-await-in-loop -- persist the safe verification state before processing later work
                             await outboxBackend.markUnknown(item, message, nextAttemptAt);
-                            schedule(service, Math.max(0, new Date(nextAttemptAt).getTime() - now()));
+                            scheduleAt(service, nextAttemptAt);
                         } catch (error: unknown) {
                             logger.error({ service, itemId: item.id, error }, 'Failed to persist indeterminate outbox verification');
                         }
@@ -147,7 +213,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                         // eslint-disable-next-line no-await-in-loop -- sequential outbox processing preserves order
                         await outboxBackend.markFailed(item, message, { retryable, ...(retryable ? { nextAttemptAt } : {}) });
                         if(retryable) {
-                            schedule(service, Math.max(0, new Date(nextAttemptAt).getTime() - now()));
+                            scheduleAt(service, nextAttemptAt);
                         }
                         if(!retryable) {
                             result.discarded += 1;
@@ -179,6 +245,11 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
         } finally {
             // eslint-disable-next-line require-atomic-updates -- single-threaded guard
             draining = false;
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stop() can run between awaits
+            if(drainRequested && !stopped) {
+                drainRequested = false;
+                schedule(service, drainIntervalMs);
+            }
         }
     }
 

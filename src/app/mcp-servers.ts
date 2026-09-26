@@ -4,7 +4,7 @@ import type { Client } from 'discord.js';
 import { createMemoryMCPServer, createDiscordMCPServer, createDiscordInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createPersonContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator, type SessionRole } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend, type BskyReplyInput } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
-import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
+import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type DiscordCapability, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { MemoryToolBackend, MemoryPath, ContactBackend, ContactChangeRequest, PersonAllowlist, EmbedderLike, VectorIndex, OperationalStateStore } from '@/storage';
 
@@ -31,6 +31,12 @@ export interface MCPServersOptions {
      * Discord client for sending messages and fetching channels.
      */
     discordClient: Client
+
+    /**
+     * Outbox-backed Discord send facade. The Discord MCP server's plain-text sendDiscordMessage
+     * goes through its `sendText`, so a message is queued (not lost) while Discord is unavailable.
+     */
+    discordCapability: Pick<DiscordCapability, 'isReady' | 'sendText'>
 
     /**
      * Question registry for interactive questions.
@@ -370,6 +376,15 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         healthRegistry:   options.healthRegistry,
         reconnectionLoop: options.discordReconnectionLoop,
         personAllowlist:  options.personAllowlist,
+        outboundSender:   {
+            isReady:  () => options.discordCapability.isReady(),
+            // 'high' matches the priority conversation replies are queued with.
+            sendText: (channelId, content, sendOptions) => options.discordCapability.sendText(channelId, content, {
+                replyToMessageId: sendOptions.replyToMessageId,
+                priority:         'high',
+                type:             'agent_response',
+            }),
+        },
     });
 
     const inboxMcpServer = createDiscordInboxMCPServer(

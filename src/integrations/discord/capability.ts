@@ -1,7 +1,7 @@
 import type { Client, Message, TextChannel, EmbedBuilder, ActionRowBuilder } from 'discord.js';
 import type { ChannelId } from '@/config';
 import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
-import { deliveryTokenFor } from '@/integrations/discord/outbox-replay';
+import { deliveryTokenFor, isIndeterminateDiscordError, messageChunksFor, textPartPayload } from '@/integrations/discord/outbox-replay';
 import { withDiscordRetry } from '@/integrations/discord/retry';
 import { appendDeliveryCode, maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
 import { serializedDiscordPayloadSchema, type ServiceHealthRegistry, type OutboxBackend, type OutboxItem, type OutboxPriority, type OutboxItemType } from '@/services';
@@ -33,6 +33,28 @@ export interface SendOptions {
     skipOutbox?: boolean
 }
 
+/** Options for {@link DiscordCapability.sendText}. */
+export interface TextSendOptions extends SendOptions {
+    /** Message the first part replies to; the reply is never posted without its reference. */
+    replyToMessageId?: string
+}
+
+/**
+ * Result of {@link DiscordCapability.sendText}. `sentMessageIds` lists the parts Discord confirmed
+ * before the send stopped, in order.
+ * - sent: every part was delivered
+ * - queued: Discord was unavailable or the outcome was indeterminate; the whole message (with the
+ *   confirmed prefix recorded) is in the outbox and the rest will be delivered by the drainer
+ * - failed: Discord definitively rejected a part (or the channel cannot receive messages); nothing
+ *   was queued
+ * - unavailable: Discord was unavailable and no outbox is configured (or skipOutbox was set)
+ */
+export type TextSendResult
+    = | { status: 'sent', messageIds: string[], chunkCount: number }
+      | { status: 'queued', outboxId: string, sentMessageIds: string[], chunkCount: number }
+      | { status: 'failed', error: string, sentMessageIds: string[], chunkCount: number }
+      | { status: 'unavailable', sentMessageIds: string[], chunkCount: number };
+
 /**
  * Message payload accepted by sendToChannel.
  * Either a plain string or a structured embed/component payload.
@@ -59,6 +81,13 @@ export interface DiscordCapability {
      */
     sendToChannel(channelId: ChannelId, content: ChannelContent, options?: SendOptions): Promise<SendResult>
     /**
+     * Send text as one outbox-backed message: it is split within the delivery-code budget and
+     * every part carries its own complete delivery code and nonce, exactly as a replay would
+     * send it. Indeterminate failures and an unavailable Discord queue the whole message;
+     * definitive rejections are reported as failed and never queued.
+     */
+    sendText(channelId: ChannelId, text: string, options?: TextSendOptions): Promise<TextSendResult>
+    /**
      * Fetch a text channel by ID. Returns null when Discord is not ready or the
      * channel cannot be resolved.
      */
@@ -76,6 +105,12 @@ export interface DiscordCapabilityDeps {
     /** Optional — if not provided, outbox fallback is disabled. */
     outboxBackend?: OutboxBackend
     logger:         DiscordCapabilityLogger
+    /**
+     * Called once a send has been written to the outbox, to wake the drainer. A send can be
+     * queued while Discord stays online (an indeterminate REST failure), and then no health
+     * transition would ever start a drain to deliver it.
+     */
+    onQueued?:      () => void
 }
 
 /**
@@ -90,7 +125,8 @@ function isTextSendable(channel: unknown): channel is TextChannel {
 /**
  * Build an OutboxItem for a failed Discord send, ready to enqueue.
  */
-function buildOutboxItem(channelId: ChannelId, content: ChannelContent, options: SendOptions | undefined): OutboxItem {
+function buildOutboxItem(channelId: ChannelId, content: ChannelContent, options: TextSendOptions | undefined): OutboxItem {
+    const replyToMessageId = options?.replyToMessageId;
     return {
         id:          crypto.randomUUID(),
         createdAt:   new Date().toISOString(),
@@ -98,7 +134,8 @@ function buildOutboxItem(channelId: ChannelId, content: ChannelContent, options:
         service:     'discord',
         destination: channelId,
         payload:     typeof content === 'string'
-            ? { text: content }
+            // An empty reply id means "no reply" (as the direct send treats it) and would not parse back.
+            ? { text: content, ...(replyToMessageId === undefined || replyToMessageId === '' ? {} : { replyToMessageId }) }
             : serializedDiscordPayloadSchema.parse({
                 text:       content.content,
                 embeds:     content.embeds?.map(embed => embed.toJSON()),
@@ -173,11 +210,52 @@ export class DiscordCapabilityImpl implements DiscordCapability {
         }
 
         if(outboxItem !== undefined && this.deps.outboxBackend !== undefined) {
-            await this.deps.outboxBackend.enqueue(outboxItem);
+            await this.enqueue(this.deps.outboxBackend, outboxItem);
             return { status: 'queued', outboxId: outboxItem.id };
         }
 
         return { status: 'unavailable' };
+    }
+
+    async sendText(channelId: ChannelId, text: string, options?: TextSendOptions): Promise<TextSendResult> {
+        // The item is built even for an immediate send: its token sizes and tags every part.
+        const item = buildOutboxItem(channelId, text, options);
+        const chunks = messageChunksFor(item);
+        const chunkCount = chunks.length;
+        const sentMessageIds: string[] = [];
+        const client = this.client;
+        if(this.isReady()) {
+            try {
+                const channel = await withDiscordRetry(() => client!.channels.fetch(channelId));
+                if(!isTextSendable(channel)) {
+                    return { status: 'failed', error: `Channel ${channelId} cannot receive messages`, sentMessageIds, chunkCount };
+                }
+                for(const [part, chunk] of chunks.entries()) {
+                    // eslint-disable-next-line no-await-in-loop -- parts are sent in order; each must be confirmed before the next
+                    const message = await withDiscordRetry(() => channel.send(textPartPayload(item, part, chunk)));
+                    sentMessageIds.push(message.id);
+                }
+                return { status: 'sent', messageIds: sentMessageIds, chunkCount };
+            } catch (err: unknown) {
+                const error = err instanceof Error ? err.message : String(err);
+                this.deps.logger.warn({ error, channelId, sentParts: sentMessageIds.length }, 'Discord text send failed');
+                if(!isIndeterminateDiscordError(err)) {
+                    return { status: 'failed', error, sentMessageIds, chunkCount };
+                }
+                item.progress = { ...item.progress, outcome: 'unknown', lastError: error, lastAttemptAt: new Date().toISOString(), deliveredParts: sentMessageIds.length };
+            }
+        }
+        if(this.deps.outboxBackend !== undefined && options?.skipOutbox !== true) {
+            await this.enqueue(this.deps.outboxBackend, item);
+            return { status: 'queued', outboxId: item.id, sentMessageIds, chunkCount };
+        }
+        return { status: 'unavailable', sentMessageIds, chunkCount };
+    }
+
+    /** Writes a queued send and only then wakes the drainer, so its scan can find the row. */
+    private async enqueue(outboxBackend: OutboxBackend, item: OutboxItem): Promise<void> {
+        await outboxBackend.enqueue(item);
+        this.deps.onQueued?.();
     }
 
     async fetchChannel(channelId: ChannelId): Promise<TextChannel | null> {

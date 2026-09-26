@@ -5,10 +5,10 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 // eslint-disable-next-line no-restricted-imports -- Discord MCP adapter hosted in src/agent by convention; the sole #40 fence exemption
 import type { Client, TextChannel, GuildTextBasedChannel, Message, MessageCreateOptions } from 'discord.js';
 import { z } from 'zod';
-import type { DiscordMcpChannelRegistry, MCPDMTracker, MCPMessageSearchService, MCPMessageSplitter, MCPRetryHelper } from './discord-ports';
-import { withHealthGuard, withToolErrorHandling } from './mcp-helpers';
+import type { DiscordMcpChannelRegistry, MCPDMTracker, MCPMessageSearchService, MCPMessageSplitter, MCPOutboundMessageSender, MCPOutboundSendResult, MCPRetryHelper } from './discord-ports';
+import { checkServiceHealth, mcpJsonResult, withHealthGuard, withToolErrorHandling } from './mcp-helpers';
 import { type QuestionRegistry, questionOptionSchema  } from './question-registry';
-import { createChannelId, createUserId, type UserId } from './types';
+import { createChannelId, createUserId, type ChannelId, type UserId } from './types';
 import { InvariantViolationError, PathSecurityError } from '@/errors';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 import type { PersonAllowlist } from '@/storage';
@@ -149,23 +149,24 @@ async function sendMessage(
 }
 
 /**
- * Helper: Sends all message chunks to a channel and returns the sent Message objects.
+ * Helper: Sends all message chunks to a channel, appending each confirmed Message to
+ * `sentMessages` as it goes, so a caller can report what was sent when a later chunk fails.
  * Throws if chunks is empty (splitMessage invariant violation).
  */
 async function sendAllChunks(
     channel: TextChannel,
     chunks: string[],
     retryHelper: MCPRetryHelper,
+    sentMessages: Message[],
     replyToMessageId?: string,
     files?: string[]
-): Promise<Message[]> {
+): Promise<void> {
     const firstChunk = chunks[0];
     if(firstChunk === undefined) {
         throw new InvariantViolationError('sendAllChunks', 'splitMessage returned empty chunks array');
     }
-    const sentMessages: Message[] = [];
     const firstMessage = await sendMessage(channel, firstChunk, retryHelper, replyToMessageId, files);
-    // Stryker disable next-line ArrayMethodSwap: sentMessages is newly allocated, so this first insertion has the same order.
+    // Stryker disable next-line ArrayMethodSwap: the caller passes an empty sentMessages, so this first insertion has the same order.
     sentMessages.push(firstMessage);
     for(let i = 1; i < chunks.length; i++) {
         const chunk = chunks[i];
@@ -176,7 +177,71 @@ async function sendAllChunks(
         const msg = await sendMessage(channel, chunk, retryHelper);
         sentMessages.push(msg);
     }
-    return sentMessages;
+}
+
+/** Builds a single-text error result for a Discord MCP tool. */
+function toolError(text: string): CallToolResult {
+    return { content: [{ type: 'text' as const, text }], isError: true };
+}
+
+const NEVER_QUEUED_NOTE = 'Messages with files or createThread are sent directly and never queued';
+
+/**
+ * Error for a direct send that threw part-way: a chunk whose response never arrived may still have
+ * been posted, so this never claims nothing was sent, and it lists every confirmed message.
+ */
+function directSendFailure(error: unknown, sentMessages: Message[], chunkCount: number): CallToolResult {
+    const message = error instanceof Error ? error.message : String(error);
+    if(sentMessages.length === 0) {
+        return toolError(`Error: delivery could not be confirmed: ${message}. ${NEVER_QUEUED_NOTE}; check the channel before sending again.`);
+    }
+    const ids = sentMessages.map(sent => sent.id).join(', ');
+    return toolError(`Error: only the first ${sentMessages.length} of ${chunkCount} chunks were confirmed sent (messageIds: ${ids}); delivery of the rest could not be confirmed: ${message}. ${NEVER_QUEUED_NOTE}; check the channel before sending the rest again.`);
+}
+
+/** Error for a send that stopped before every chunk was confirmed and was not queued. */
+function notSentError(result: { sentMessageIds: string[], chunkCount: number }, reason: string): CallToolResult {
+    const sent = result.sentMessageIds.length;
+    const prefix = sent === 0
+        ? 'Error: message not sent'
+        : `Error: only the first ${sent} of ${result.chunkCount} chunks were sent (messageIds: ${result.sentMessageIds.join(', ')}); the rest were not sent`;
+    return toolError(`${prefix}: ${reason}`);
+}
+
+/** Maps an outbox-backed send result onto the sendDiscordMessage tool result Izzy sees. */
+function formatOutboundResult(result: MCPOutboundSendResult): CallToolResult {
+    switch(result.status) {
+        case 'sent': {
+            return mcpJsonResult({ success: true, status: 'sent', messageIds: result.messageIds, chunksCount: result.chunkCount });
+        }
+        case 'queued': {
+            const sent = result.sentMessageIds.length;
+            if(sent === 0) {
+                return mcpJsonResult({
+                    success:     true,
+                    status:      'queued',
+                    delivered:   false,
+                    outboxId:    result.outboxId,
+                    chunksCount: result.chunkCount,
+                    note:        `Discord is unavailable. The message is queued (outbox id ${result.outboxId}) and will be delivered automatically when Discord is back. It has NOT been sent yet; do not send it again.`,
+                });
+            }
+            return mcpJsonResult({
+                success:     true,
+                status:      'partially_sent',
+                messageIds:  result.sentMessageIds,
+                outboxId:    result.outboxId,
+                chunksCount: result.chunkCount,
+                note:        `The first ${sent} of ${result.chunkCount} chunks were sent. The rest are queued (outbox id ${result.outboxId}) and will be delivered automatically when Discord is back; they have NOT been sent yet, so do not send them again.`,
+            });
+        }
+        case 'failed': {
+            return notSentError(result, `${result.error}. It was not queued.`);
+        }
+        case 'unavailable': {
+            return notSentError(result, 'Discord is unavailable and the message could not be queued.');
+        }
+    }
 }
 
 /**
@@ -499,6 +564,110 @@ interface DiscordMCPServerOptions {
     reconnectionLoop?: ReconnectionLoop
     /** Optional person allowlist for validating askUserQuestion's requestingUserId argument */
     personAllowlist?:  PersonAllowlist
+    /** Outbox-backed sender for plain-text sendDiscordMessage calls (queues while Discord is unavailable) */
+    outboundSender:    MCPOutboundMessageSender
+}
+
+/** Arguments of the sendDiscordMessage tool after file validation. */
+interface SendDiscordMessageArgs {
+    channelId:         string
+    content:           string
+    replyToMessageId?: string
+    createThread?:     boolean
+    threadName?:       string
+    requestingUserId?: string
+}
+
+/** Resolves `@username` through the DM tracker and anything else through the channel registry. */
+async function resolveSendTarget(
+    channelId: string,
+    options: Pick<DiscordMCPServerOptions, 'dmTracker' | 'channelRegistry'>
+): Promise<{ channelId: ChannelId } | { error: CallToolResult }> {
+    if(channelId.startsWith('@')) {
+        const username = channelId.slice(1);
+        const dmChannelId = await options.dmTracker.getOrCreateDMByUsername(username);
+        if(!dmChannelId) {
+            return { error: toolError(`Error: Could not find user @${username} in any server`) };
+        }
+        return { channelId: dmChannelId };
+    }
+    return { channelId: options.channelRegistry.resolveChannelId(channelId) };
+}
+
+/**
+ * Sends a message with files or a thread request straight to Discord. These are never queued:
+ * a thread needs the delivered message, so they fail visibly while Discord is unavailable.
+ */
+async function sendDirect(args: SendDiscordMessageArgs, validatedFiles: string[] | undefined, options: DiscordMCPServerOptions): Promise<CallToolResult> {
+    if(options.healthRegistry) {
+        const unavailable = checkServiceHealth(options.healthRegistry, 'discord', options.reconnectionLoop);
+        if(unavailable) {
+            return unavailable;
+        }
+    }
+    const target = await resolveSendTarget(args.channelId, options);
+    if(isErrorResult(target)) {
+        return target.error;
+    }
+    const channelResult = await fetchAndValidateChannel(options.client, target.channelId, options.retryHelper);
+    if(isErrorResult(channelResult)) {
+        return channelResult.error;
+    }
+
+    // Stryker disable next-line llm: MCP validation requires a string, and every accepted string satisfies s || '' === s.
+    const chunks = options.messageSplitter.splitMessage(args.content);
+    const sentMessages: Message[] = [];
+    try {
+        await sendAllChunks(channelResult.channel, chunks, options.retryHelper, sentMessages, args.replyToMessageId, validatedFiles);
+    } catch (error: unknown) {
+        return directSendFailure(error, sentMessages, chunks.length);
+    }
+    const messageIds = sentMessages.map(msg => msg.id);
+
+    let threadId: string | undefined;
+    try {
+        // sendAllChunks throws before returning when the splitter yields no first chunk.
+        threadId = await createThreadIfRequested(channelResult.channel, sentMessages[0]!, options.retryHelper, args.createThread, args.threadName);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        return toolError(`Error: the message was sent (messageIds: ${messageIds.join(', ')}) but the thread could not be created: ${message}. Do not send the message again.`);
+    }
+
+    const result = {
+        success:     true,
+        messageIds,
+        chunksCount: chunks.length,
+        ...(threadId && { threadId }),
+        ...(validatedFiles && { filesAttached: validatedFiles.length }),
+    };
+
+    logger.info({ requestingUserId: args.requestingUserId, channelId: args.channelId, messageIds, msg: 'Message sent via MCP tool' });
+
+    return {
+        // Stryker disable next-line NumberLiteralValue: JSON indentation changes only presentation whitespace, not the result data.
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+    };
+}
+
+/**
+ * Sends a plain-text message through the outbox-backed sender: it is delivered now when Discord
+ * is available and queued otherwise. Neither the channel nor a reply target can be checked while
+ * Discord is unavailable, so a bad id is only found when the queued message is replayed.
+ */
+async function sendViaOutbox(args: SendDiscordMessageArgs, options: DiscordMCPServerOptions): Promise<CallToolResult> {
+    if(args.content.trim() === '') {
+        return toolError('Error: content is empty; nothing was sent.');
+    }
+    if(args.channelId.startsWith('@') && !options.outboundSender.isReady()) {
+        return toolError(`Error: cannot resolve ${args.channelId} while Discord is unavailable; use the DM channel id to queue the message.`);
+    }
+    const target = await resolveSendTarget(args.channelId, options);
+    if(isErrorResult(target)) {
+        return target.error;
+    }
+    const result = await options.outboundSender.sendText(target.channelId, args.content, { replyToMessageId: args.replyToMessageId });
+    logger.info({ requestingUserId: args.requestingUserId, channelId: args.channelId, status: result.status, msg: 'Outbox-backed message send via MCP tool' });
+    return formatOutboundResult(result);
 }
 
 /**
@@ -516,7 +685,7 @@ interface DiscordMCPServerOptions {
  * @param options - All required dependencies for the Discord MCP server
  */
 export function createDiscordMCPServer(options: DiscordMCPServerOptions) {
-    const { searchService, client, questionRegistry, channelRegistry, dmTracker, messageSplitter, buttonBuilder, retryHelper, timezone, personAllowlist } = options;
+    const { searchService, client, questionRegistry, channelRegistry, buttonBuilder, retryHelper, timezone, personAllowlist } = options;
 
     return createSdkMcpServer({
         name:       'discord',
@@ -653,10 +822,12 @@ CRITICAL: Only use channel IDs from:
 
 NEVER invent or guess channel IDs. If unsure, use #general.
 
-The channel must always be given explicitly — there is no ambient conversation context.`,
+The channel must always be given explicitly — there is no ambient conversation context.
+
+Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If the message a queued reply answers is deleted before the reply is delivered, the reply is dropped and you are notified with its text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`,
                 {
                     channelId:        z.string().describe('Target channel ID, #channel-name, or @username for DM - use from message context, memory, or default: 1451694737026449581 (#general)'),
-                    content:          z.string().describe('Message content (max 2000 chars)'),
+                    content:          z.string().describe('Message content. Long content is split into several messages automatically.'),
                     replyToMessageId: z.string().optional().describe('Optional message ID to reply to'),
                     createThread:     z.boolean().optional().describe('Create a new thread for this message'),
                     threadName:       z.string().optional().describe('Thread name (required if createThread is true)'),
@@ -664,101 +835,39 @@ The channel must always be given explicitly — there is no ambient conversation
                     requestingUserId: z.string().optional().describe('User id from the envelope/message header, for logging only.'),
                 },
 
-                withHealthGuard(options.healthRegistry, 'discord', options.reconnectionLoop,
-                    withToolErrorHandling('sendDiscordMessage',
+                // No outer health guard: a plain-text message is queued while Discord is unavailable,
+                // and sendDirect applies the same health check to the sends that are never queued.
+                withToolErrorHandling('sendDiscordMessage', async (args): Promise<CallToolResult> => {
+                    const threadError = validateThreadCreation(args.createThread, args.threadName);
+                    if(threadError) {
+                        return threadError;
+                    }
 
-                        async (args): Promise<CallToolResult> => {
-                        // Validate inputs
-                            const threadError = validateThreadCreation(args.createThread, args.threadName);
-                            if(threadError) {
-                                return threadError;
+                    // Validate file paths first, so a security error is reported even while Discord is unavailable.
+                    let validatedFiles: string[] | undefined;
+                    if(args.files) {
+                        try {
+                            validatedFiles = await validateFilePaths(args.files);
+                        } catch (error) {
+                            if(error instanceof PathSecurityError) {
+                                logger.warn({ tool: 'sendDiscordMessage', error: error.message, path: error.context.path }, 'Discord tool returned security error');
+                                return toolError(`Security Error: ${error.message}`);
                             }
+                            throw error;
+                        }
+                    }
 
-                            // Validate file paths if provided
-                            let validatedFiles: string[] | undefined;
-                            if(args.files) {
-                                try {
-                                    validatedFiles = await validateFilePaths(args.files);
-                                } catch (error) {
-                                    if(error instanceof PathSecurityError) {
-                                        logger.warn({ tool: 'sendDiscordMessage', error: error.message, path: error.context.path }, 'Discord tool returned security error');
-                                        return {
-                                            content: [{ type: 'text' as const, text: `Security Error: ${error.message}` }],
-                                            isError: true,
-                                        };
-                                    }
-                                    throw error;
-                                }
-                            }
-
-                            // Resolve channel identifier (handle #channel-name and @username)
-                            let resolvedChannelId: typeof args.channelId;
-
-                            // First, check for @username (DM resolution)
-                            if(args.channelId.startsWith('@')) {
-                                const username = args.channelId.slice(1); // Remove @
-                                const dmChannelId = await dmTracker.getOrCreateDMByUsername(username);
-                                if(!dmChannelId) {
-                                    return {
-                                        content: [{ type: 'text' as const, text: `Error: Could not find user @${username} in any server` }],
-                                        isError: true,
-                                    };
-                                }
-                                resolvedChannelId = dmChannelId;
-                            } else {
-                                // If not @username, try to resolve as #channel-name or pass through numeric ID
-                                resolvedChannelId = channelRegistry.resolveChannelId(args.channelId);
-                            }
-
-                            // Fetch and validate channel
-                            const channelResult = await fetchAndValidateChannel(client, resolvedChannelId, retryHelper);
-                            if(isErrorResult(channelResult)) {
-                                return channelResult.error;
-                            }
-
-                            // Split message into chunks and send all
-                            // Stryker disable next-line llm: MCP validation requires a string, and every accepted string satisfies s || '' === s.
-                            const chunks = messageSplitter.splitMessage(args.content);
-                            const sentMessages = await sendAllChunks(
-                                channelResult.channel,
-                                chunks,
-                                retryHelper,
-                                args.replyToMessageId,
-                                validatedFiles
-                            );
-                            // sendAllChunks throws before returning when the splitter yields no first chunk.
-                            const firstMessage = sentMessages[0]!;
-
-                            // Create thread if requested (on first message only)
-                            const threadId = await createThreadIfRequested(
-                                channelResult.channel,
-                                firstMessage,
-                                retryHelper,
-                                args.createThread,
-                                args.threadName
-                            );
-
-                            const result = {
-                                success:     true,
-                                messageIds:  sentMessages.map(msg => msg.id),
-                                chunksCount: chunks.length,
-                                ...(threadId && { threadId }),
-                                ...(validatedFiles && { filesAttached: validatedFiles.length }),
-                            };
-
-                            logger.info({ requestingUserId: args.requestingUserId, channelId: args.channelId, messageIds: result.messageIds, msg: 'Message sent via MCP tool' });
-
-                            return {
-                                // Stryker disable next-line NumberLiteralValue: JSON indentation changes only presentation whitespace, not the result data.
-                                content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-                            };
-                        })),
+                    if((validatedFiles?.length ?? 0) > 0 || args.createThread === true) {
+                        return sendDirect(args, validatedFiles, options);
+                    }
+                    return sendViaOutbox(args, options);
+                }),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
 
             tool(
                 'askUserQuestion',
-                'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.',
+                'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context. Questions are never queued: if Discord is unavailable this returns an error, so ask again later.',
                 {
                     channelId:        z.string().describe('Channel to ask in - channel ID or #channel-name (e.g., #general)'),
                     question:         z.string().describe('Question text'),
@@ -808,10 +917,17 @@ The channel must always be given explicitly — there is no ambient conversation
                             args.threadName
                         );
 
-                        // 6. Send question
-                        const sentMessage = await retryHelper.withRetry(
-                            () => targetChannel.send(messageOptions)
-                        );
+                        // 6. Send question. Questions are never queued: a failure returns a clear error
+                        // instead, and never claims nothing was posted (a lost response may hide a post).
+                        let sentMessage: Message;
+                        try {
+                            sentMessage = await retryHelper.withRetry(
+                                () => targetChannel.send(messageOptions)
+                            );
+                        } catch (error: unknown) {
+                            const message = error instanceof Error ? error.message : String(error);
+                            return toolError(`Error: the question's delivery could not be confirmed (questions are never queued): ${message}. Check the channel; if the question is not there, ask again when Discord is available.`);
+                        }
 
                         logger.info({
                             questionId,

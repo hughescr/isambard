@@ -5,6 +5,6 @@ export { OutboxBackend } from './backend';
 export type { OutboxFailure, OutboxFailureClassification, OutboxFailureClassifier } from './failure-classifier';
 export { OUTBOX_FAILURE_FALLBACK } from './failure-classifier';
 export type { OutboxDrainer, DrainResult } from './drainer';
-export { OutboxVerificationPendingError } from './drainer';
+export { OutboxVerificationPendingError, OutboxDiscardRequestedError, OutboxDeliveryDeferredError, OUTBOX_DEFERRED_RETRY_DELAY_MS } from './drainer';
 export { createOutboxDrainListener } from './health-listener';
 export { createOutboxDrainer } from './drainer';

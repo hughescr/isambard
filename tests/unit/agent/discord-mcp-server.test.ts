@@ -57,6 +57,17 @@ interface MockRetryHelper {
 interface MockPersonAllowlist {
     isAllowed: ReturnType<typeof mock>
 }
+interface MockOutboundSender {
+    isReady:  ReturnType<typeof mock>
+    sendText: ReturnType<typeof mock>
+}
+interface MockHealthRegistry {
+    isAvailable: ReturnType<typeof mock>
+    getEntry:    ReturnType<typeof mock>
+}
+
+/** Arguments that route sendDiscordMessage down its direct (never queued) path in a channel without thread support. */
+const DIRECT_SEND = { createThread: true, threadName: 'direct-path thread' } as const;
 
 // Helper to create mock search result
 const createMockSearchResult = (overrides: Partial<DiscordSearchResult> = {}): DiscordSearchResult => ({
@@ -100,6 +111,7 @@ describe('createDiscordMCPServer', () => {
     let mockMessageSplitter: MockMessageSplitter;
     let mockButtonBuilder: MockButtonBuilder;
     let mockRetryHelper: MockRetryHelper;
+    let mockOutboundSender: MockOutboundSender;
 
     beforeEach(() => {
         mockLogger.info.mockClear();
@@ -166,10 +178,16 @@ describe('createDiscordMCPServer', () => {
         mockRetryHelper = {
             withRetry: mock((fn: () => Promise<unknown>) => fn()),
         };
+
+        // Outbox-backed sender (default: Discord ready, one message sent)
+        mockOutboundSender = {
+            isReady:  mock(() => true),
+            sendText: mock(async () => ({ status: 'sent', messageIds: ['sent-message-id'], chunkCount: 1 })),
+        };
     });
 
-    // Helper to create server with current mocks and optional timezone/allowlist override
-    const createServer = (timezone?: string, personAllowlist?: MockPersonAllowlist): ReturnType<typeof createDiscordMCPServer> => createDiscordMCPServer({
+    // Helper to create server with current mocks and optional timezone/allowlist/health override
+    const createServer = (timezone?: string, personAllowlist?: MockPersonAllowlist, healthRegistry?: MockHealthRegistry): ReturnType<typeof createDiscordMCPServer> => createDiscordMCPServer({
         searchService:    mockSearchService,
         client:           mockClient as unknown as Client,
         questionRegistry: mockQuestionRegistry as unknown as QuestionRegistry,
@@ -178,6 +196,8 @@ describe('createDiscordMCPServer', () => {
         messageSplitter:  mockMessageSplitter,
         buttonBuilder:    mockButtonBuilder,
         retryHelper:      mockRetryHelper,
+        outboundSender:   mockOutboundSender,
+        healthRegistry:   healthRegistry as unknown as Parameters<typeof createDiscordMCPServer>[0]['healthRegistry'],
         timezone,
         personAllowlist:  personAllowlist as unknown as Parameters<typeof createDiscordMCPServer>[0]['personAllowlist'],
     });
@@ -261,9 +281,11 @@ CRITICAL: Only use channel IDs from:
 
 NEVER invent or guess channel IDs. If unsure, use #general.
 
-The channel must always be given explicitly — there is no ambient conversation context.`],
+The channel must always be given explicitly — there is no ambient conversation context.
+
+Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If the message a queued reply answers is deleted before the reply is delivered, the reply is dropped and you are notified with its text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`],
             ['addReaction', 'Add one or more emoji reactions to a Discord message. Accepts channel ID or #channel-name format.'],
-            ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.'],
+            ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context. Questions are never queued: if Discord is unavailable this returns an error, so ask again later.'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
             const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
@@ -969,7 +991,9 @@ CRITICAL: Only use channel IDs from:
 
 NEVER invent or guess channel IDs. If unsure, use #general.
 
-The channel must always be given explicitly — there is no ambient conversation context.`);
+The channel must always be given explicitly — there is no ambient conversation context.
+
+Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If the message a queued reply answers is deleted before the reply is delivered, the reply is dropped and you are notified with its text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`);
         });
 
         test('should have correct input schema fields', () => {
@@ -999,36 +1023,34 @@ The channel must always be given explicitly — there is no ambient conversation
             expect(result.success).toBe(true);
         });
 
-        test('should send message successfully', async () => {
-            const mockChannel = {
-                id:          '123456789012345678',
-                send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-            };
-            mockClient.channels.fetch = mock(async () => mockChannel);
-
-            const server = createServer();
-            const handler = getToolHandler(server, 'sendDiscordMessage');
-
-            const result = await handler({
+        test('should send a plain message through the outbox-backed sender', async () => {
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
                 channelId: '123456789012345678',
                 content:   'Test message',
             });
 
-            expect(result.isError).toBeUndefined();
-
-            expect(result.content[0].type).toBe('text');
-
-            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
-            expect(parsed.success).toBe(true);
-            expect(parsed.messageIds).toEqual(['sent-message-id']);
-            expect(parsed.chunksCount).toBe(1);
-            expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
+            expect(result).toEqual({ content: [{ type: 'text', text: JSON.stringify({ success: true, status: 'sent', messageIds: ['sent-message-id'], chunksCount: 1 }, null, 2) }] });
+            expect(mockOutboundSender.sendText).toHaveBeenCalledTimes(1);
+            expect(mockOutboundSender.sendText).toHaveBeenCalledWith('123456789012345678', 'Test message', { replyToMessageId: undefined });
+            expect(mockClient.channels.fetch).not.toHaveBeenCalled();
+            expect(mockMessageSplitter.splitMessage).not.toHaveBeenCalled();
         });
 
-        test('should pass requestingUserId through to the "Message sent via MCP tool" log', async () => {
+        test('should log an outbox-backed send with its requestingUserId, channel and status', async () => {
+            const infoSpy = mockLogger.info;
+            infoSpy.mockClear();
+
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId:        '#general',
+                content:          'Test message',
+                requestingUserId: 'user-456',
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(infoSpy).toHaveBeenCalledWith({ requestingUserId: 'user-456', channelId: '#general', status: 'sent', msg: 'Outbox-backed message send via MCP tool' });
+        });
+
+        test('should pass requestingUserId through to the direct-path "Message sent via MCP tool" log', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
                 send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
@@ -1040,53 +1062,29 @@ The channel must always be given explicitly — there is no ambient conversation
             const infoSpy = mockLogger.info;
             infoSpy.mockClear();
 
-            const server = createServer();
-            const handler = getToolHandler(server, 'sendDiscordMessage');
-
-            const result = await handler({
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
                 channelId:        '123456789012345678',
                 content:          'Test message',
                 requestingUserId: 'user-456',
+                ...DIRECT_SEND,
             });
 
             expect(result.isError).toBeUndefined();
-            expect(infoSpy).toHaveBeenCalledWith(
-                expect.objectContaining({ requestingUserId: 'user-456', msg: 'Message sent via MCP tool' })
-            );
+            expect(infoSpy).toHaveBeenCalledWith({ requestingUserId: 'user-456', channelId: '123456789012345678', messageIds: ['sent-message-id'], msg: 'Message sent via MCP tool' });
         });
 
         test('should resolve #channel-name to channel ID via registry', async () => {
             // Set up channel registry to resolve #test-channel to its ID
             mockChannelRegistry.resolveChannelId = mock((_nameOrId: string) => '999888777666555444' as ChannelId);
 
-            const mockChannel = {
-                id:          '999888777666555444',
-                send:        mock(async (_content: string) => ({ id: 'sent-message-id' })),
-                isTextBased: () => true,
-                isThread:    () => false,
-                isDMBased:   () => false,
-            };
-            mockClient.channels.fetch = mock(async (channelId: string) => {
-                // Verify we're fetching the RESOLVED channel ID, not the literal #test-channel
-                expect(channelId).toBe('999888777666555444');
-                return mockChannel;
-            });
-
-            const server = createServer();
-            const handler = getToolHandler(server, 'sendDiscordMessage');
-
-            const result = await handler({
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
                 channelId: '#test-channel',
                 content:   'Test message',
             });
 
             expect(result.isError).toBeUndefined();
-
-            const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
-            expect(parsed.success).toBe(true);
-            expect(parsed.messageIds).toEqual(['sent-message-id']);
-            expect(parsed.chunksCount).toBe(1);
-            expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
+            // The RESOLVED channel ID is sent to, not the literal #test-channel
+            expect(mockOutboundSender.sendText).toHaveBeenCalledWith('999888777666555444', 'Test message', { replyToMessageId: undefined });
             expect(mockChannelRegistry.resolveChannelId).toHaveBeenCalledWith('#test-channel');
         });
 
@@ -1123,6 +1121,7 @@ The channel must always be given explicitly — there is no ambient conversation
             const result = await handler({
                 channelId: '123456789012345678',
                 content:   longContent,
+                ...DIRECT_SEND,
             });
 
             // Should succeed, not error
@@ -1222,6 +1221,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 channelId:        '123456789012345678',
                 content:          longContent,
                 replyToMessageId: 'original-msg-id',
+                ...DIRECT_SEND,
             });
 
             // First message should have reply
@@ -1243,6 +1243,7 @@ The channel must always be given explicitly — there is no ambient conversation
             const result = await handler({
                 channelId: '123456789012345678',
                 content:   'Short message',
+                ...DIRECT_SEND,
             });
 
             const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
@@ -1260,6 +1261,7 @@ The channel must always be given explicitly — there is no ambient conversation
             const result = await handler({
                 channelId: '123456789012345678',
                 content:   'Test message',
+                ...DIRECT_SEND,
             });
 
             expect(result.isError).toBe(true);
@@ -1336,12 +1338,13 @@ The channel must always be given explicitly — there is no ambient conversation
 
             expect(result.isError).toBeUndefined();
 
+            // Without createThread the message takes the outbox-backed path, which never creates a thread.
             const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number, threadId?: string };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
-            expect(parsed.chunksCount).toBe(1);
             expect(parsed.threadId).toBeUndefined();
-            expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
+            expect(mockOutboundSender.sendText).toHaveBeenCalledWith('123456789012345678', 'Test message', { replyToMessageId: undefined });
+            expect(mockChannel.send).not.toHaveBeenCalled();
         });
 
         test('should not create thread when createThread is undefined even with threadName', async () => {
@@ -1367,12 +1370,13 @@ The channel must always be given explicitly — there is no ambient conversation
 
             expect(result.isError).toBeUndefined();
 
+            // Without createThread the message takes the outbox-backed path, which never creates a thread.
             const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number, threadId?: string };
             expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['sent-message-id']);
-            expect(parsed.chunksCount).toBe(1);
             expect(parsed.threadId).toBeUndefined();
-            expect(mockChannel.send).toHaveBeenCalledWith({ content: 'Test message' });
+            expect(mockOutboundSender.sendText).toHaveBeenCalledWith('123456789012345678', 'Test message', { replyToMessageId: undefined });
+            expect(mockChannel.send).not.toHaveBeenCalled();
         });
 
         test('should not create thread when threadName is undefined even with createThread true', async () => {
@@ -1417,9 +1421,33 @@ The channel must always be given explicitly — there is no ambient conversation
             });
 
             expect(result.isError).toBeUndefined();
+            // The outbox-backed sender carries the reply reference; the tool itself fetches nothing.
+            expect(mockOutboundSender.sendText).toHaveBeenCalledWith('123456789012345678', 'Reply message', { replyToMessageId: 'original-message-id' });
+            expect(mockChannel.messages.fetch).not.toHaveBeenCalled();
+            expect(mockMessage.reply).not.toHaveBeenCalled();
+        });
+
+        test('should send a direct-path reply through the original message', async () => {
+            const mockMessage = {
+                id:    'original-message-id',
+                reply: mock(async (_content: string) => ({ id: 'reply-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => ({
+                id:          '123456789012345678',
+                messages:    { fetch: mock(async () => mockMessage) },
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+            }));
+
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId:        '123456789012345678',
+                content:          'Reply message',
+                replyToMessageId: 'original-message-id',
+                ...DIRECT_SEND,
+            });
 
             const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
-            expect(parsed.success).toBe(true);
             expect(parsed.messageIds).toEqual(['reply-message-id']);
             expect(parsed.chunksCount).toBe(1);
             expect(mockMessage.reply).toHaveBeenCalledWith({ content: 'Reply message' });
@@ -1480,18 +1508,97 @@ The channel must always be given explicitly — there is no ambient conversation
             const result = await handler({
                 channelId: '123456789012345678',
                 content:   'Test message',
+                ...DIRECT_SEND,
             });
 
-            expect(result.isError).toBe(true);
-
-            expect(textContent(result.content[0])).toBe('Error: Discord API error');
-            expect(textContent(result.content[0])).not.toBe('');
-            // Verify error object structure (kills ObjectLiteral and StringLiteral mutants on line 623)
-            expect(result.content).toHaveLength(1);
-            expect(result.content[0]).toEqual({
-                type: 'text',
-                text: 'Error: Discord API error',
+            // A direct send is never queued and never claims nothing was posted.
+            expect(result).toEqual({
+                content: [{ type: 'text', text: 'Error: delivery could not be confirmed: Discord API error. Messages with files or createThread are sent directly and never queued; check the channel before sending again.' }],
+                isError: true,
             });
+        });
+
+        test('should list the confirmed chunks when a later direct chunk fails', async () => {
+            let sends = 0;
+            mockClient.channels.fetch = mock(async () => ({
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async () => {
+                    sends += 1;
+                    if(sends === 3) {
+                        throw 'socket closed';
+                    }
+                    return { id: `m${sends}` };
+                }),
+            }));
+            mockMessageSplitter.splitMessage = mock(() => ['one', 'two', 'three']);
+
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId: '123456789012345678',
+                content:   'one two three',
+                ...DIRECT_SEND,
+            });
+
+            expect(result).toEqual({
+                content: [{ type: 'text', text: 'Error: only the first 2 of 3 chunks were confirmed sent (messageIds: m1, m2); delivery of the rest could not be confirmed: socket closed. Messages with files or createThread are sent directly and never queued; check the channel before sending the rest again.' }],
+                isError: true,
+            });
+        });
+
+        test('should report a sent message whose thread could not be created', async () => {
+            const sentMessage = {
+                id:          'sent-message-id',
+                startThread: mock(async () => {
+                    throw new Error('Missing Permissions');
+                }),
+            };
+            mockClient.channels.fetch = mock(async () => ({
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                threads:     {},
+                send:        mock(async () => sentMessage),
+            }));
+
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId:    '123456789012345678',
+                content:      'Thread starter',
+                createThread: true,
+                threadName:   'New thread',
+            });
+
+            expect(result).toEqual({
+                content: [{ type: 'text', text: 'Error: the message was sent (messageIds: sent-message-id) but the thread could not be created: Missing Permissions. Do not send the message again.' }],
+                isError: true,
+            });
+        });
+
+        test('should report a non-Error thread failure by its string form', async () => {
+            mockClient.channels.fetch = mock(async () => ({
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                threads:     {},
+                send:        mock(async () => ({
+                    id:          'sent-message-id',
+                    startThread: mock(async () => {
+                        throw 'thread quota';
+                    }),
+                })),
+            }));
+
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId:    '123456789012345678',
+                content:      'Thread starter',
+                createThread: true,
+                threadName:   'New thread',
+            });
+
+            expect(textContent(result.content[0])).toBe('Error: the message was sent (messageIds: sent-message-id) but the thread could not be created: thread quota. Do not send the message again.');
         });
 
         test('should resolve @username to DM channel and send message', async () => {
@@ -1522,10 +1629,40 @@ The channel must always be given explicitly — there is no ambient conversation
 
             const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[] };
             expect(parsed.success).toBe(true);
-            expect(parsed.messageIds).toEqual(['sent-dm-message-id']);
+            expect(mockOutboundSender.sendText).toHaveBeenCalledWith('dm-channel-id-123', 'Test DM message', { replyToMessageId: undefined });
+            expect(mockDMChannel.send).not.toHaveBeenCalled();
 
             // Verify DM tracker was called
             expect(mockDMTracker.getOrCreateDMByUsername).toHaveBeenCalledWith('alice');
+        });
+
+        test('should resolve @username for a direct-path send', async () => {
+            const send = mock(async () => ({ id: 'sent-dm-message-id' }));
+            mockDMTracker.getOrCreateDMByUsername = mock(async () => 'dm-channel-id-123' as ChannelId);
+            mockClient.channels.fetch = mock(async () => ({ id: 'dm-channel-id-123', send, isTextBased: () => true, isThread: () => false, isDMBased: () => true }));
+
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId: '@alice',
+                content:   'Test DM message',
+                ...DIRECT_SEND,
+            });
+
+            expect((JSON.parse(textContent(result.content[0])) as { messageIds: string[] }).messageIds).toEqual(['sent-dm-message-id']);
+            expect(mockClient.channels.fetch).toHaveBeenCalledWith('dm-channel-id-123');
+            expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+        });
+
+        test('should report an unknown @username on the direct path', async () => {
+            mockDMTracker.getOrCreateDMByUsername = mock(async () => null);
+
+            const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId: '@nonexistent',
+                content:   'Test DM message',
+                ...DIRECT_SEND,
+            });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Error: Could not find user @nonexistent in any server' }], isError: true });
+            expect(mockClient.channels.fetch).not.toHaveBeenCalled();
         });
 
         test('should return error when @username not found', async () => {
@@ -1621,6 +1758,42 @@ The channel must always be given explicitly — there is no ambient conversation
                 expect(parsed.filesAttached).toBe(1);
                 expect(mockChannel.send).toHaveBeenCalledTimes(1);
                 expect(sentOptions?.files).toEqual([testFile]);
+                // Attachments are never queued: they bypass the outbox-backed sender entirely.
+                expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+            });
+
+            test('should fail a file send with the health error while Discord is unavailable, without touching Discord', async () => {
+                const testFile = path.join(process.cwd(), 'offline-file.txt');
+                await mockFsPromises.writeFile(testFile, 'offline');
+                const healthRegistry = { isAvailable: mock(() => false), getEntry: mock(() => ({ state: 'offline', epoch: 0, failureCount: 1 })) };
+
+                const result = await getToolHandler(createServer(undefined, undefined, healthRegistry), 'sendDiscordMessage')({
+                    channelId: '123456789012345678',
+                    content:   'With attachment',
+                    files:     testFile,
+                });
+
+                expect(result).toEqual({
+                    content: [{ type: 'text', text: 'The discord service is currently offline. A reconnection attempt is in progress. You can retry this tool call — retrying will trigger an immediate reconnection attempt.' }],
+                    isError: true,
+                });
+                expect(healthRegistry.isAvailable).toHaveBeenCalledWith('discord');
+                expect(mockClient.channels.fetch).not.toHaveBeenCalled();
+                expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+            });
+
+            test('should report a bad file path before checking Discord health', async () => {
+                const healthRegistry = { isAvailable: mock(() => false), getEntry: mock(() => ({ state: 'offline', epoch: 0, failureCount: 1 })) };
+
+                const result = await getToolHandler(createServer(undefined, undefined, healthRegistry), 'sendDiscordMessage')({
+                    channelId: '123456789012345678',
+                    content:   'Bad file',
+                    files:     ['../outside-cwd-file.txt'],
+                });
+
+                expect(textContent(result.content[0])).toStartWith('Security Error: ');
+                expect(result.isError).toBe(true);
+                expect(healthRegistry.isAvailable).not.toHaveBeenCalled();
             });
 
             test('should not include files in options when files parameter is omitted', async () => {
@@ -1643,6 +1816,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 const result = await handler({
                     channelId: '123456789012345678',
                     content:   'Test message without files',
+                    ...DIRECT_SEND,
                 });
 
                 expect(result.isError).toBeUndefined();
@@ -1673,6 +1847,7 @@ The channel must always be given explicitly — there is no ambient conversation
                     channelId: '123456789012345678',
                     content:   'Test message with empty files array',
                     files:     [],
+                    ...DIRECT_SEND,
                 });
 
                 expect(result.isError).toBeUndefined();
@@ -1680,6 +1855,18 @@ The channel must always be given explicitly — there is no ambient conversation
                 const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[] };
                 expect(parsed.success).toBe(true);
                 expect(mockChannel.send).toHaveBeenCalled();
+            });
+
+            test('should send a message with an empty files array through the outbox-backed sender', async () => {
+                const result = await getToolHandler(createServer(), 'sendDiscordMessage')({
+                    channelId: '123456789012345678',
+                    content:   'No attachments after all',
+                    files:     [],
+                });
+
+                expect(result.isError).toBeUndefined();
+                expect(mockOutboundSender.sendText).toHaveBeenCalledWith('123456789012345678', 'No attachments after all', { replyToMessageId: undefined });
+                expect(mockClient.channels.fetch).not.toHaveBeenCalled();
             });
 
             test('should return security error when file validation fails with outside_cwd', async () => {
@@ -1738,9 +1925,10 @@ The channel must always be given explicitly — there is no ambient conversation
             const result = await handler({
                 channelId: '123456789012345678',
                 content:   'Test message',
+                ...DIRECT_SEND,
             });
 
-            // withToolErrorHandling catches the thrown Error and returns it as an error result
+            // The direct-send failure result carries the thrown invariant error's message
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('splitMessage returned empty chunks array');
             expect(textContent(result.content[0])).toContain('Invariant violated in sendAllChunks:');
@@ -1763,6 +1951,7 @@ The channel must always be given explicitly — there is no ambient conversation
             const result = await handler({
                 channelId: '123456789012345678',
                 content:   'Test message',
+                ...DIRECT_SEND,
             });
 
             expect(result.isError).toBe(true);
@@ -1772,12 +1961,119 @@ The channel must always be given explicitly — there is no ambient conversation
         });
     });
 
+    describe('sendDiscordMessage outbox-backed results', () => {
+        const send = async (args: Record<string, unknown> = {}, healthRegistry?: MockHealthRegistry): Promise<CallToolResult> =>
+            getToolHandler(createServer(undefined, undefined, healthRegistry), 'sendDiscordMessage')({ channelId: '123456789012345678', content: 'Queued words', ...args });
+
+        test('reports a queued message as not yet delivered and not to be resent', async () => {
+            mockOutboundSender.sendText = mock(async () => ({ status: 'queued', outboxId: 'outbox-1', sentMessageIds: [], chunkCount: 2 }));
+
+            const result = await send();
+
+            expect(result.isError).toBeUndefined();
+            expect(JSON.parse(textContent(result.content[0]))).toEqual({
+                success:     true,
+                status:      'queued',
+                delivered:   false,
+                outboxId:    'outbox-1',
+                chunksCount: 2,
+                note:        'Discord is unavailable. The message is queued (outbox id outbox-1) and will be delivered automatically when Discord is back. It has NOT been sent yet; do not send it again.',
+            });
+        });
+
+        test('reports a partially sent message with its sent ids and the queued remainder', async () => {
+            mockOutboundSender.sendText = mock(async () => ({ status: 'queued', outboxId: 'outbox-2', sentMessageIds: ['m0'], chunkCount: 3 }));
+
+            const result = await send();
+
+            expect(result.isError).toBeUndefined();
+            expect(JSON.parse(textContent(result.content[0]))).toEqual({
+                success:     true,
+                status:      'partially_sent',
+                messageIds:  ['m0'],
+                outboxId:    'outbox-2',
+                chunksCount: 3,
+                note:        'The first 1 of 3 chunks were sent. The rest are queued (outbox id outbox-2) and will be delivered automatically when Discord is back; they have NOT been sent yet, so do not send them again.',
+            });
+        });
+
+        test.each([
+            ['a rejection before any chunk', { status: 'failed', error: 'Missing Permissions', sentMessageIds: [], chunkCount: 1 }, 'Error: message not sent: Missing Permissions. It was not queued.'],
+            ['a rejection after one chunk', { status: 'failed', error: 'Missing Permissions', sentMessageIds: ['m0'], chunkCount: 2 }, 'Error: only the first 1 of 2 chunks were sent (messageIds: m0); the rest were not sent: Missing Permissions. It was not queued.'],
+            ['no outbox before any chunk', { status: 'unavailable', sentMessageIds: [], chunkCount: 1 }, 'Error: message not sent: Discord is unavailable and the message could not be queued.'],
+            ['no outbox after two chunks', { status: 'unavailable', sentMessageIds: ['m0', 'm1'], chunkCount: 3 }, 'Error: only the first 2 of 3 chunks were sent (messageIds: m0, m1); the rest were not sent: Discord is unavailable and the message could not be queued.'],
+        ])('reports %s as an explicit not-sent error', async (_description, outcome, text) => {
+            mockOutboundSender.sendText = mock(async () => outcome);
+
+            expect(await send()).toEqual({ content: [{ type: 'text', text }], isError: true });
+        });
+
+        test('queues while Discord is unavailable without any live Discord lookup or health guard', async () => {
+            mockOutboundSender.isReady = mock(() => false);
+            mockOutboundSender.sendText = mock(async () => ({ status: 'queued', outboxId: 'outbox-3', sentMessageIds: [], chunkCount: 1 }));
+            mockChannelRegistry.resolveChannelId = mock(() => '999888777666555444' as ChannelId);
+            const healthRegistry = { isAvailable: mock(() => false), getEntry: mock(() => ({ state: 'offline', epoch: 0, failureCount: 1 })) };
+
+            const result = await send({ channelId: '#general', replyToMessageId: 'target-1' }, healthRegistry);
+
+            expect((JSON.parse(textContent(result.content[0])) as { status: string }).status).toBe('queued');
+            expect(mockOutboundSender.sendText).toHaveBeenCalledWith('999888777666555444', 'Queued words', { replyToMessageId: 'target-1' });
+            expect(mockClient.channels.fetch).not.toHaveBeenCalled();
+            expect(healthRegistry.isAvailable).not.toHaveBeenCalled();
+        });
+
+        test('cannot resolve an @username while Discord is unavailable', async () => {
+            mockOutboundSender.isReady = mock(() => false);
+
+            expect(await send({ channelId: '@alice' })).toEqual({
+                content: [{ type: 'text', text: 'Error: cannot resolve @alice while Discord is unavailable; use the DM channel id to queue the message.' }],
+                isError: true,
+            });
+            expect(mockDMTracker.getOrCreateDMByUsername).not.toHaveBeenCalled();
+            expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+        });
+
+        test('reports an unknown @username without sending', async () => {
+            mockDMTracker.getOrCreateDMByUsername = mock(async () => null);
+
+            expect(await send({ channelId: '@nobody' })).toEqual({ content: [{ type: 'text', text: 'Error: Could not find user @nobody in any server' }], isError: true });
+            expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+        });
+
+        test.each(['', '   \n'])('refuses empty content %p without sending', async (content) => {
+            expect(await send({ content })).toEqual({ content: [{ type: 'text', text: 'Error: content is empty; nothing was sent.' }], isError: true });
+            expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+        });
+
+        test('sends a createThread request directly after a passing health check', async () => {
+            const healthRegistry = { isAvailable: mock(() => true), getEntry: mock(() => ({ state: 'online', epoch: 0, failureCount: 0 })) };
+            mockClient.channels.fetch = mock(async () => ({ id: '123456789012345678', isTextBased: () => true, isThread: () => false, isDMBased: () => false, send: mock(async () => ({ id: 'direct-1' })) }));
+
+            const result = await send(DIRECT_SEND, healthRegistry);
+
+            expect((JSON.parse(textContent(result.content[0])) as { messageIds: string[] }).messageIds).toEqual(['direct-1']);
+            expect(healthRegistry.isAvailable).toHaveBeenCalledWith('discord');
+            expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+        });
+
+        test('fails a createThread request with the health error while Discord is unavailable', async () => {
+            const healthRegistry = { isAvailable: mock(() => false), getEntry: mock(() => ({ state: 'offline', epoch: 0, failureCount: 1 })) };
+
+            const result = await send(DIRECT_SEND, healthRegistry);
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toBe('The discord service is currently offline. A reconnection attempt is in progress. You can retry this tool call — retrying will trigger an immediate reconnection attempt.');
+            expect(mockClient.channels.fetch).not.toHaveBeenCalled();
+            expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+        });
+    });
+
     describe('askUserQuestion tool', () => {
         test('should have askUserQuestion tool with correct description', () => {
             const server = createServer();
             const tool = (server.instance as unknown as RegisteredToolInstance)._registeredTools.askUserQuestion;
 
-            expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context.');
+            expect(tool.description).toBe('Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context. Questions are never queued: if Discord is unavailable this returns an error, so ask again later.');
         });
 
         test('should have correct input schema fields', () => {
@@ -2351,8 +2647,11 @@ The channel must always be given explicitly — there is no ambient conversation
                 question:  'Test question?',
             });
 
-            expect(result.isError).toBe(true);
-            expect(textContent(result.content[0])).toBe('Error: Discord rate limit exceeded');
+            expect(result).toEqual({
+                content: [{ type: 'text', text: 'Error: the question\'s delivery could not be confirmed (questions are never queued): Discord rate limit exceeded. Check the channel; if the question is not there, ask again when Discord is available.' }],
+                isError: true,
+            });
+            expect(mockQuestionRegistry.register).not.toHaveBeenCalled();
         });
 
         test('should return error when askUserQuestion encounters non-Error exception', async () => {
@@ -2376,7 +2675,7 @@ The channel must always be given explicitly — there is no ambient conversation
             });
 
             expect(result.isError).toBe(true);
-            expect(textContent(result.content[0])).toContain('Error:');
+            expect(textContent(result.content[0])).toBe('Error: the question\'s delivery could not be confirmed (questions are never queued): [object Object]. Check the channel; if the question is not there, ask again when Discord is available.');
         });
     });
 
@@ -2708,6 +3007,7 @@ The channel must always be given explicitly — there is no ambient conversation
             const result = await handler({
                 channelId: '123456789012345678',
                 content:   'Test message',
+                ...DIRECT_SEND,
             });
 
             expect(result.isError).toBe(true);
@@ -2731,6 +3031,7 @@ The channel must always be given explicitly — there is no ambient conversation
             await handler({
                 channelId: '123456789012345678',
                 content:   'Test message',
+                ...DIRECT_SEND,
             });
 
             // Nothing else in this flow calls retryHelper.withRetry before the
@@ -2891,6 +3192,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
                 retryHelper:      mockRetryHelper,
+                outboundSender:   mockOutboundSender,
             });
             const handler = getToolHandler(server, 'askUserQuestion');
 
@@ -3067,6 +3369,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
                 retryHelper:      mockRetryHelper,
+                outboundSender:   mockOutboundSender,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -3128,6 +3431,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
                 retryHelper:      mockRetryHelper,
+                outboundSender:   mockOutboundSender,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -3191,6 +3495,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
                 retryHelper:      mockRetryHelper,
+                outboundSender:   mockOutboundSender,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -3223,6 +3528,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
                 retryHelper:      mockRetryHelper,
+                outboundSender:   mockOutboundSender,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -3568,6 +3874,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 messageSplitter:  mockMessageSplitter,
                 buttonBuilder:    mockButtonBuilder,
                 retryHelper:      mockRetryHelper,
+                outboundSender:   mockOutboundSender,
             });
             const handler = getToolHandler(server, 'listChannels');
 
@@ -3712,6 +4019,7 @@ The channel must always be given explicitly — there is no ambient conversation
                 channelId:        '123456789012345678',
                 content:          'replying',
                 replyToMessageId: 'original-message-id',
+                ...DIRECT_SEND,
             });
 
             expect(result.isError).toBeUndefined();

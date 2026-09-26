@@ -117,6 +117,7 @@ export { DiscordHistoryProvider } from './history-provider';
 
 // Discord capability facade
 export { DiscordCapabilityImpl } from './capability';
+export type { DiscordCapability, TextSendResult } from './capability';
 
 // Outbox replay
 export { createOutboxReplayDeliverFn } from './outbox-replay';

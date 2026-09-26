@@ -23,7 +23,7 @@ export { createDiscordMCPServer } from './discord-mcp-server';
 export { loadPlugins } from './plugin-loader';
 export { buildSessionSystemPrompt, type BuildSessionSystemPromptOptions, buildSubagentSystemPrompt, type BuildSubagentSystemPromptOptions } from './prompts/index.js';
 export type { EnvelopeSourceMessage, ResolvedUser, UserResolveResult, PlatformImage, AgentStreamEvent, ChannelId } from './types';
-export type { DiscordMcpChannelRegistry, DiscordMcpChannelInfo, MCPMessageSearchService, MCPDMTracker } from './discord-ports';
+export type { DiscordMcpChannelRegistry, DiscordMcpChannelInfo, MCPMessageSearchService, MCPDMTracker, MCPOutboundMessageSender, MCPOutboundSendResult } from './discord-ports';
 
 export { createTaskListReader, getTaskDirectoryPath } from './task-list-reader';
 

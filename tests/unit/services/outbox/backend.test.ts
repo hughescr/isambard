@@ -189,6 +189,21 @@ describe('OutboxBackend', () => {
             expect(await backend.dequeue('discord')).toEqual([expect.objectContaining({ id: ready.id, progress: ready.progress })]);
         });
 
+        test('reports each skipped future retry time to the onDeferred observer', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
+            const later = makeItem({ id: 'aaaaaaaa-1111-4222-8333-444444444445', progress: { attemptCount: 2, nextAttemptAt: '2030-01-01T00:00:30.000Z' } });
+            const sooner = makeItem({ id: 'aaaaaaaa-1111-4222-8333-444444444447', progress: { attemptCount: 2, nextAttemptAt: '2030-01-01T00:00:01.000Z' } });
+            const ready = makeItem({ id: 'aaaaaaaa-1111-4222-8333-444444444446', progress: { attemptCount: 1, nextAttemptAt: '2030-01-01T00:00:00.000Z' } });
+            ddbMock.on(QueryCommand).resolves({ Items: [later, ready, sooner] });
+            const deferred: string[] = [];
+
+            const result = await backend.dequeue('discord', 10, nextAttemptAt => deferred.push(nextAttemptAt));
+
+            expect(result.map(item => item.id)).toEqual([ready.id]);
+            expect(deferred).toEqual(['2030-01-01T00:00:30.000Z', '2030-01-01T00:00:01.000Z']);
+        });
+
         test('returns a retry whose next attempt is exactly now', async () => {
             jest.useFakeTimers();
             jest.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
@@ -493,7 +508,59 @@ describe('OutboxBackend', () => {
         });
     });
 
+    describe('defer()', () => {
+        test('persists the retry time and reason without spending an attempt or losing replay progress', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
+            ddbMock.on(PutCommand).resolves({});
+            const progress = { attemptCount: 3, lastAttemptAt: '2029-12-31T23:00:00.000Z', outcome: 'unknown' as const, deliveryToken: 'keeptoken', deliveredParts: 2 };
+
+            await backend.defer(makeItem({ progress }), 'Izzy not yet notified', '2030-01-01T00:00:30.000Z');
+
+            const calls = ddbMock.commandCalls(PutCommand);
+            expect(calls).toHaveLength(1);
+            const stored = calls[0].args[0].input.Item!;
+            expect(stored.progress).toEqual({ ...progress, lastError: 'Izzy not yet notified', nextAttemptAt: '2030-01-01T00:00:30.000Z' });
+            expect(stored.TTL).toBe(Math.floor(new Date('2030-01-02T00:00:00.000Z').getTime() / 1000));
+            expect(stored.outboxRowGeneration).toEqual(expect.any(String));
+            expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+        });
+    });
+
     describe('markFailed()', () => {
+        test('keeps the delivery token and delivered-part count so a resumed replay splits identically', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.markFailed(makeItem({ progress: { attemptCount: 1, deliveryToken: '0123456789abcdefg', deliveredParts: 1, outcome: 'unknown' } }), 'rejected', { retryable: true, nextAttemptAt: '2030-01-01T00:00:02.000Z' });
+
+            expect(ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress).toEqual({
+                attemptCount:   2,
+                lastError:      'rejected',
+                lastAttemptAt:  '2030-01-01T00:00:00.000Z',
+                outcome:        'retryable',
+                nextAttemptAt:  '2030-01-01T00:00:02.000Z',
+                deliveryToken:  '0123456789abcdefg',
+                deliveredParts: 1,
+            });
+        });
+
+        test('adds no delivery token or delivered-part keys when the item had none', async () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
+            ddbMock.on(PutCommand).resolves({});
+
+            await backend.markFailed(makeItem({ progress: { attemptCount: 0 } }), 'rejected', { retryable: true });
+
+            expect(ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress).toEqual({
+                attemptCount:  1,
+                lastError:     'rejected',
+                lastAttemptAt: '2030-01-01T00:00:00.000Z',
+                outcome:       'retryable',
+            });
+        });
+
         test('increments an existing retry count without deleting', async () => {
             ddbMock.on(PutCommand).resolves({});
             await backend.markFailed(makeItem({ progress: { attemptCount: 1 } }), 'still offline', { retryable: true });

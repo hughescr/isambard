@@ -1471,11 +1471,33 @@ describe('createApp', () => {
             expect(createMcpSharedDepsSpy).toHaveBeenCalledTimes(1);
             const mcpOptions = createMcpSharedDepsSpy.mock.calls[0][0];
             expect(mcpOptions.bskyClient).toBeDefined();
+            expect(mcpOptions.discordCapability).toBeInstanceOf(DiscordCapabilityImpl);
             expect(mcpOptions.contacts?.backend).toBeDefined();
             expect(mcpOptions.contacts?.sendApprovalRequest).toEqual(expect.any(Function));
 
             const botOptions = createBotSpy.mock.calls[0]?.[0] as { adminReviewChannelId?: unknown };
             expect(botOptions.adminReviewChannelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
+        });
+
+        test('a queued Discord send wakes the outbox drainer and logs a failed drain', async () => {
+            wireHappyPath(spies);
+            const createMcpSharedDepsSpy = spyOn(staticMcpServersModule, 'createMcpSharedDeps');
+            const drainFailure = new Error('dequeue failed');
+            const drain = mock(async () => {
+                throw drainFailure;
+            });
+            const createOutboxDrainerSpy = spyOn(staticServicesModule, 'createOutboxDrainer').mockReturnValue({ drain, stop: mock(() => undefined) });
+            spies.push(createMcpSharedDepsSpy, createOutboxDrainerSpy);
+            await staticIndexModule.createApp();
+
+            const capability = createMcpSharedDepsSpy.mock.calls[0]?.[0].discordCapability as unknown as { deps: { onQueued: () => void } };
+            capability.deps.onQueued();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(drain).toHaveBeenCalledTimes(1);
+            expect(drain).toHaveBeenCalledWith('discord');
+            expect(mockLogger.error).toHaveBeenCalledWith({ error: drainFailure }, 'Outbox drain after a queued Discord send failed');
         });
 
         test('recordAccess callback delegates state touches to storage backend', async () => {

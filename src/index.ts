@@ -352,11 +352,19 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         wakeApprovedActionExecutor();
     });
 
+    // A send queued while Discord stays online (an indeterminate REST failure) gets no health
+    // transition to start a drain, so the capability wakes the drainer itself. The drainer is
+    // built further down (its replay closes over this capability), so the wake is late-bound.
+    let wakeOutboxDrainer: () => void = () => undefined;
+
     // Discord capability facade (wraps Discord sends with outbox fallback)
     const discordCapability = new DiscordCapabilityImpl({
         registry: healthRegistry,
         outboxBackend,
         logger,
+        onQueued: () => {
+            wakeOutboxDrainer();
+        },
     });
 
     // Activity logger (always available — uses memoryBackend)
@@ -679,13 +687,19 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     const outboxDrainer: OutboxDrainer = createOutboxDrainer({
         outboxBackend,
         registry:          healthRegistry,
-        deliverFn:         createOutboxReplayDeliverFn({ fetchChannel: channelId => discordCapability.fetchChannel(channelId) }),
+        // notify tells Izzy when a queued reply is dropped because the message it answered was deleted.
+        deliverFn:         createOutboxReplayDeliverFn({ fetchChannel: channelId => discordCapability.fetchChannel(channelId), notify: notificationBridge.notify }),
         // Jev classifies known Discord send rejections as retry/abandon when Resource.TypesafeApiKey
         // is configured; an absent/empty key leaves the classifier on the deterministic retry fallback.
         failureClassifier: createJevOutboxFailureClassifier({ apiKey: config.typesafe?.apiKey }),
         logger,
     });
     registerCleanup({ name: 'outbox drainer', run: () => outboxDrainer.stop() });
+    wakeOutboxDrainer = () => {
+        outboxDrainer.drain('discord').catch((error: unknown) => {
+            logger.error({ error }, 'Outbox drain after a queued Discord send failed');
+        });
+    };
 
     // Approved-action outcome reporter — tells the admin (on the approval card) and Izzy what
     // really happened to each executed or failed action, from the row's durable outbox marker,
@@ -894,6 +908,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             operationalStateStore:     storage.operationalStateStore,
             messageSearchService:      discordInfra.messageSearchService,
             discordClient:             discordInfra.discordClient,
+            discordCapability,
             questionRegistry,
             channelRegistry:           discordInfra.channelRegistry,
             inboxManager:              discordInfra.inboxManager,

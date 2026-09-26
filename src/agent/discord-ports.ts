@@ -57,6 +57,28 @@ export interface MCPRetryHelper {
     withRetry<T>(fn: () => Promise<T>): Promise<T>
 }
 
+/**
+ * Result of an outbox-backed text send, mirroring the integration's `TextSendResult` without
+ * importing it. `sentMessageIds` lists the parts Discord confirmed before the send stopped.
+ */
+export type MCPOutboundSendResult
+    = | { status: 'sent', messageIds: string[], chunkCount: number }
+      | { status: 'queued', outboxId: string, sentMessageIds: string[], chunkCount: number }
+      | { status: 'failed', error: string, sentMessageIds: string[], chunkCount: number }
+      | { status: 'unavailable', sentMessageIds: string[], chunkCount: number };
+
+/**
+ * Outbox-backed sender for Izzy's plain-text Discord messages. Consumed by
+ * src/agent/discord-mcp-server.ts and implemented in src/app/mcp-servers.ts over the
+ * integration's `DiscordCapability.sendText`.
+ */
+export interface MCPOutboundMessageSender {
+    /** True when a Discord client is registered and the health registry reports Discord available. */
+    isReady(): boolean
+    /** Send, or queue when Discord is unavailable or the outcome is indeterminate. */
+    sendText(channelId: ChannelId, content: string, options: { replyToMessageId?: string }): Promise<MCPOutboundSendResult>
+}
+
 /** Agent-owned JSON shape for Discord MCP search responses; it avoids integration imports. */
 interface MCPMessageSearchResponse {
     messages:  { timestamp: string, localTimestamp?: string }[]

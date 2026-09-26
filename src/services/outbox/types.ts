@@ -22,23 +22,29 @@ const outboxPayloadSchema = serializedDiscordPayloadSchema;
 
 export const outboxServiceSchema = z.enum(['discord']);
 export type OutboxService = z.infer<typeof outboxServiceSchema>;
-export type OutboxDiscardReason = 'stale_epoch' | 'permanent_error' | 'classified_abandon';
+export type OutboxDiscardReason = 'stale_epoch' | 'permanent_error' | 'classified_abandon' | 'reply_target_deleted';
 
 const outboxProgressSchema = z.object({
-    attemptCount:  z.number().int().min(0).default(0),
-    lastAttemptAt: z.iso.datetime().optional(),
-    lastError:     z.string().optional(),
+    attemptCount:   z.number().int().min(0).default(0),
+    lastAttemptAt:  z.iso.datetime().optional(),
+    lastError:      z.string().optional(),
     /** Rows written before delayed delivery are immediately eligible. */
-    nextAttemptAt: z.iso.datetime().optional(),
+    nextAttemptAt:  z.iso.datetime().optional(),
     /** An unknown outcome must be verified at the destination before it can be resent. */
-    outcome:       z.enum(['retryable', 'unknown']).optional(),
+    outcome:        z.enum(['retryable', 'unknown']).optional(),
     /**
      * Visible token used for history verification; nonce is not returned by REST history.
      * Bounded to the delivery-token base budget (see DELIVERY_TOKEN_BASE_MAX_LENGTH in
      * src/integrations/discord/outbox-replay.ts) so every derived Discord nonce stays
      * within Discord's 25-character nonce limit.
      */
-    deliveryToken: z.string().min(1).max(17).optional(),
+    deliveryToken:  z.string().min(1).max(17).optional(),
+    /**
+     * Parts [0, deliveredParts) are confirmed delivered, so a replay resumes at this part
+     * instead of resending them. Absent means 0. Part boundaries depend on deliveryToken,
+     * so every progress transition that keeps this must keep deliveryToken too.
+     */
+    deliveredParts: z.number().int().min(0).optional(),
 });
 
 export const outboxItemSchema = z.object({
