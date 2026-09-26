@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import {
     DynamoDBDocumentClient,
     GetCommand,
@@ -15,7 +15,7 @@ import { CheckpointManager } from '@/integrations/discord/inbox/checkpoint-manag
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import { createMemoryPath, createContentType } from '@/storage/memory-tool/types';
-import { OperationalStateBackend, createOperationalStateStore, type OperationalStateKey } from '@/storage/operational-state';
+import { OperationalStateBackend, type OperationalStateKey } from '@/storage/operational-state';
 
 const TABLE = 'TestTable';
 const schema = z.object({ n: z.number() });
@@ -243,7 +243,6 @@ describe('operational-state isolation and consistency against a table fake', () 
     beforeEach(() => {
         ddbMock = mockClient(DynamoDBDocumentClient);
         docClient = ddbMock as unknown as DynamoDBDocumentClient;
-        mockLogger.info.mockClear();
     });
 
     afterEach(() => {
@@ -254,7 +253,7 @@ describe('operational-state isolation and consistency against a table fake', () 
     test('a checkpoint written through the store never appears in state scoring beside an ordinary state memory', async () => {
         installTableFake(ddbMock);
         const memoryBackend = new MemoryToolBackend(docClient, TABLE);
-        const store = createOperationalStateStore({ backend: new OperationalStateBackend(docClient, TABLE), legacyMemoryBackend: memoryBackend });
+        const store = new OperationalStateBackend(docClient, TABLE);
 
         await store.put(channelKey, { n: 1 });
         await memoryBackend.create({ path: createMemoryPath('/state/notes.md'), content: 'hello', contentType: createContentType('text/markdown') });
@@ -263,41 +262,13 @@ describe('operational-state isolation and consistency against a table fake', () 
         expect(scored.map(s => s.item.path)).toEqual([createMemoryPath('/state/notes.md')]);
     });
 
-    test('a store put enqueues no vector-index job and sends exactly one PutCommand', async () => {
-        installTableFake(ddbMock);
-        const enqueue = mock(() => {});
-        const memoryBackend = new MemoryToolBackend(docClient, TABLE, { enqueue });
-        const store = createOperationalStateStore({ backend: new OperationalStateBackend(docClient, TABLE), legacyMemoryBackend: memoryBackend });
-
-        await store.put(channelKey, { n: 1 });
-
-        expect(enqueue).not.toHaveBeenCalled();
-        expect(ddbMock.commandCalls(PutCommand)).toHaveLength(1);
-    });
-
-    test('sequential receipt and handled updates over a legacy checkpoint lose no progress when eventual reads are stale', async () => {
+    test('sequential receipt and handled updates lose no progress when eventual reads are stale', async () => {
         const table = installTableFake(ddbMock);
-        const memoryBackend = new MemoryToolBackend(docClient, TABLE);
         const channelId = createChannelId('123456789012345678');
         const guildId = createGuildId('987654321098765432');
-        const legacyCheckpoint = {
-            service:           'discord',
-            channelId,
-            guildId,
-            lastSeenAt:        '2026-09-01T00:00:00.000Z',
-            lastSeenMessageId: '100',
-            updatedAt:         '2026-09-01T00:00:00.000Z',
-            handled:           { messageId: '100', at: '2026-09-01T00:00:00.000Z' },
-        };
-        await memoryBackend.create({
-            path:        createMemoryPath(`/state/services/discord/channels/${channelId}/checkpoint`),
-            content:     JSON.stringify(legacyCheckpoint),
-            contentType: createContentType('application/json'),
-        });
-        // From here on an eventually consistent read sees only the legacy row, never a new put.
+        // From here on an eventually consistent read sees the empty table, never a new put.
         table.freeze();
-        const store = createOperationalStateStore({ backend: new OperationalStateBackend(docClient, TABLE), legacyMemoryBackend: memoryBackend });
-        const manager = new CheckpointManager({ store });
+        const manager = new CheckpointManager({ store: new OperationalStateBackend(docClient, TABLE) });
 
         await manager.updateLastSeen(channelId, guildId, '2026-09-24T00:00:01.000Z', '200');
         await manager.updateHandled(channelId, '200', '2026-09-24T00:00:02.000Z');
@@ -308,7 +279,7 @@ describe('operational-state isolation and consistency against a table fake', () 
             lastSeenMessageId: '300',
             handled:           { messageId: '200', at: '2026-09-24T00:00:02.000Z' },
         });
-        const legacyGets = table.gets.filter(get => !String(get.Key?.PK).startsWith('OPERATIONAL_STATE#'));
-        expect(legacyGets).toHaveLength(1);
+        // Every read, the final load included, is a strongly consistent read of the discord partition.
+        expect(table.gets.map(get => [get.Key?.PK, get.ConsistentRead])).toEqual(Array.from({ length: 4 }, () => ['OPERATIONAL_STATE#discord', true]));
     });
 });

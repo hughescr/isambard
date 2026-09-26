@@ -560,7 +560,6 @@ src/
 │   ├── operational-state/           # Integration replay cursors (OPERATIONAL_STATE#<owner> partition; Discord inbox + Bluesky feed/notification/DM checkpoints, #57)
 │   │   ├── backend.ts               # OperationalStateBackend: strongly-consistent get/put/listByPrefix over the owner partition
 │   │   ├── decode.ts                # Tolerant decode of one raw DynamoDB record
-│   │   ├── legacy-fallback.ts       # createOperationalStateStore: wraps the backend with a read-only legacy /state/services/<owner>/<name> fallback on miss (info-logged once per key per process)
 │   │   ├── types.ts                 # Operational-state record types
 │   │   └── index.ts                 # Public exports
 │   └── index.ts                     # Public exports

@@ -283,10 +283,6 @@ export class CheckpointManager {
      * Lists all channel checkpoints in the `discord` operational-state partition. The partition
      * holds only checkpoints, and the store skips (and logs) any row that fails to decode.
      *
-     * Legacy `/state/services/discord/channels/...` memory rows are not listed: a channel whose
-     * checkpoint has not been rewritten since the operational-state store shipped is not
-     * replayed until its next write (the legacy listing never found nested checkpoints either).
-     *
      * @returns Array of all stored checkpoints
      *
      * @example

@@ -2,9 +2,8 @@ import type { OperationalStateRead, OperationalStateSchema } from './types';
 
 /**
  * Decodes a stored operational-state `content` attribute: JSON-parses it, then validates it with
- * `schema`. Serves both new `OPERATIONAL_STATE#` rows and legacy `/state/services/...` memory rows,
- * which hold the same wire JSON. Never throws — a non-string or malformed payload is
- * `invalid`/`json`, a schema rejection `invalid`/`schema`, each carrying the underlying error.
+ * `schema`. Never throws — a non-string or malformed payload is `invalid`/`json`, a schema
+ * rejection `invalid`/`schema`, each carrying the underlying error.
  *
  * @internal
  */

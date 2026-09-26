@@ -20,7 +20,6 @@ export { SessionJournalBackend, journalEntrySchema, type SessionJournalItem } fr
 // Operational State
 export {
     OperationalStateBackend,
-    createOperationalStateStore,
     type OperationalStateKey,
     type OperationalStateRead,
     type OperationalStateSchema,

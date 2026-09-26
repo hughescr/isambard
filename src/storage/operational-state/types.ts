@@ -13,7 +13,7 @@
  *
  * Rows deliberately carry no `GSI1PK`/`GSI1SK`, no tag-index rows and no vector-index embed job,
  * so a replay cursor never reaches state scoring, hot state or semantic search the way the legacy
- * `/state/services/...` memory rows did. A dedicated partition (rather than a flag on memory rows)
+ * checkpoint memory rows did before #57. A dedicated partition (rather than a flag on memory rows)
  * is what keeps them out of `LAYER#state`.
  *
  * @module storage/operational-state/types

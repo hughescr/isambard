@@ -7,7 +7,7 @@ import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig,
 import {
     DynamoDBClientHolder, type TagIndexReconciliationScheduler, createDynamoDBClient, MemoryToolBackend, SessionResumeBackend, createMemoryTagIndexReconciliationScheduler, ContactBackend, createContactReconciliationScheduler, runContactReconciliation, type ContactReconciliationScheduler, VectorIndex, AsyncIndexer, type EmbedderLike,
     createVectorPruneScheduler, type VectorPruneScheduler, createVectorCrossCheckScheduler, type VectorCrossCheckScheduler,
-    SessionJournalBackend, OperationalStateBackend, createOperationalStateStore, type OperationalStateStore
+    SessionJournalBackend, OperationalStateBackend, type OperationalStateStore
 } from '@/storage';
 
 /**
@@ -53,8 +53,7 @@ export interface StorageLayer {
     createJournal:                    (role: SessionRole, clock: Clock) => SessionJournal
     /**
      * Operational-state store (OPERATIONAL_STATE#<owner> partitions) for integration replay
-     * checkpoints. Transitionally reads through to the legacy `/state/services/...` memory rows
-     * on a miss (read-only) until the checkpoint migration removes that fallback.
+     * checkpoints.
      */
     operationalStateStore:            OperationalStateStore
     /** Builds a role-bound resume store over the shared `sessionResumeBackend`'s TASK_SESSION#<role> rows. */
@@ -239,11 +238,8 @@ export async function createStorageLayer(
             backend: sessionJournalBackend, role, clock, logger,
         });
         const createResumeStoreForRole = (role: SessionRole): RoleResumeStore => createResumeStore(sessionResumeBackend, role);
-        // #57: integration checkpoints live in OPERATIONAL_STATE#<owner>, reading through to the legacy memory rows on a miss
-        const operationalStateStore = createOperationalStateStore({
-            backend:             new OperationalStateBackend(holder, tableName),
-            legacyMemoryBackend: memoryBackend,
-        });
+        // #57: integration checkpoints live in OPERATIONAL_STATE#<owner>
+        const operationalStateStore = new OperationalStateBackend(holder, tableName);
 
         return {
             holder,

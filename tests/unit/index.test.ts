@@ -1432,9 +1432,10 @@ describe('createApp', () => {
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
             const operationalStateStore = { read: mock(), put: mock(), listByPrefix: mock() } as unknown as OperationalStateStore;
-            const createStoreSpy = spyOn(staticOperationalStateModule, 'createOperationalStateStore').mockReturnValue(operationalStateStore);
+            // @ts-expect-error - Mocking constructor
+            const storeBackendSpy = spyOn(staticOperationalStateModule, 'OperationalStateBackend').mockImplementation(() => operationalStateStore);
             const createMcpSharedDepsSpy = spyOn(staticMcpServersModule, 'createMcpSharedDeps');
-            spies.push(createBridgeSpy, createConversationConductorSpy, createStoreSpy, createMcpSharedDepsSpy);
+            spies.push(createBridgeSpy, createConversationConductorSpy, storeBackendSpy, createMcpSharedDepsSpy);
 
             const { createApp } = staticIndexModule;
             await createApp();
