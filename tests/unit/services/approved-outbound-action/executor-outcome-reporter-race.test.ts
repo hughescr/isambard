@@ -14,7 +14,7 @@ import { mockClient } from 'aws-sdk-client-mock';
 import { ApprovedOutboundActionBackend } from '@/services/approved-outbound-action/backend';
 import { createApprovedOutboundActionExecutor, type ApprovedOutboundActionExecutorLogger } from '@/services/approved-outbound-action/executor';
 import { createApprovedActionOutcomeReporter } from '@/services/approved-outbound-action/outcome-reporter';
-import type { ApprovedOutboundAction, ApprovedOutboundActionType } from '@/services/approved-outbound-action/types';
+import type { ApprovedOutboundAction, ApprovedOutboundActionType, UnverifiedApprovedOutboundAction } from '@/services/approved-outbound-action/types';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 import { createPrefixedKey } from '@/storage';
 
@@ -192,6 +192,13 @@ function makeExecutors(): Record<ApprovedOutboundActionType, ReturnType<typeof m
     };
 }
 
+async function flush(): Promise<void> {
+    for(let turn = 0; turn < 50; turn++) {
+        // eslint-disable-next-line no-await-in-loop -- each turn drains one microtask hop of the executor's promise chain.
+        await Promise.resolve();
+    }
+}
+
 describe('approved outbound action executor and outcome reporter, driven against the real backend', () => {
     let fake: ReturnType<typeof createConditionEvaluatingDynamoFake>;
     let backend: ApprovedOutboundActionBackend;
@@ -289,6 +296,58 @@ describe('approved outbound action executor and outcome reporter, driven against
         expect(afterReport?.outcomeReportPending).toBeUndefined();
     });
 
+    test('a destination-check resolution wins over a late timeout success without duplicate sent side effects', async () => {
+        await backend.create({
+            id:        ACTION_ID,
+            state:     'approved',
+            type:      'bsky_reply',
+            params:    { text: 'hello' },
+            createdAt: FROZEN_AT,
+            updatedAt: FROZEN_AT,
+        });
+        const send = Promise.withResolvers<undefined>();
+        const executors = makeExecutors();
+        executors.bsky_reply.mockImplementation(async () => send.promise);
+        const logger = makeLogger();
+        const activityLogger = { log: mock(async (): Promise<void> => undefined) };
+        const onOutcomeRecorded = mock((): void => undefined);
+        const executor = createApprovedOutboundActionExecutor({
+            backend,
+            registry,
+            executors,
+            verifiers: {
+                bsky_reply: { check: async () => ({ verdict: 'delivered' }), contentKey: () => undefined },
+                bsky_dm:    { check: async () => ({ verdict: 'delivered' }), contentKey: () => undefined },
+                email_send: { check: async () => ({ verdict: 'delivered' }), contentKey: () => undefined },
+            },
+            activityLogger,
+            onOutcomeRecorded,
+            logger,
+            sendTimeoutMs: 1000,
+            claimLeaseMs:  1001,
+        });
+        const pass = executor.executeOnce();
+        await flush();
+        jest.advanceTimersByTime(1000);
+        await pass;
+
+        const unverified = await backend.get(ACTION_ID);
+        expect(unverified).toMatchObject({ state: 'unverified', outcomeReportPending: true });
+        const resolved = await backend.resolveUnverified(unverified! as UnverifiedApprovedOutboundAction, 'executed');
+        expect(resolved).toMatchObject({ state: 'executed', outcomeReportPending: true });
+
+        send.resolve(undefined);
+        await flush();
+
+        expect(await backend.get(ACTION_ID)).toEqual(resolved);
+        expect(activityLogger.log).not.toHaveBeenCalled();
+        expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
+        expect(logger.warn).toHaveBeenCalledWith(
+            { actionId: ACTION_ID, outcome: { state: 'executed' } },
+            'Approved outbound action late success not recorded: its unverified row was already resolved elsewhere'
+        );
+    });
+
     test('settleClaim\'s claimId guard alone rejects a stale claim once the row is reclaimed under a new claimId while still sending', async () => {
         await backend.create({
             id:        ACTION_ID,
@@ -315,7 +374,7 @@ describe('approved outbound action executor and outcome reporter, driven against
         expect(reclaimed).toBeDefined();
         expect(reclaimed!.claimId).not.toBe(staleClaim!.claimId);
 
-        expect(await backend.settleClaim(staleClaim!, { state: 'executed' })).toBe(false);
+        expect(await backend.settleClaim(staleClaim!, { state: 'executed' })).toBeUndefined();
 
         expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'sending', claimId: reclaimed!.claimId });
     });
@@ -342,7 +401,7 @@ describe('approved outbound action executor and outcome reporter, driven against
         const raw = await fake.docClient.send(new GetCommand({ TableName: TABLE_NAME, Key: actionKey(ACTION_ID), ConsistentRead: true }));
         await fake.docClient.send(new PutCommand({ TableName: TABLE_NAME, Item: { ...raw.Item, state: 'approved' } }));
 
-        expect(await backend.settleClaim(claimed!, { state: 'executed' })).toBe(false);
+        expect(await backend.settleClaim(claimed!, { state: 'executed' })).toBeUndefined();
 
         expect(await backend.get(ACTION_ID)).toMatchObject({ state: 'approved', claimId: claimed!.claimId });
     });

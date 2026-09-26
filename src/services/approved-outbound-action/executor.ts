@@ -13,7 +13,8 @@ import {
     type ApprovedOutboundActionType,
     type ClaimedApprovedOutboundAction,
     type DeliveryVerifier,
-    type FailureKind
+    type FailureKind,
+    type UnverifiedApprovedOutboundAction
 } from './types';
 import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckError } from '@/errors';
 import type { ActivityLogEntry, ActivityLogger } from '@/storage';
@@ -173,9 +174,13 @@ function errorMessage(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
 
+type LateSendOutcome = { lateOutcome: 'sent' } | { lateOutcome: 'failed', error: string };
+
 interface PendingSettle {
-    claimed: ClaimedApprovedOutboundAction
-    outcome: ClaimOutcome
+    claimed:   ClaimedApprovedOutboundAction
+    outcome:   ClaimOutcome
+    /** Present only for this process's send that timed out, never for a stale-claim sweep. */
+    lateSend?: Promise<LateSendOutcome>
 }
 
 /**
@@ -198,7 +203,8 @@ interface PendingSettle {
  * whose claim lands sends it. Single-flight lanes are defence in depth within a process.
  * A send that times out, or fails in a way that does not prove it was refused (see
  * {@link classifyFailure}), is settled `unverified` and checked before any resend (#108); a
- * timed-out send's late result is only logged.
+ * timed-out send that later succeeds conditionally resolves only that settled revision to
+ * `executed`, while a late failure is logged and left for destination checking.
  */
 export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActionExecutorDeps): ApprovedOutboundActionExecutor {
     const {
@@ -219,43 +225,57 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
         throw new InvariantViolationError('createApprovedOutboundActionExecutor', 'claim lease must exceed the send timeout');
     }
 
-    /** Log how a timed-out send finally ended. Nothing is written: its row already says "unknown". */
-    async function logLateOutcome(claimed: ClaimedApprovedOutboundAction, sending: Promise<void>): Promise<void> {
-        let late: { lateOutcome: 'sent' } | { lateOutcome: 'failed', error: string };
-        try {
-            await sending;
-            late = { lateOutcome: 'sent' };
-        } catch (err: unknown) {
-            late = { lateOutcome: 'failed', error: errorMessage(err) };
-        }
+    /** Resolve a successful late send only if its own unverified revision is still current. */
+    async function logLateOutcome(claimed: ClaimedApprovedOutboundAction, unverified: UnverifiedApprovedOutboundAction, lateSend: Promise<LateSendOutcome>): Promise<void> {
+        const late = await lateSend;
         logger.warn(
             { actionId: claimed.id, type: claimed.type, ...late },
             'Approved outbound action send finished after its timeout; its row already records the outcome as unknown'
         );
+        if(late.lateOutcome === 'failed') {
+            return;
+        }
+        try {
+            const resolved = await backend.resolveUnverified(unverified, 'executed');
+            if(resolved === undefined) {
+                logger.warn({ actionId: claimed.id, outcome: { state: 'executed' } }, 'Approved outbound action late success not recorded: its unverified row was already resolved elsewhere');
+                return;
+            }
+            recordedSent(resolved);
+        } catch (err: unknown) {
+            logger.error(
+                { actionId: claimed.id, error: errorMessage(err) },
+                'Approved outbound action late success could not resolve its unverified row; destination checking will decide it'
+            );
+        }
     }
 
     /** Send a claimed row, bounded by the send timeout, and say what its claim should record. */
-    async function send(claimed: ClaimedApprovedOutboundAction): Promise<ClaimOutcome> {
+    async function send(claimed: ClaimedApprovedOutboundAction): Promise<Omit<PendingSettle, 'claimed'>> {
         const controller = new AbortController();
         // Starting the send on a microtask turns an executor's synchronous throw into a rejection.
         const sending = Promise.resolve().then(async () => executors[claimed.type](claimed.params, controller.signal));
+        // Attach the rejection handler immediately: settling the timeout outcome may take a database round trip.
+        const lateSend: Promise<LateSendOutcome> = sending
+            .then((): LateSendOutcome => ({ lateOutcome: 'sent' }))
+            .catch((err: unknown): LateSendOutcome => ({ lateOutcome: 'failed', error: errorMessage(err) }));
         try {
             if(await raceSendTimeout(sending, sendTimeoutMs, () => controller.abort()) === 'sent') {
-                return { state: 'executed' };
+                return { outcome: { state: 'executed' } };
             }
         } catch (err: unknown) {
             const failureClass = classifyFailure(err);
-            return failureClass === 'ambiguous'
-                ? { state: 'unverified', lastError: errorMessage(err) }
-                : { state: 'failed', lastError: errorMessage(err), failureKind: failureClass };
+            return {
+                outcome: failureClass === 'ambiguous'
+                    ? { state: 'unverified', lastError: errorMessage(err) }
+                    : { state: 'failed', lastError: errorMessage(err), failureKind: failureClass }
+            };
         }
-        void logLateOutcome(claimed, sending);
-        return { state: 'unverified', lastError: sendTimedOutError(sendTimeoutMs) };
+        return { outcome: { state: 'unverified', lastError: sendTimedOutError(sendTimeoutMs) }, lateSend };
     }
 
-    /** Count, log and report an action now durably recorded as sent. */
-    function recordedSent(action: ApprovedOutboundAction, result: ExecuteOnceResult): void {
-        result.executed++;
+    /** Log and report an action now durably recorded as sent. */
+    function recordedSent(action: ApprovedOutboundAction): void {
         logger.info({ actionId: action.id, type: action.type }, 'Approved outbound action executed successfully');
         void activityLogger?.log(sentActivityFor(action.type)).catch((err: unknown) => {
             logger.warn({ actionId: action.id, type: action.type, error: errorMessage(err) }, 'Approved outbound action sent activity log failed');
@@ -268,12 +288,13 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
         const unsettled = new Map<string, PendingSettle>();
         const verification = createDeliveryVerification({ backend, verifiers, logger, timeoutMs: sendTimeoutMs, delayMs: verifyDelayMs, now });
 
-        async function record(claimed: ClaimedApprovedOutboundAction, outcome: ClaimOutcome, result: ExecuteOnceResult): Promise<void> {
-            let recorded: boolean;
+        async function record(pending: PendingSettle, result: ExecuteOnceResult): Promise<void> {
+            const { claimed, outcome } = pending;
+            let recorded: ApprovedOutboundAction | undefined;
             try {
                 recorded = await backend.settleClaim(claimed, outcome);
             } catch (err: unknown) {
-                unsettled.set(claimed.id, { claimed, outcome });
+                unsettled.set(claimed.id, pending);
                 logger.error(
                     { actionId: claimed.id, outcome, error: errorMessage(err) },
                     'Approved outbound action outcome write failed; will retry the write, never the send'
@@ -281,12 +302,13 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
                 throw err;
             }
             unsettled.delete(claimed.id);
-            if(!recorded) {
+            if(recorded === undefined) {
                 logger.warn({ actionId: claimed.id, outcome }, 'Approved outbound action outcome not recorded: its claim was already resolved elsewhere');
                 return;
             }
             if(outcome.state === 'executed') {
-                recordedSent(claimed, result);
+                result.executed++;
+                recordedSent(recorded);
                 return;
             }
             if(outcome.state === 'unverified') {
@@ -295,6 +317,9 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
                     { actionId: claimed.id, type: claimed.type, error: outcome.lastError },
                     'Approved outbound action send outcome unknown; will check its destination before any resend'
                 );
+                if(pending.lateSend !== undefined && isUnverified(recorded)) {
+                    void logLateOutcome(claimed, recorded, pending.lateSend);
+                }
             } else {
                 result.failed++;
                 logger.error(
@@ -309,9 +334,9 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
             const result: ExecuteOnceResult = { executed: 0, failed: 0, unverified: 0 };
 
             // A failed retry propagates and stops this pass before anything new is claimed.
-            for(const { claimed, outcome } of unsettled.values()) {
+            for(const pending of unsettled.values()) {
                 // eslint-disable-next-line no-await-in-loop -- outcome writes are retried one at a time; a failure stops the pass.
-                await record(claimed, outcome, result);
+                await record(pending, result);
             }
 
             const listing = await backend.listOpen();
@@ -320,7 +345,7 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
             for(const action of open) {
                 if(isClaimed(action) && now() - Date.parse(action.updatedAt) >= claimLeaseMs) {
                     // eslint-disable-next-line no-await-in-loop -- abandoned claims are settled one at a time; a failure stops the pass.
-                    await record(action, { state: 'unverified', lastError: STALE_CLAIM_ERROR }, result);
+                    await record({ claimed: action, outcome: { state: 'unverified', lastError: STALE_CLAIM_ERROR } }, result);
                 }
             }
 
@@ -329,7 +354,8 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
             const unverified = open.filter(isUnverified);
             const checked = await verification.verify(unverified.length > 0 && registry.isAvailable(service) ? unverified : []);
             for(const action of checked.delivered) {
-                recordedSent(action, result);
+                result.executed++;
+                recordedSent(action);
             }
 
             for(const action of [...open, ...checked.requeued]) {
@@ -348,7 +374,7 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
                     continue;
                 }
                 // eslint-disable-next-line no-await-in-loop -- later sends in this service wait for this one's durable outcome.
-                await record(claimed, await send(claimed), result);
+                await record({ claimed, ...await send(claimed) }, result);
             }
 
             return result;

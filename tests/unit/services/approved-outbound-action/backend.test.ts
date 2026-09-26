@@ -447,7 +447,12 @@ describe('ApprovedOutboundActionBackend', () => {
         test('settles a claim as executed, conditioned on its claimId, with the outcome marker and no read', async () => {
             ddbMock.on(PutCommand).resolves({});
 
-            expect(await backend.settleClaim(SENDING, { state: 'executed' })).toBe(true);
+            expect(await backend.settleClaim(SENDING, { state: 'executed' })).toEqual({
+                ...BASE_ACTION,
+                state:                'executed',
+                outcomeReportPending: true,
+                updatedAt:            '2026-03-30T12:00:00.000Z',
+            });
 
             expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
             const puts = ddbMock.commandCalls(PutCommand);
@@ -471,7 +476,14 @@ describe('ApprovedOutboundActionBackend', () => {
         test('settles a claim as failed with its lastError and failureKind', async () => {
             ddbMock.on(PutCommand).resolves({});
 
-            expect(await backend.settleClaim(SENDING, { state: 'failed', lastError: 'Post not found', failureKind: 'permanent' })).toBe(true);
+            expect(await backend.settleClaim(SENDING, { state: 'failed', lastError: 'Post not found', failureKind: 'permanent' })).toEqual({
+                ...BASE_ACTION,
+                state:                'failed',
+                lastError:            'Post not found',
+                failureKind:          'permanent',
+                outcomeReportPending: true,
+                updatedAt:            '2026-03-30T12:00:00.000Z',
+            });
 
             expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toEqual({
                 ...KEY,
@@ -488,7 +500,14 @@ describe('ApprovedOutboundActionBackend', () => {
         test('settles a claim as unverified with its lastError, counting its first unknown outcome, under the claimId condition', async () => {
             ddbMock.on(PutCommand).resolves({});
 
-            expect(await backend.settleClaim(SENDING, { state: 'unverified', lastError: 'fetch failed' })).toBe(true);
+            expect(await backend.settleClaim(SENDING, { state: 'unverified', lastError: 'fetch failed' })).toEqual({
+                ...BASE_ACTION,
+                state:                'unverified',
+                lastError:            'fetch failed',
+                ambiguousSends:       1,
+                outcomeReportPending: true,
+                updatedAt:            '2026-03-30T12:00:00.000Z',
+            });
 
             const input = ddbMock.commandCalls(PutCommand)[0].args[0].input;
             expect(input).toEqual({
@@ -556,10 +575,10 @@ describe('ApprovedOutboundActionBackend', () => {
             expect(ddbMock.commandCalls(PutCommand)[0].args[0].input.Item).toMatchObject({ approvalCard: card, state: 'executed' });
         });
 
-        test('returns false when the claim was already resolved or replaced by another claim', async () => {
+        test('returns undefined when the claim was already resolved or replaced by another claim', async () => {
             ddbMock.on(PutCommand).rejects(CONDITIONAL_CHECK_FAILED);
 
-            expect(await backend.settleClaim(SENDING, { state: 'executed' })).toBe(false);
+            expect(await backend.settleClaim(SENDING, { state: 'executed' })).toBeUndefined();
         });
 
         test('propagates any other settle write failure', async () => {

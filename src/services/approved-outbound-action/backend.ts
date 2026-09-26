@@ -203,34 +203,36 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
      * `ambiguousSends`), in the same put as the outcome-report marker (`outcomeReportPending`).
      * The put is conditioned on the row still holding this claim's `claimId` — a random id, never
      * a wall-clock revision two claims could share — so a late settle can never overwrite a later
-     * claim of the same row. No read. Returns false (writing nothing) when the claim was already
-     * resolved: by an earlier attempt of this settle that landed though its response was lost,
-     * or by another process's stale-claim sweep. Any other failure propagates.
+     * claim of the same row. No read. Returns the exact written row, or undefined (writing
+     * nothing) when the claim was already resolved: by an earlier attempt of this settle that
+     * landed though its response was lost, or by another process's stale-claim sweep. Any other
+     * failure propagates.
      */
-    async settleClaim(claimed: ClaimedApprovedOutboundAction, outcome: ClaimOutcome): Promise<boolean> {
+    async settleClaim(claimed: ClaimedApprovedOutboundAction, outcome: ClaimOutcome): Promise<ApprovedOutboundAction | undefined> {
         const { state, ...failure } = outcome;
         assertTransition(claimed, state);
         const ambiguous = state === 'unverified' ? { ambiguousSends: (claimed.ambiguousSends ?? 0) + 1 } : {};
+        const next: ApprovedOutboundAction = {
+            ...carriedFields(claimed),
+            ...failure,
+            ...ambiguous,
+            outcomeReportPending: true,
+            state,
+            updatedAt:            new Date().toISOString(),
+        };
         try {
-            await this.putTransition(claimed, {
-                ...carriedFields(claimed),
-                ...failure,
-                ...ambiguous,
-                outcomeReportPending: true,
-                state,
-                updatedAt:            new Date().toISOString(),
-            }, {
+            await this.putTransition(claimed, next, {
                 ConditionExpression:       '#state = :from AND #claimId = :claimId',
                 ExpressionAttributeNames:  { '#state': 'state', '#claimId': 'claimId' },
                 ExpressionAttributeValues: { ':from': 'sending', ':claimId': claimed.claimId },
             });
         } catch (err: unknown) {
             if(isConditionalCheckFailure(err)) {
-                return false;
+                return undefined;
             }
             throw err;
         }
-        return true;
+        return next;
     }
 
     /**

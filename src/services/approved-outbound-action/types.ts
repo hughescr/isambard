@@ -56,8 +56,11 @@ export type ApprovalCardRef = z.infer<typeof approvalCardRefSchema>;
  * A send whose outcome is unknown (#108) — an error that does not prove the request was refused,
  * the executor's send timeout, or a claim abandoned between claim and settle (the row is still
  * `sending` after the executor's claim lease) — is settled `sending → unverified`, and is never
- * resent blind. The executor instead checks the destination (Sent Mail, the account's own
- * Bluesky posts, the DM conversation) and resolves the row: found means
+ * resent blind. A send that reports success after the executor timed out conditionally resolves
+ * the exact `unverified` revision it settled to `executed`; if a destination check or another
+ * transition moved that revision first, the late success does nothing and normal destination
+ * checking remains authoritative. The executor otherwise checks the destination (Sent Mail, the
+ * account's own Bluesky posts, the DM conversation) and resolves the row: found means
  * `unverified → executed`; definitely absent means `unverified → approved`, so it is sent again;
  * a check that cannot decide leaves it `unverified` to be checked again later, however long that
  * takes. `ambiguousSends` counts the sends that ended unknown, and spaces out the checks (and so

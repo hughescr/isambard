@@ -84,6 +84,11 @@ function unverifiedOf(action: ApprovedOutboundAction, overrides: Partial<Approve
     return { ...action, lastError: 'fetch failed', ambiguousSends: 1, firstClaimedAt: CLAIMED_AT, updatedAt: CLAIMED_AT, ...overrides, state: 'unverified' };
 }
 
+function settledOf(claimed: ClaimedApprovedOutboundAction, outcome: ClaimOutcome): ApprovedOutboundAction {
+    const { claimId: _claimId, ...action } = claimed;
+    return { ...action, ...outcome, outcomeReportPending: true, updatedAt: CLAIMED_AT };
+}
+
 describe('createApprovedOutboundActionExecutor', () => {
     let listed: ApprovedOutboundAction[];
     let listOpen: ReturnType<typeof mock<ExecutorBackend['listOpen']>>;
@@ -121,9 +126,10 @@ describe('createApprovedOutboundActionExecutor', () => {
             listed = listed.map(row => (row.id === action.id ? claimed : row));
             return claimed;
         });
-        settleClaim = mock(async (claimed: ClaimedApprovedOutboundAction, _outcome: ClaimOutcome): Promise<boolean> => {
+        settleClaim = mock(async (claimed: ClaimedApprovedOutboundAction, outcome: ClaimOutcome): Promise<ApprovedOutboundAction> => {
+            const settled = settledOf(claimed, outcome);
             listed = listed.filter(row => row.id !== claimed.id);
-            return true;
+            return settled;
         });
         // A resolution rewrites the unverified row in the listing: `executed` leaves it, `approved` requeues it.
         resolveUnverified = mock(async (action: UnverifiedApprovedOutboundAction, to: 'executed' | 'approved'): Promise<ApprovedOutboundAction | undefined> => {
@@ -335,7 +341,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             });
             settleClaim.mockImplementation(async (claimed: ClaimedApprovedOutboundAction) => {
                 events.push(`settle:${claimed.id}`);
-                return true;
+                return settledOf(claimed, { state: 'executed' });
             });
 
             expect(await build().executeOnce()).toEqual({ executed: 2, failed: 0, unverified: 0 });
@@ -365,7 +371,7 @@ describe('createApprovedOutboundActionExecutor', () => {
                 if(claimed.id === BSKY_ID) {
                     throw new Error('bsky write failed');
                 }
-                return true;
+                return settledOf(claimed, { state: 'executed' });
             });
 
             await expect(build().executeOnce()).rejects.toThrow('bsky write failed');
@@ -387,7 +393,7 @@ describe('createApprovedOutboundActionExecutor', () => {
 
         test('a settle that finds its claim already resolved is logged and not counted', async () => {
             listed = [BSKY];
-            settleClaim.mockImplementation(async () => false);
+            settleClaim.mockImplementation(async () => undefined);
 
             expect(await build().executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
 
@@ -499,7 +505,7 @@ describe('createApprovedOutboundActionExecutor', () => {
             listed = [BSKY];
             settleClaim.mockImplementationOnce(async () => {
                 throw new Error('state write failed');
-            }).mockImplementationOnce(async () => false);
+            }).mockImplementationOnce(async () => undefined);
             const executor = build();
             await expect(executor.executeOnce()).rejects.toThrow('state write failed');
 
@@ -541,6 +547,29 @@ describe('createApprovedOutboundActionExecutor', () => {
 
             expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 1 });
             expect(settleClaim.mock.calls[1]).toEqual([claimedOf(BSKY), { state: 'unverified', lastError: 'socket hang up' }]);
+        });
+
+        test('keeps a timed-out send continuation until its retry writes the exact unverified revision', async () => {
+            listed = [BSKY];
+            const send = Promise.withResolvers<undefined>();
+            const retryUnverified = unverifiedOf(BSKY, { lastError: sendTimedOutError(1000), updatedAt: '2026-03-30T10:05:02.000Z' });
+            executors.bsky_reply.mockImplementation(async () => send.promise);
+            settleClaim.mockImplementationOnce(async () => {
+                throw new Error('state write failed');
+            }).mockImplementationOnce(async () => retryUnverified);
+            const executor = build({ sendTimeoutMs: 1000 });
+            const firstPass = executor.executeOnce();
+            await flush();
+            jest.advanceTimersByTime(1000);
+            await expect(firstPass).rejects.toThrow('state write failed');
+
+            expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 1 });
+            send.resolve(undefined);
+            await flush();
+
+            expect(resolveUnverified).toHaveBeenCalledWith(retryUnverified, 'executed');
+            expect(activityLog).toHaveBeenCalledWith({ type: 'bsky-post-sent', summary: 'Bluesky reply posted' });
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(2);
         });
     });
 
@@ -631,7 +660,7 @@ describe('createApprovedOutboundActionExecutor', () => {
 
         test('a swept claim already resolved elsewhere is logged and not counted', async () => {
             listed = [STALE];
-            settleClaim.mockImplementation(async () => false);
+            settleClaim.mockImplementation(async () => undefined);
 
             expect(await build({ now: staleAge(DEFAULT_CLAIM_LEASE_MS) }).executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
             expect(logger.warn).toHaveBeenCalledWith(
@@ -696,9 +725,11 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(await pass).toEqual({ executed: 0, failed: 0, unverified: 1 });
         });
 
-        test('a send that succeeds after its timeout is only logged', async () => {
+        test('a send that succeeds after its timeout conditionally resolves its settled unverified revision as sent', async () => {
             listed = [BSKY];
             const send = Promise.withResolvers<undefined>();
+            const unverified = unverifiedOf(BSKY, { lastError: sendTimedOutError(1000), updatedAt: '2026-03-30T10:05:01.000Z' });
+            settleClaim.mockImplementation(async () => unverified);
             executors.bsky_reply.mockImplementation(async () => send.promise);
             const pass = build({ sendTimeoutMs: 1000 }).executeOnce();
             await flush();
@@ -708,6 +739,9 @@ describe('createApprovedOutboundActionExecutor', () => {
             send.resolve(undefined);
             await flush();
 
+            expect(resolveUnverified).toHaveBeenCalledWith(unverified, 'executed');
+            expect(activityLog).toHaveBeenCalledWith({ type: 'bsky-post-sent', summary: 'Bluesky reply posted' });
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(2);
             expect(logger.warn).toHaveBeenCalledWith(
                 { actionId: BSKY_ID, type: 'bsky_reply', lateOutcome: 'sent' },
                 'Approved outbound action send finished after its timeout; its row already records the outcome as unknown'
@@ -733,6 +767,9 @@ describe('createApprovedOutboundActionExecutor', () => {
                 'Approved outbound action send finished after its timeout; its row already records the outcome as unknown'
             );
             expect(settleClaim).toHaveBeenCalledTimes(1);
+            expect(resolveUnverified).not.toHaveBeenCalled();
+            expect(activityLog).not.toHaveBeenCalled();
+            expect(onOutcomeRecorded).toHaveBeenCalledTimes(1);
         });
 
         test('a hung send holds later rows of the same service until it times out', async () => {

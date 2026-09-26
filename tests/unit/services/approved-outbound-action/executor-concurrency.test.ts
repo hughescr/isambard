@@ -95,15 +95,16 @@ function createFakeStore(initial: ApprovedOutboundAction) {
             const fault = settleFaults.shift();
             const row = rows.get(claimed.id);
             const holdsClaim = row?.state === 'sending' && row.claimId === claimed.claimId;
+            const { claimId: _claimId, ...rest } = claimed;
+            const { state, ...failure } = outcome;
+            const settled: ApprovedOutboundAction = { ...rest, ...failure, state, outcomeReportPending: true, updatedAt: FROZEN_AT };
             if(holdsClaim && fault?.applied !== false) {
-                const { claimId: _claimId, ...rest } = claimed;
-                const { state, ...failure } = outcome;
-                rows.set(claimed.id, { ...rest, ...failure, state, outcomeReportPending: true, updatedAt: FROZEN_AT });
+                rows.set(claimed.id, settled);
             }
             if(fault !== undefined) {
                 throw fault.error;
             }
-            return holdsClaim;
+            return holdsClaim ? settled : undefined;
         }),
     };
 
@@ -261,6 +262,28 @@ describe('approved outbound action executor across processes', () => {
         expect(store.current().state).toBe('executed');
 
         expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
+        expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
+    });
+
+    test('a timeout settle whose response is lost stays unverified for destination checking when its send later succeeds', async () => {
+        const store = createFakeStore(ROW);
+        const executors = makeExecutors();
+        const send = Promise.withResolvers<undefined>();
+        executors.bsky_reply.mockImplementation(async () => send.promise);
+        const executor = botProcess(store, { executors, sendTimeoutMs: 1000, claimLeaseMs: 1001 });
+        store.failNextSettle({ error: new Error('socket hang up'), applied: true });
+        const firstPass = executor.executeOnce();
+        await flush();
+        jest.advanceTimersByTime(1000);
+        await expect(firstPass).rejects.toThrow('socket hang up');
+        expect(store.current()).toMatchObject({ state: 'unverified', outcomeReportPending: true });
+
+        send.resolve(undefined);
+        await flush();
+        expect(store.current()).toMatchObject({ state: 'unverified', outcomeReportPending: true });
+
+        expect(await executor.executeOnce()).toEqual({ executed: 0, failed: 0, unverified: 0 });
+        expect(store.current()).toMatchObject({ state: 'unverified', outcomeReportPending: true });
         expect(executors.bsky_reply).toHaveBeenCalledTimes(1);
     });
 
