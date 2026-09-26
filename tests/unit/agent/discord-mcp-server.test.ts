@@ -283,7 +283,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.
 
 The channel must always be given explicitly — there is no ambient conversation context.
 
-Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If the message a queued reply answers is deleted before the reply is delivered, the reply is dropped and you are notified with its text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`],
+Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If a queued message is dropped without being delivered (for example the message a queued reply answers was deleted, the channel does not exist, or Discord keeps rejecting it), you are notified with its undelivered text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`],
             ['addReaction', 'Add one or more emoji reactions to a Discord message. Accepts channel ID or #channel-name format.'],
             ['askUserQuestion', 'Ask a question and wait for the user to respond. Pauses processing until an answer is received or timeout. The returned state identifies whether the question was answered, timed out, or cancelled. Options are limited to 25 maximum (Discord limit). Accepts channel ID or #channel-name format. The channel and requesting user must always be given explicitly — there is no ambient conversation context. Questions are never queued: if Discord is unavailable this returns an error, so ask again later.'],
         ])('should have %s tool with description', (toolName, expectedDescription) => {
@@ -993,7 +993,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.
 
 The channel must always be given explicitly — there is no ambient conversation context.
 
-Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If the message a queued reply answers is deleted before the reply is delivered, the reply is dropped and you are notified with its text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`);
+Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If a queued message is dropped without being delivered (for example the message a queued reply answers was deleted, the channel does not exist, or Discord keeps rejecting it), you are notified with its undelivered text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`);
         });
 
         test('should have correct input schema fields', () => {
@@ -1982,7 +1982,7 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
                 delivered:   false,
                 outboxId:    'outbox-1',
                 chunksCount: 2,
-                note:        'Discord is unavailable. The message is queued (outbox id outbox-1) and will be delivered automatically when Discord is back. It has NOT been sent yet; do not send it again.',
+                note:        'Discord is unavailable. The message is queued (outbox id outbox-1) and will be delivered automatically when Discord is back. It has NOT been sent yet; do not send it again. If it is ultimately dropped, you will be notified.',
             });
         });
 
@@ -1998,7 +1998,7 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
                 messageIds:  ['m0'],
                 outboxId:    'outbox-2',
                 chunksCount: 3,
-                note:        'The first 1 of 3 chunks were sent. The rest are queued (outbox id outbox-2) and will be delivered automatically when Discord is back; they have NOT been sent yet, so do not send them again.',
+                note:        'The first 1 of 3 chunks were sent. The rest are queued (outbox id outbox-2) and will be delivered automatically when Discord is back; they have NOT been sent yet, so do not send them again. If they are ultimately dropped, you will be notified.',
             });
         });
 

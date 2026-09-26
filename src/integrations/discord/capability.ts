@@ -39,6 +39,8 @@ export interface TextSendOptions extends SendOptions {
     replyToMessageId?:         string
     /** Response-only: queue a definitive rejection as an unknown outcome so replay verifies history. */
     queueOnDefinitiveFailure?: boolean
+    /** `notification` when Izzy sends the text during a notification turn (see `OutboxItem.origin`). */
+    origin?:                   'notification'
 }
 
 /**
@@ -149,7 +151,13 @@ function buildOutboxItem(channelId: ChannelId, content: ChannelContent, options:
         dedupeKey: options?.dedupeKey ?? crypto.randomUUID(),
         progress:  { attemptCount: 0, deliveryToken: crypto.randomUUID().replaceAll('-', '').slice(0, 16) },
         epoch:     options?.epoch ?? 0,
+        ...originOf(options),
     };
+}
+
+/** The queued item's `origin`, present only for text sent during a notification turn. */
+function originOf(options: TextSendOptions | undefined): Pick<OutboxItem, 'origin'> {
+    return options?.origin === undefined ? {} : { origin: options.origin };
 }
 
 function sendPayloadWithDeliveryToken(content: ChannelContent, item: OutboxItem): Parameters<TextChannel['send']>[0] {

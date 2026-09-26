@@ -426,7 +426,13 @@ export async function createConversationConductor(params: CreateConversationCond
     taskLaunchRegistry.seed(bootTaskLaunches);
 
     const role: SessionRole = 'conversation';
-    const mcpInstances = createMcpServerInstances(mcpShared, { role, emailServerFactory });
+    const mcpInstances = createMcpServerInstances(mcpShared, {
+        role,
+        emailServerFactory,
+        // Read at send time, after construction, from the conductor declared below. Discard
+        // notices open their turns on this (the notification bridge's) conductor (#141).
+        inNotificationTurn: () => getInnerConductor().status().turn?.kind === 'notification',
+    });
     const sessionMcpServers: SessionMcpServers = {
         memory:         mcpInstances.memoryMcpServer,
         discord:        mcpInstances.discordMcpServer,

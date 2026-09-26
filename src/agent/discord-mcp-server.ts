@@ -223,7 +223,7 @@ function formatOutboundResult(result: MCPOutboundSendResult): CallToolResult {
                     delivered:   false,
                     outboxId:    result.outboxId,
                     chunksCount: result.chunkCount,
-                    note:        `Discord is unavailable. The message is queued (outbox id ${result.outboxId}) and will be delivered automatically when Discord is back. It has NOT been sent yet; do not send it again.`,
+                    note:        `Discord is unavailable. The message is queued (outbox id ${result.outboxId}) and will be delivered automatically when Discord is back. It has NOT been sent yet; do not send it again. If it is ultimately dropped, you will be notified.`,
                 });
             }
             return mcpJsonResult({
@@ -232,7 +232,7 @@ function formatOutboundResult(result: MCPOutboundSendResult): CallToolResult {
                 messageIds:  result.sentMessageIds,
                 outboxId:    result.outboxId,
                 chunksCount: result.chunkCount,
-                note:        `The first ${sent} of ${result.chunkCount} chunks were sent. The rest are queued (outbox id ${result.outboxId}) and will be delivered automatically when Discord is back; they have NOT been sent yet, so do not send them again.`,
+                note:        `The first ${sent} of ${result.chunkCount} chunks were sent. The rest are queued (outbox id ${result.outboxId}) and will be delivered automatically when Discord is back; they have NOT been sent yet, so do not send them again. If they are ultimately dropped, you will be notified.`,
             });
         }
         case 'failed': {
@@ -824,7 +824,7 @@ NEVER invent or guess channel IDs. If unsure, use #general.
 
 The channel must always be given explicitly — there is no ambient conversation context.
 
-Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If the message a queued reply answers is deleted before the reply is delivered, the reply is dropped and you are notified with its text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`,
+Delivery: plain text messages go through a durable outbox. The result's "status" is "sent" (with messageIds), "queued" (Discord is unavailable; the message is stored and will be delivered automatically when Discord is back — it has NOT been sent yet, so do not send it again), or "partially_sent" (the first chunks were sent and the rest are queued). If a queued message is dropped without being delivered (for example the message a queued reply answers was deleted, the channel does not exist, or Discord keeps rejecting it), you are notified with its undelivered text. Messages with files or createThread are never queued: if Discord is unavailable they return an error, so try again later. While Discord is unavailable, @username cannot be resolved; use the DM channel ID instead.`,
                 {
                     channelId:        z.string().describe('Target channel ID, #channel-name, or @username for DM - use from message context, memory, or default: 1451694737026449581 (#general)'),
                     content:          z.string().describe('Message content. Long content is split into several messages automatically.'),

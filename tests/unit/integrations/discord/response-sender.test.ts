@@ -479,6 +479,31 @@ describe('sendEnvelopeResponse', () => {
         expect(mockSendText).toHaveBeenCalledWith('origin-channel-123', 'reply text', { priority: 'high', type: 'agent_response', queueOnDefinitiveFailure: true });
     });
 
+    test('with a discordCapability, marks a notification turn\'s reply as coming from a notification turn', async () => {
+        mockResolveEnvelopeTarget.mockResolvedValue({
+            targetChannelId: 'fallback-channel-9' as ChannelId,
+            shouldSend:      true,
+            content:         'Noted.',
+        });
+        const mockSendText = mock(async () => ({ status: 'sent' as const, messageIds: ['message-1'], chunkCount: 1 }));
+        const mockDiscordCapability = {
+            sendText: mockSendText,
+        } as unknown as DiscordCapability;
+
+        await sendEnvelopeResponse({
+            envelopeId:        'env-notice',
+            kind:              'notification',
+            channelId:         'fallback-channel-9' as ChannelId,
+            text:              'Noted.',
+            responseRouter:    mockResponseRouter,
+            client:            mockClient,
+            rateLimiter:       mockRateLimiter,
+            discordCapability: mockDiscordCapability,
+        });
+
+        expect(mockSendText).toHaveBeenCalledWith('fallback-channel-9', 'Noted.', { priority: 'high', type: 'agent_response', queueOnDefinitiveFailure: true, origin: 'notification' });
+    });
+
     test('with a discordCapability, an "unavailable" status also reports sent:false queued:true (no outbox configured)', async () => {
         mockResolveEnvelopeTarget.mockResolvedValue({
             targetChannelId: 'perch-channel-1' as ChannelId,

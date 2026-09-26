@@ -220,7 +220,37 @@ describe('createConversationConductor', () => {
         await createConversationConductor({ ...h.params, emailServerFactory });
 
         expect(createInstancesSpy).toHaveBeenCalledTimes(1);
-        expect(createInstancesSpy).toHaveBeenCalledWith(h.params.mcpShared, { role: 'conversation', emailServerFactory });
+        expect(createInstancesSpy).toHaveBeenCalledWith(h.params.mcpShared, { role: 'conversation', emailServerFactory, inNotificationTurn: expect.any(Function) });
+    });
+
+    it('tells its MCP servers whether the live conductor is in a notification turn, so tool sends in one are marked', async () => {
+        const h = build();
+        createInstancesSpy = jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FAKE_MCP_SERVERS);
+
+        const { conductor } = await createConversationConductor(h.params);
+        const { inNotificationTurn } = createInstancesSpy.mock.calls[0][1] as { inNotificationTurn: () => boolean };
+        const openPromise = conductor.open();
+        await flush();
+        h.instances[0].emit(frames.init('sess-1'));
+        await openPromise;
+        expect(inNotificationTurn()).toBe(false);
+
+        const notificationResult = conductor.submit({ id: 'env-n', mode: 'query', kind: 'notification', text: 'dropped', createdAt: new Date(0) }, { priority: 'normal' });
+        await flush();
+        expect(inNotificationTurn()).toBe(true);
+        h.instances[0].emit(frames.resultSuccess());
+        await notificationResult;
+
+        const discordResult = conductor.submit(
+            {
+                id: 'env-d', mode: 'query', kind: 'discord', text: 'hi', channelId: createChannelId('chan-1'), authorId: createUserId('user-42'), origin: { role: 'human', platform: 'discord' }, createdAt: new Date(0),
+            },
+            { priority: 'urgent', requestingChannelId: createChannelId('chan-1') }
+        );
+        await flush();
+        expect(inNotificationTurn()).toBe(false);
+        h.instances[0].emit(frames.resultSuccess());
+        await discordResult;
     });
 
     it('builds the system prompt once at construction, and not again per open', async () => {
@@ -1327,7 +1357,7 @@ describe('createPerchConductor', () => {
         await createPerchConductor(perch.params);
 
         expect(createInstancesSpy).toHaveBeenCalledTimes(2);
-        expect(createInstancesSpy).toHaveBeenNthCalledWith(1, conversation.params.mcpShared, { role: 'conversation' });
+        expect(createInstancesSpy).toHaveBeenNthCalledWith(1, conversation.params.mcpShared, { role: 'conversation', inNotificationTurn: expect.any(Function) });
         expect(createInstancesSpy).toHaveBeenNthCalledWith(2, perch.params.mcpShared, { role: 'perch' });
     });
 

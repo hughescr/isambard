@@ -261,6 +261,30 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
         expect(outboundSender.isReady()).toBe(false);
     });
 
+    test('marks a tool send made during a notification turn with notification origin, and only then', async () => {
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createDiscordMcpServerSpy,
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+        );
+        const discordCapability = {
+            isReady:  mock(() => true),
+            sendText: mock(async (..._args: unknown[]) => ({ status: 'sent' as const, messageIds: [], chunkCount: 1 })),
+        };
+        let notificationTurn = true;
+        const inNotificationTurn = mock(() => notificationTurn);
+
+        mcpServersModule.createMcpServerInstances(mcpServersModule.createMcpSharedDeps({ ...mockOptions, discordCapability }), { role: 'conversation', inNotificationTurn });
+
+        const { outboundSender } = createDiscordMcpServerSpy.mock.calls[0][0];
+        await outboundSender.sendText(createChannelId('ch-1'), 'during', {});
+        notificationTurn = false;
+        await outboundSender.sendText(createChannelId('ch-1'), 'after', {});
+        expect(discordCapability.sendText.mock.calls[0][2]).toStrictEqual({ replyToMessageId: undefined, priority: 'high', type: 'agent_response', origin: 'notification' });
+        expect(discordCapability.sendText.mock.calls[1][2]).toStrictEqual({ replyToMessageId: undefined, priority: 'high', type: 'agent_response' });
+    });
+
     test('should pass personAllowlist through to createDiscordMCPServer', () => {
         const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
 

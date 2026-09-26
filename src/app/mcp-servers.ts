@@ -291,6 +291,13 @@ export interface CreateMcpServerInstancesOptions {
      * email separately (the old one-shot path does this today).
      */
     emailServerFactory?: () => McpServerConfig
+
+    /**
+     * Whether this session is in a notification turn right now. A `sendDiscordMessage` made in
+     * one is queued with `origin: 'notification'`, like an automatic reply to that turn, so its
+     * discard notice does not wake Izzy into another turn (#141). Omitted, no send is marked.
+     */
+    inNotificationTurn?: () => boolean
 }
 
 /**
@@ -383,6 +390,7 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
                 replyToMessageId: sendOptions.replyToMessageId,
                 priority:         'high',
                 type:             'agent_response',
+                ...(params.inNotificationTurn?.() === true ? { origin: 'notification' } : {}),
             }),
         },
     });

@@ -121,6 +121,7 @@ export type { DiscordCapability, TextSendResult } from './capability';
 
 // Outbox replay
 export { createOutboxReplayDeliverFn } from './outbox-replay';
+export { createOutboxDiscardReporter } from './outbox-discard-notice';
 
 // Approved outbound action outcomes: approval card + Izzy notification
 export { createApprovedActionOutcomeDelivery } from './approvals/outcome-delivery';

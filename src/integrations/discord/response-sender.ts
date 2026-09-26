@@ -34,6 +34,8 @@ async function sendViaCapability(
 ): Promise<SendEnvelopeResponseResult> {
     const result = await discordCapability.sendText(targetChannelId, content, {
         priority: 'high', type: outboxTypeForEnvelopeKind(kind), queueOnDefinitiveFailure: true,
+        // A discard notice for this reply must not open another turn (#141).
+        ...(kind === 'notification' ? { origin: 'notification' } : {}),
     });
     if(result.status === 'sent') {
         return { status: 'sent', channelId: targetChannelId, messageIds: result.messageIds };

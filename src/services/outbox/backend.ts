@@ -1,10 +1,16 @@
 import { QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
 import { OutboxKeyGenerator } from './key-generator';
-import { outboxItemSchema, type OutboxItem, type OutboxService, type OutboxDiscardReason } from './types';
+import { outboxItemSchema, type DrainerDiscardReason, type OutboxItem, type OutboxService, type OutboxDiscardReason } from './types';
 import { DynamoTableAccess, type DeleteItemOptions } from '@/storage';
 
-// DynamoDB removes expired rows asynchronously; expiry is not an application discard disposition.
+// DynamoDB removes expired rows asynchronously; expiry is not an application discard disposition,
+// and it cannot be hooked, so a TTL deletion is never reported to Izzy. The drainer deliberately
+// does not treat a row as terminal shortly before its TTL (#141): every retry, unknown outcome,
+// deferral and pending discard rewrites the TTL below, and attempts are bounded (see the drainer),
+// so a row the drainer processes reaches a reported terminal disposition within minutes. TTL can
+// only fire on a row nothing processed for 24 hours, i.e. Discord or the process was down that
+// whole time, when no drainer-side check could run anyway.
 const TTL_HOURS = 24;
 
 /**
@@ -132,7 +138,9 @@ export class OutboxBackend extends DynamoTableAccess {
                 attemptCount:  item.progress.attemptCount + 1,
                 lastError:     error,
                 lastAttemptAt: new Date().toISOString(),
-                outcome:       'retryable',
+                // The replay settles an unknown outcome once it has checked history; one it never
+                // settled (the channel fetch failed first) stays unknown, so it is never blind-replayed.
+                outcome:       item.progress.outcome ?? 'retryable',
                 ...(options.nextAttemptAt === undefined ? {} : { nextAttemptAt: options.nextAttemptAt }),
                 // Part boundaries are sized from the delivery token, so a resumed replay must keep
                 // both or it could skip or duplicate text after a partial delivery.
@@ -159,6 +167,15 @@ export class OutboxBackend extends DynamoTableAccess {
      */
     async defer(item: OutboxItem, reason: string, nextAttemptAt: string): Promise<void> {
         await this.persistFailure({ ...item, progress: { ...item.progress, lastError: reason, nextAttemptAt } });
+    }
+
+    /**
+     * Keep a row whose discard the drainer decided but could not finish, so it is reported and
+     * discarded on a later pass instead of being resent. The delivery error in `lastError` and every
+     * other progress field are kept, so the eventual notice names the error that caused the discard.
+     */
+    async markPendingDiscard(item: OutboxItem, reason: DrainerDiscardReason, nextAttemptAt: string): Promise<void> {
+        await this.persistFailure({ ...item, progress: { ...item.progress, pendingDiscard: reason, nextAttemptAt } });
     }
 
     /** Persist an ambiguous send outcome; it is never eligible for blind replay. */

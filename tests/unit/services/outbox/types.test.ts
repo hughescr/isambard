@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { channelIdSchema } from '@/config';
 import { serializedDiscordPayloadSchema } from '@/services/outbox/discord-payload';
-import { outboxItemSchema, type OutboxItem } from '@/services/outbox/types';
+import { drainerDiscardReasonSchema, outboxDiscardReasonSchema, outboxItemSchema, type OutboxItem } from '@/services/outbox/types';
 
 const validItem = {
     id:          'aaaaaaaa-1111-4222-8333-444444444444',
@@ -88,6 +88,36 @@ describe('outboxItemSchema', () => {
     test('payload.replyToMessageId rejects an empty id', () => {
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, payload: { text: 'Hi', replyToMessageId: '' } }).success).toBe(false);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, payload: { text: 'Hi', replyToMessageId: '1' } }).success).toBe(true);
+    });
+
+    test('progress.pendingDiscard keeps each drainer-decided discard reason', () => {
+        for(const reason of ['stale_epoch', 'permanent_error', 'classified_abandon'] as const) {
+            expect(outboxItemSchema.parse({ ...validItem, epoch: 0, progress: { pendingDiscard: reason } }).progress.pendingDiscard).toBe(reason);
+        }
+    });
+
+    test('progress.pendingDiscard rejects reply_target_deleted and unknown reasons', () => {
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { pendingDiscard: 'reply_target_deleted' } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { pendingDiscard: 'bogus' } }).success).toBe(false);
+    });
+
+    test('origin accepts notification and rejects any other origin', () => {
+        expect(outboxItemSchema.parse({ ...validItem, epoch: 0, origin: 'notification' }).origin).toBe('notification');
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, origin: 'discord' }).success).toBe(false);
+    });
+
+    test('a legacy row without pendingDiscard or origin parses without either key', () => {
+        const parsed = outboxItemSchema.parse({ ...validItem, epoch: 0 });
+
+        expect(parsed).not.toHaveProperty('origin');
+        expect(parsed.progress).toStrictEqual({ attemptCount: 0 });
+    });
+});
+
+describe('outboxDiscardReasonSchema', () => {
+    test('lists every discard reason and the drainer schema excludes only reply_target_deleted', () => {
+        expect(outboxDiscardReasonSchema.options).toEqual(['stale_epoch', 'permanent_error', 'classified_abandon', 'reply_target_deleted']);
+        expect(drainerDiscardReasonSchema.options).toEqual(['stale_epoch', 'permanent_error', 'classified_abandon']);
     });
 });
 

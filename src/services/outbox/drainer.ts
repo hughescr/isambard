@@ -2,7 +2,7 @@ import type { ServiceHealthRegistry } from '../health-registry';
 import type { ServiceLogger } from '../types';
 import type { OutboxBackend } from './backend';
 import { OUTBOX_FAILURE_FALLBACK, type OutboxFailureClassifier } from './failure-classifier';
-import type { OutboxItem, OutboxService, OutboxDiscardReason } from './types';
+import type { DrainerDiscardReason, OutboxItem, OutboxService, OutboxDiscardReason } from './types';
 
 /** Raised by the replay adapter when an unknown result could not be verified safely. */
 export class OutboxVerificationPendingError extends Error {
@@ -40,6 +40,16 @@ export class OutboxDeliveryDeferredError extends Error {
     }
 }
 
+/**
+ * Reports that the drainer is about to discard `item` undelivered. It is called before every
+ * discard the drainer decides itself (stale_epoch, permanent_error, classified_abandon) and never
+ * for an {@link OutboxDiscardRequestedError}, whose delivery function already settled and reported
+ * its item, so a reply_target_deleted discard is never reported twice. A `false` return means the
+ * loss cannot be reported yet: the drainer keeps the row as a pending discard, never resends it,
+ * and reports it again after {@link OUTBOX_DEFERRED_RETRY_DELAY_MS}.
+ */
+export type OutboxDiscardReporter = (item: OutboxItem, reason: DrainerDiscardReason) => boolean;
+
 export interface OutboxDrainerDeps {
     outboxBackend:      OutboxBackend
     registry:           ServiceHealthRegistry
@@ -49,6 +59,8 @@ export interface OutboxDrainerDeps {
     drainIntervalMs?:   number
     maxAttempts?:       number
     failureClassifier?: OutboxFailureClassifier
+    /** See {@link OutboxDiscardReporter}. Without one, discards are only logged. */
+    reportDiscard?:     OutboxDiscardReporter
     /** Injected for deterministic delayed-retry tests. */
     now?:               () => number
 }
@@ -104,6 +116,63 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
         schedule(service, Math.max(0, new Date(nextAttemptAt).getTime() - now()));
     }
 
+    function deferredRetryAt(): string {
+        return new Date(now() + OUTBOX_DEFERRED_RETRY_DELAY_MS).toISOString();
+    }
+
+    /** A discard already decided on (a stale epoch, spent attempts, or one recorded earlier). */
+    function terminalReason(item: OutboxItem, currentEpoch: number): DrainerDiscardReason | undefined {
+        if(item.progress.pendingDiscard !== undefined) {
+            return item.progress.pendingDiscard;
+        }
+        if(item.epoch > currentEpoch) {
+            return 'stale_epoch';
+        }
+        if(item.progress.attemptCount >= maxAttempts) {
+            return 'permanent_error';
+        }
+        return undefined;
+    }
+
+    async function keepPendingDiscard(service: OutboxService, item: OutboxItem, reason: DrainerDiscardReason): Promise<void> {
+        const until = deferredRetryAt();
+        await outboxBackend.markPendingDiscard(item, reason, until);
+        scheduleAt(service, until);
+    }
+
+    /**
+     * After a failed delete the loss has already been reported, so the row must not stay eligible
+     * to resend: a stale-epoch row would otherwise be delivered once the epoch caught up (a failed
+     * terminal markFailed delete keeps an exhausted marker for the same reason).
+     */
+    async function keepDecidedDiscard(service: OutboxService, item: OutboxItem, reason: DrainerDiscardReason): Promise<void> {
+        try {
+            await keepPendingDiscard(service, item, reason);
+        } catch (error: unknown) {
+            logger.error({ service, itemId: item.id, reason, error }, 'Failed to keep discarded outbox item from being resent');
+        }
+    }
+
+    /**
+     * Reports a drainer-decided discard, then deletes the row. Returns false, keeping the row as
+     * a pending discard, while the loss cannot be reported yet. A failed delete rethrows after
+     * marking the row as a pending discard.
+     */
+    async function reportThenDiscard(service: OutboxService, item: OutboxItem, reason: DrainerDiscardReason): Promise<boolean> {
+        if(deps.reportDiscard?.(item, reason) === false) {
+            logger.info({ service, itemId: item.id, reason }, 'Outbox discard waits until Izzy can be told');
+            await keepPendingDiscard(service, item, reason);
+            return false;
+        }
+        try {
+            await outboxBackend.discard(item, reason);
+        } catch (error: unknown) {
+            await keepDecidedDiscard(service, item, reason);
+            throw error;
+        }
+        return true;
+    }
+
     // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- sequential send, retry, discard and acknowledgement have distinct failure contracts
     async function drain(service: OutboxService): Promise<DrainResult> {
         const result: DrainResult = { delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 };
@@ -133,17 +202,13 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                     logger.info({ service }, 'Service went offline mid-drain, stopping');
                     break;
                 }
-                let reason: OutboxDiscardReason | undefined;
-                if(item.epoch > currentEpoch) {
-                    reason = 'stale_epoch';
-                } else if(item.progress.attemptCount >= maxAttempts) {
-                    reason = 'permanent_error';
-                }
+                const reason = terminalReason(item, currentEpoch);
                 if(reason !== undefined) {
                     try {
                         // eslint-disable-next-line no-await-in-loop -- sequential outbox processing preserves order
-                        await outboxBackend.discard(item, reason);
-                        result.discarded += 1;
+                        if(await reportThenDiscard(service, item, reason)) {
+                            result.discarded += 1;
+                        }
                     } catch (error: unknown) {
                         dispositionError = true;
                         logger.error({ service, itemId: item.id, reason, attemptCount: item.progress.attemptCount, error }, 'Failed to discard outbox item');
@@ -167,7 +232,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                         continue;
                     }
                     if(err instanceof OutboxDeliveryDeferredError) {
-                        const deferredUntil = new Date(now() + OUTBOX_DEFERRED_RETRY_DELAY_MS).toISOString();
+                        const deferredUntil = deferredRetryAt();
                         try {
                             // eslint-disable-next-line no-await-in-loop -- persist the deferral before processing later work
                             await outboxBackend.defer(item, message, deferredUntil);
@@ -195,12 +260,17 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                         // eslint-disable-next-line no-await-in-loop -- a classification belongs to this item and must precede its disposition
                         ? await failureClassifier.classify({ message, ...(typeof details.status === 'number' ? { status: details.status } : {}), ...(typeof details.code === 'number' ? { code: details.code } : {}) })
                         : OUTBOX_FAILURE_FALLBACK;
+                    // What a discard report says about this failure. The outcome is left as delivery
+                    // left it: the replay settles an unknown outcome only once it has checked history,
+                    // so a failure before that (a channel lookup) is still reported as unconfirmed.
+                    const rejected: OutboxItem = { ...item, progress: { ...item.progress, lastError: message } };
                     if(classification.disposition === 'abandon') {
                         try {
                             // eslint-disable-next-line no-await-in-loop -- discard must complete before continuing with later work
-                            await outboxBackend.discard(item, 'classified_abandon');
-                            logger.warn({ service, itemId: item.id, decision: classification.disposition, confidence: classification.confidence }, 'Discarded classified outbox delivery failure');
-                            result.discarded += 1;
+                            if(await reportThenDiscard(service, rejected, 'classified_abandon')) {
+                                logger.warn({ service, itemId: item.id, decision: classification.disposition, confidence: classification.confidence }, 'Discarded classified outbox delivery failure');
+                                result.discarded += 1;
+                            }
                         } catch (error: unknown) {
                             logger.error({ service, itemId: item.id, reason: 'classified_abandon', error }, 'Failed to discard classified outbox item');
                         }
@@ -209,13 +279,17 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
                     }
                     const retryable = item.progress.attemptCount + 1 < maxAttempts;
                     logger.error({ service, itemId: item.id, error: message }, 'Failed to deliver outbox item');
+                    // The loss is reported before a final failure is discarded. While it cannot be,
+                    // the row is kept as an exhausted marker that a later pass reports and discards.
+                    const unreported = !retryable && deps.reportDiscard?.(rejected, 'permanent_error') === false;
+                    const keep = retryable || unreported;
+                    const keepUntil = unreported ? deferredRetryAt() : nextAttemptAt;
                     try {
                         // eslint-disable-next-line no-await-in-loop -- sequential outbox processing preserves order
-                        await outboxBackend.markFailed(item, message, { retryable, ...(retryable ? { nextAttemptAt } : {}) });
-                        if(retryable) {
-                            scheduleAt(service, nextAttemptAt);
-                        }
-                        if(!retryable) {
+                        await outboxBackend.markFailed(item, message, { retryable: keep, ...(keep ? { nextAttemptAt: keepUntil } : {}) });
+                        if(keep) {
+                            scheduleAt(service, keepUntil);
+                        } else {
                             result.discarded += 1;
                         }
                     } catch (error: unknown) {

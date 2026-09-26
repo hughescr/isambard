@@ -44,6 +44,7 @@ describe('createOutboxDrainer', () => {
         markFailed:           ReturnType<typeof mock>
         markUnknown:          ReturnType<typeof mock>
         defer:                ReturnType<typeof mock>
+        markPendingDiscard:   ReturnType<typeof mock>
     };
     let registry: {
         isAvailable: ReturnType<typeof mock>
@@ -67,6 +68,7 @@ describe('createOutboxDrainer', () => {
             markFailed:           mock(async (): Promise<void> => undefined),
             markUnknown:          mock(async (): Promise<void> => undefined),
             defer:                mock(async (): Promise<void> => undefined),
+            markPendingDiscard:   mock(async (): Promise<void> => undefined),
         };
         registry = {
             isAvailable: mock((): boolean => true),
@@ -435,7 +437,7 @@ describe('createOutboxDrainer', () => {
 
         expect(await classified.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
         expect(classify).toHaveBeenCalledWith({ message: 'Missing Permissions', status: 403 });
-        expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'classified_abandon');
+        expect(outboxBackend.discard).toHaveBeenCalledWith({ ...item, progress: { attemptCount: 0, lastError: 'Missing Permissions' } }, 'classified_abandon');
         expect(logger.warn).toHaveBeenCalledWith({ service: SERVICE, itemId: item.id, decision: 'abandon', confidence: 0.97 }, 'Discarded classified outbox delivery failure');
         classified.stop();
     });
@@ -659,7 +661,11 @@ describe('createOutboxDrainer', () => {
             expect(await drainer.drain(SERVICE)).toEqual({ delivered: 2, failed: 0, discarded: 0, unacknowledged: 0 });
             expect(outboxBackend.discard).toHaveBeenCalledWith(exhausted, 'permanent_error');
             expect(deliverFn).toHaveBeenCalledTimes(2);
-            expect(jest.getTimerCount()).toBe(0);
+            // The only timer is the kept row's 30 s retry, not a continuation of the batch.
+            expect(outboxBackend.markPendingDiscard).toHaveBeenCalledWith(exhausted, 'permanent_error', expect.any(String));
+            jest.advanceTimersByTime(100);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
         });
 
         test('continues after exhausted-row discard failure and logs count', async () => {
@@ -1098,6 +1104,290 @@ describe('createOutboxDrainer', () => {
             outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [makeItem()]);
 
             await drainer.drain(SERVICE);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+
+    describe('drain() — reporting discards', () => {
+        const DEFERRED_AT = '1970-01-01T00:00:31.000Z';
+        let reportDiscard: ReturnType<typeof mock>;
+        let reporting: OutboxDrainer;
+
+        function missingPermissions(): Error {
+            return Object.assign(new Error('Missing Permissions'), { status: 403 });
+        }
+
+        beforeEach(() => {
+            reportDiscard = mock((): boolean => true);
+            reporting = createOutboxDrainer({
+                ...deps,
+                reportDiscard,
+                now:               () => 1000,
+                failureClassifier: { classify: mock(async () => ({ disposition: 'abandon' as const, confidence: 0.97 })) },
+            });
+        });
+
+        afterEach(() => {
+            reporting.stop();
+        });
+
+        test('reports an exhausted row with its unconfirmed outcome before discarding it', async () => {
+            const item = makeItem({ progress: { attemptCount: 10, outcome: 'unknown', lastError: 'Discord delivery verification remains indeterminate' } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 1, unacknowledged: 0 });
+            expect(reportDiscard).toHaveBeenCalledWith(item, 'permanent_error');
+            expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'permanent_error');
+            expect(reportDiscard.mock.invocationCallOrder[0]).toBeLessThan(outboxBackend.discard.mock.invocationCallOrder[0]);
+            expect(deliverFn).not.toHaveBeenCalled();
+        });
+
+        test('reports a future-epoch row as stale without delivering it', async () => {
+            const item = makeItem({ epoch: 2 });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 1, unacknowledged: 0 });
+            expect(reportDiscard).toHaveBeenCalledWith(item, 'stale_epoch');
+            expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'stale_epoch');
+            expect(deliverFn).not.toHaveBeenCalled();
+        });
+
+        test('reports a classified abandon with the outcome its delivery settled before discarding it', async () => {
+            const item = makeItem({ progress: { attemptCount: 2, outcome: 'unknown', lastError: 'earlier' } });
+            const rejected = { ...item, progress: { attemptCount: 2, outcome: 'retryable', lastError: 'Missing Permissions' } };
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (delivering: OutboxItem): Promise<void> => {
+                // As the replay does once history shows the uncertain part was not posted.
+                delivering.progress.outcome = 'retryable';
+                throw missingPermissions();
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
+            expect(reportDiscard).toHaveBeenCalledWith(rejected, 'classified_abandon');
+            expect(outboxBackend.discard).toHaveBeenCalledWith(rejected, 'classified_abandon');
+            expect(reportDiscard.mock.invocationCallOrder[0]).toBeLessThan(outboxBackend.discard.mock.invocationCallOrder[0]);
+            expect(outboxBackend.markPendingDiscard).not.toHaveBeenCalled();
+        });
+
+        test('keeps an unknown outcome in a classified abandon report when delivery failed before checking history', async () => {
+            const item = makeItem({ progress: { attemptCount: 2, outcome: 'unknown', lastError: 'earlier' } });
+            const unconfirmed = { ...item, progress: { attemptCount: 2, outcome: 'unknown', lastError: 'Missing Permissions' } };
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw missingPermissions();
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
+            expect(reportDiscard).toHaveBeenCalledWith(unconfirmed, 'classified_abandon');
+            expect(outboxBackend.discard).toHaveBeenCalledWith(unconfirmed, 'classified_abandon');
+        });
+
+        test('reports a final failed attempt with its error and unsettled outcome before recording it as terminal', async () => {
+            const item = makeItem({ progress: { attemptCount: 9, outcome: 'unknown' } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Channel unavailable');
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 1, unacknowledged: 0 });
+            expect(reportDiscard).toHaveBeenCalledWith({ ...item, progress: { attemptCount: 9, outcome: 'unknown', lastError: 'Channel unavailable' } }, 'permanent_error');
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Channel unavailable', { retryable: false });
+            expect(reportDiscard.mock.invocationCallOrder[0]).toBeLessThan(outboxBackend.markFailed.mock.invocationCallOrder[0]);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('does not report a retryable failure, an unknown outcome or a delivery', async () => {
+            const retrying = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001', progress: { attemptCount: 8 } });
+            const unknown = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002', progress: { attemptCount: 9 } });
+            const delivered = makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000003' });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [retrying, unknown, delivered]);
+            deliverFn
+                .mockImplementationOnce(async (): Promise<void> => {
+                    throw new Error('offline');
+                })
+                .mockImplementationOnce(async (): Promise<void> => {
+                    throw new OutboxVerificationPendingError();
+                });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 1, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(reportDiscard).not.toHaveBeenCalled();
+        });
+
+        test('never reports a discard its delivery function requested, so reply_target_deleted is told once', async () => {
+            const item = makeItem();
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new OutboxDiscardRequestedError('reply_target_deleted');
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 1, unacknowledged: 0 });
+            expect(reportDiscard).not.toHaveBeenCalled();
+            expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'reply_target_deleted');
+        });
+
+        test('keeps an exhausted row as a pending discard for thirty seconds while Izzy cannot be told', async () => {
+            const item = makeItem({ progress: { attemptCount: 10, lastError: 'Missing Access' } });
+            reportDiscard.mockImplementation((): boolean => false);
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (): Promise<OutboxItem[]> => [item])
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.markPendingDiscard).toHaveBeenCalledWith(item, 'permanent_error', DEFERRED_AT);
+            expect(outboxBackend.discard).not.toHaveBeenCalled();
+            expect(logger.info).toHaveBeenCalledWith({ service: SERVICE, itemId: item.id, reason: 'permanent_error' }, 'Outbox discard waits until Izzy can be told');
+            jest.advanceTimersByTime(OUTBOX_DEFERRED_RETRY_DELAY_MS - 1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        });
+
+        test('keeps a classified abandon Izzy cannot be told about as a pending discard with its Discord error', async () => {
+            const item = makeItem();
+            reportDiscard.mockImplementation((): boolean => false);
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw missingPermissions();
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.markPendingDiscard).toHaveBeenCalledWith({ ...item, progress: { attemptCount: 0, lastError: 'Missing Permissions' } }, 'classified_abandon', DEFERRED_AT);
+            expect(outboxBackend.discard).not.toHaveBeenCalled();
+            expect(logger.warn).not.toHaveBeenCalledWith(expect.anything(), 'Discarded classified outbox delivery failure');
+        });
+
+        test('keeps a final failure Izzy cannot be told about as an exhausted marker for thirty seconds', async () => {
+            const item = makeItem({ progress: { attemptCount: 9 } });
+            reportDiscard.mockImplementation((): boolean => false);
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (): Promise<OutboxItem[]> => [item])
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('Channel unavailable');
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(outboxBackend.markFailed).toHaveBeenCalledWith(item, 'Channel unavailable', { retryable: true, nextAttemptAt: DEFERRED_AT });
+            jest.advanceTimersByTime(OUTBOX_DEFERRED_RETRY_DELAY_MS - 1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        });
+
+        test('logs a failed pending-discard write and does not continue a full batch', async () => {
+            const items = [makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000001', epoch: 2 }), makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000002' }), makeItem({ id: 'aaaaaaaa-0000-4000-8000-000000000003' })];
+            const failure = new Error('put failed');
+            reportDiscard.mockImplementationOnce((): boolean => false);
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => items);
+            outboxBackend.markPendingDiscard.mockImplementationOnce(async (): Promise<void> => {
+                throw failure;
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 2, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(logger.error).toHaveBeenCalledWith({ service: SERVICE, itemId: items[0].id, reason: 'stale_epoch', attemptCount: 0, error: failure }, 'Failed to discard outbox item');
+            expect(outboxBackend.markPendingDiscard).toHaveBeenCalledTimes(1);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('keeps a stale-epoch row whose delete failed after Izzy was told, so a later epoch never resends it', async () => {
+            const item = makeItem({ epoch: 2 });
+            const discardError = new Error('delete unavailable');
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (): Promise<OutboxItem[]> => [item])
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+            outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
+                throw discardError;
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 });
+            expect(reportDiscard).toHaveBeenCalledWith(item, 'stale_epoch');
+            expect(outboxBackend.markPendingDiscard).toHaveBeenCalledWith(item, 'stale_epoch', DEFERRED_AT);
+            expect(outboxBackend.discard.mock.invocationCallOrder[0]).toBeLessThan(outboxBackend.markPendingDiscard.mock.invocationCallOrder[0]);
+            expect(logger.error).toHaveBeenCalledWith({ service: SERVICE, itemId: item.id, reason: 'stale_epoch', attemptCount: 0, error: discardError }, 'Failed to discard outbox item');
+            expect(deliverFn).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(OUTBOX_DEFERRED_RETRY_DELAY_MS - 1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        });
+
+        test('reports and discards a pending discard with its recorded reason without delivering it', async () => {
+            const item = makeItem({ progress: { attemptCount: 0, pendingDiscard: 'classified_abandon' } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 1, unacknowledged: 0 });
+            expect(reportDiscard).toHaveBeenCalledWith(item, 'classified_abandon');
+            expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'classified_abandon');
+            expect(deliverFn).not.toHaveBeenCalled();
+        });
+
+        test('a recorded pending discard reason takes precedence over a stale epoch and exhausted attempts', async () => {
+            const item = makeItem({ epoch: 5, progress: { attemptCount: 11, pendingDiscard: 'classified_abandon' } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+
+            await reporting.drain(SERVICE);
+
+            expect(reportDiscard).toHaveBeenCalledWith(item, 'classified_abandon');
+            expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'classified_abandon');
+        });
+
+        test('discards a pending discard without delivering it when no reporter is configured', async () => {
+            const item = makeItem({ progress: { attemptCount: 0, pendingDiscard: 'stale_epoch' } });
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+
+            expect(await drainer.drain(SERVICE)).toEqual({ delivered: 0, failed: 0, discarded: 1, unacknowledged: 0 });
+            expect(outboxBackend.discard).toHaveBeenCalledWith(item, 'stale_epoch');
+            expect(deliverFn).not.toHaveBeenCalled();
+        });
+
+        test('keeps a classified abandon whose delete failed after Izzy was told, so it is never resent', async () => {
+            const item = makeItem();
+            const discardError = new Error('delete unavailable');
+            const rejected = { ...item, progress: { attemptCount: 0, lastError: 'Missing Permissions' } };
+            outboxBackend.dequeue
+                .mockImplementationOnce(async (): Promise<OutboxItem[]> => [item])
+                .mockImplementation(async (): Promise<OutboxItem[]> => []);
+            outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
+                throw discardError;
+            });
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw missingPermissions();
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(reportDiscard).toHaveBeenCalledWith(rejected, 'classified_abandon');
+            expect(logger.error).toHaveBeenCalledWith({ service: SERVICE, itemId: item.id, reason: 'classified_abandon', error: discardError }, 'Failed to discard classified outbox item');
+            expect(outboxBackend.markPendingDiscard).toHaveBeenCalledWith(rejected, 'classified_abandon', DEFERRED_AT);
+            jest.advanceTimersByTime(OUTBOX_DEFERRED_RETRY_DELAY_MS - 1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(1);
+            await Promise.resolve();
+            expect(outboxBackend.dequeue).toHaveBeenCalledTimes(2);
+        });
+
+        test('logs when a classified abandon can neither be deleted nor kept from being resent', async () => {
+            const item = makeItem();
+            const markError = new Error('put unavailable');
+            outboxBackend.dequeue.mockImplementation(async (): Promise<OutboxItem[]> => [item]);
+            outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('delete unavailable');
+            });
+            outboxBackend.markPendingDiscard.mockImplementationOnce(async (): Promise<void> => {
+                throw markError;
+            });
+            deliverFn.mockImplementationOnce(async (): Promise<void> => {
+                throw missingPermissions();
+            });
+
+            expect(await reporting.drain(SERVICE)).toEqual({ delivered: 0, failed: 1, discarded: 0, unacknowledged: 0 });
+            expect(logger.error).toHaveBeenCalledWith({ service: SERVICE, itemId: item.id, reason: 'classified_abandon', error: markError }, 'Failed to keep discarded outbox item from being resent');
             expect(jest.getTimerCount()).toBe(0);
         });
     });

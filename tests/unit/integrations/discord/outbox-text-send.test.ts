@@ -4,7 +4,7 @@ import type { NotifyFn } from '../../../../src/agent';
 import { createChannelId } from '../../../../src/agent/types';
 import { DiscordCapabilityImpl, type DiscordCapabilityLogger } from '../../../../src/integrations/discord/capability';
 import { DISCORD_MAX_LENGTH } from '../../../../src/integrations/discord/messages';
-import { createOutboxReplayDeliverFn, deliveryTokenFor, describeDroppedReply, messageChunksFor, textPartPayload } from '../../../../src/integrations/discord/outbox-replay';
+import { boundNoticeText, createOutboxReplayDeliverFn, deliveryTokenFor, describeDroppedReply, DISCARD_NOTICE_TEXT_LIMIT, messageChunksFor, textPartPayload } from '../../../../src/integrations/discord/outbox-replay';
 import { appendDeliveryCode, decodeDeliveryCode, deliveryCodeFor, maxContentLengthForDeliveryCode } from '../../../../src/integrations/discord/zero-width-delivery-code';
 import type { ServiceHealthRegistry } from '../../../../src/services/health-registry';
 import { OutboxDeliveryDeferredError, OutboxDiscardRequestedError, OutboxVerificationPendingError, type OutboxBackend, type OutboxItem } from '../../../../src/services/outbox';
@@ -93,6 +93,20 @@ describe('describeDroppedReply', () => {
         const item = makeItem({ payload: { replyToMessageId: REPLY_ID } });
 
         expect(describeDroppedReply(item, REPLY_ID).text).toBe(`A queued Discord reply was dropped and NOT posted: the message it replied to (${REPLY_ID}) in channel ch-1 was deleted before the reply could be delivered. Undelivered text:\n\n`);
+    });
+
+    test('bounds the undelivered text', () => {
+        const item = makeItem({ payload: { text: 'w'.repeat(DISCARD_NOTICE_TEXT_LIMIT + 1), replyToMessageId: REPLY_ID } });
+
+        expect(describeDroppedReply(item, REPLY_ID).text).toEndWith(`Undelivered text:\n\n${'w'.repeat(DISCARD_NOTICE_TEXT_LIMIT)}… [1 more characters not shown]`);
+    });
+});
+
+describe('boundNoticeText', () => {
+    test('keeps text of exactly the limit and truncates longer text with a count of what was cut', () => {
+        expect(DISCARD_NOTICE_TEXT_LIMIT).toBe(4000);
+        expect(boundNoticeText('x'.repeat(DISCARD_NOTICE_TEXT_LIMIT))).toBe('x'.repeat(DISCARD_NOTICE_TEXT_LIMIT));
+        expect(boundNoticeText(`${'x'.repeat(DISCARD_NOTICE_TEXT_LIMIT)}yz`)).toBe(`${'x'.repeat(DISCARD_NOTICE_TEXT_LIMIT)}… [2 more characters not shown]`);
     });
 });
 
@@ -183,6 +197,28 @@ describe('outbox replay resumes after partial delivery', () => {
         await expect(replay(channel)(item)).rejects.toBe(failure);
         expect(sentPayloads(channel)).toEqual([textPartPayload(item, 2, chunks[2])]);
         expect(item.progress.deliveredParts).toBe(2);
+    });
+
+    test('settles an unknown outcome once history is checked, so a rejection after it is definitive', async () => {
+        const item = makeItem({ payload: { text: 'Queued words' }, progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: BUDGET_TOKEN } });
+        const failure = new Error('Missing Permissions');
+        const channel = makeReplayChannel(async () => {
+            throw failure;
+        });
+
+        await expect(replay(channel)(item)).rejects.toBe(failure);
+        expect(item.progress.outcome).toBe('retryable');
+    });
+
+    test('keeps an unknown outcome when the channel fetch fails before history is checked', async () => {
+        const item = makeItem({ payload: { text: 'Queued words' }, progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: BUDGET_TOKEN } });
+        const failure = Object.assign(new Error('Missing Access'), { status: 403 });
+        const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => {
+            throw failure;
+        }), notify: mock(() => true) });
+
+        await expect(deliver(item)).rejects.toBe(failure);
+        expect(item.progress.outcome).toBe('unknown');
     });
 
     test('sends only the rich part when the text parts were already delivered', async () => {
@@ -603,6 +639,17 @@ describe('DiscordCapabilityImpl.sendText', () => {
 
         expect(enqueued(outbox)).toMatchObject({ priority: 'high', type: 'perch_output', dedupeKey: 'dk', epoch: 4, payload: { text: 'Hello' } });
         expect(enqueued(outbox).payload).not.toHaveProperty('replyToMessageId');
+        expect(enqueued(outbox)).not.toHaveProperty('origin');
+    });
+
+    test('marks a queued reply to a notification turn so its discard notice does not wake Izzy', async () => {
+        const outbox = makeOutbox();
+        const { cap } = makeTextCapability({ ready: false, outbox });
+
+        await cap.sendText(createChannelId('ch-1'), 'Hello', { origin: 'notification' });
+
+        expect(enqueued(outbox).origin).toBe('notification');
+        expect(outboxItemSchema.parse(enqueued(outbox)).origin).toBe('notification');
     });
 
     test('treats an empty reply id as no reply, so the queued row still parses', async () => {

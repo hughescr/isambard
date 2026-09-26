@@ -69,13 +69,24 @@ export function isIndeterminateDiscordError(error: unknown): boolean {
     return classifyDiscordError(error).category === 'transient' || (typeof details.status === 'number' && details.status >= 500);
 }
 
+/** Most characters of undelivered text a discard notice repeats to Izzy (two Discord messages). */
+export const DISCARD_NOTICE_TEXT_LIMIT = 4000;
+
+/** Bounds undelivered text quoted in a discard notice, saying how much was cut. */
+export function boundNoticeText(text: string): string {
+    if(text.length <= DISCARD_NOTICE_TEXT_LIMIT) {
+        return text;
+    }
+    return `${text.slice(0, DISCARD_NOTICE_TEXT_LIMIT)}… [${text.length - DISCARD_NOTICE_TEXT_LIMIT} more characters not shown]`;
+}
+
 /** The notification Izzy receives when a queued reply is dropped because its target was deleted. */
 export function describeDroppedReply(item: OutboxItem, replyToMessageId: string): NotifyParams {
     return {
         source: 'discord-outbox',
         key:    item.id,
         wake:   true,
-        text:   `A queued Discord reply was dropped and NOT posted: the message it replied to (${replyToMessageId}) in channel ${item.destination} was deleted before the reply could be delivered. Undelivered text:\n\n${item.payload.text ?? ''}`,
+        text:   `A queued Discord reply was dropped and NOT posted: the message it replied to (${replyToMessageId}) in channel ${item.destination} was deleted before the reply could be delivered. Undelivered text:\n\n${boundNoticeText(item.payload.text ?? '')}`,
     };
 }
 
@@ -106,10 +117,14 @@ async function firstUndeliveredPart(channel: TextChannel, item: OutboxItem, part
             resume = part + 1;
         }
     }
-    // Record the history-confirmed prefix before any send: a definitive rejection of the next part
-    // persists this progress as a retryable outcome, and that replay trusts it without history.
+    // Record the history-confirmed prefix before any send and settle the unknown outcome: a
+    // definitive rejection of the next part then persists this progress as a retryable outcome
+    // that the next replay trusts without history, and a discard notice calls it undelivered. A
+    // failure before this point (the channel fetch) leaves the outcome unknown.
     // eslint-disable-next-line require-atomic-updates -- the drainer hands this item to one delivery at a time and reads its progress only after it settles
     item.progress.deliveredParts = resume;
+    // eslint-disable-next-line require-atomic-updates -- as above: one delivery owns this item until it settles
+    item.progress.outcome = 'retryable';
     return resume;
 }
 
