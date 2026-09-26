@@ -5,10 +5,10 @@ import { createChannelId } from '../../../../src/agent/types';
 import { DiscordCapabilityImpl, type DiscordCapabilityLogger } from '../../../../src/integrations/discord/capability';
 import { DISCORD_MAX_LENGTH } from '../../../../src/integrations/discord/messages';
 import { boundNoticeText, createOutboxReplayDeliverFn, deliveryTokenFor, describeDroppedReply, DISCARD_NOTICE_TEXT_LIMIT, messageChunksFor, textPartPayload } from '../../../../src/integrations/discord/outbox-replay';
-import { appendDeliveryCode, decodeDeliveryCode, deliveryCodeFor, maxContentLengthForDeliveryCode } from '../../../../src/integrations/discord/zero-width-delivery-code';
 import type { ServiceHealthRegistry } from '../../../../src/services/health-registry';
 import { OutboxDeliveryDeferredError, OutboxDiscardRequestedError, OutboxVerificationPendingError, type OutboxBackend, type OutboxItem } from '../../../../src/services/outbox';
 import { outboxItemSchema } from '../../../../src/services/outbox/types';
+import { appendDeliveryCode, decodeDeliveryCode, deliveryCodeFor, maxContentLengthForDeliveryCode } from '../../../../src/utils/delivery-code';
 
 afterEach(() => {
     mock.restore();

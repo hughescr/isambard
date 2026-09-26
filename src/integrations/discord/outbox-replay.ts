@@ -5,8 +5,8 @@ import type { ChannelId } from '@/config';
 import { ChannelNotFoundByIdError } from '@/errors';
 import { DISCORD_MAX_LENGTH, splitMessage } from '@/integrations/discord/messages';
 import { classifyDiscordError, withDiscordRetry } from '@/integrations/discord/retry';
-import { appendDeliveryCode, decodeDeliveryCode, maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
 import { OutboxDeliveryDeferredError, OutboxDiscardRequestedError, OutboxVerificationPendingError, type OutboxItem } from '@/services';
+import { appendDeliveryCode, decodeDeliveryCode, deliveryTokenForBase, maxContentLengthForDeliveryCode } from '@/utils';
 
 export interface OutboxReplayDeps {
     fetchChannel(channelId: ChannelId): Promise<TextChannel | null>
@@ -17,17 +17,13 @@ export interface OutboxReplayDeps {
     notify: NotifyFn
 }
 
-const DELIVERY_TOKEN_PREFIX = 'iz';
-const DELIVERY_TOKEN_BASE_MAX_LENGTH = 17;
-const DELIVERY_TOKEN_PART_LENGTH = 6;
-
-/** Upper bound on delivery-token length, used by tests to assert the token and chunk budgets. */
-export const DELIVERY_TOKEN_MAX_LENGTH = DELIVERY_TOKEN_PREFIX.length + DELIVERY_TOKEN_BASE_MAX_LENGTH + DELIVERY_TOKEN_PART_LENGTH;
+// Re-exported so existing consumers (the Discord outbox tests) keep importing it from here.
+export { DELIVERY_TOKEN_MAX_LENGTH } from '@/utils';
 
 /** A compact token that is both a Discord nonce and invisible history correlation code. */
 export function deliveryTokenFor(item: OutboxItem, part: number): string {
     const base = item.progress.deliveryToken ?? item.id.replaceAll('-', '').slice(0, 16);
-    return `${DELIVERY_TOKEN_PREFIX}${base.slice(0, DELIVERY_TOKEN_BASE_MAX_LENGTH)}${part.toString(36).padStart(DELIVERY_TOKEN_PART_LENGTH, '0')}`;
+    return deliveryTokenForBase(base, part);
 }
 
 /**

@@ -23,8 +23,8 @@ import { DELIVERY_TOKEN_MAX_LENGTH } from '@/integrations/discord/outbox-replay'
 import type { DiscordRateLimiter } from '@/integrations/discord/rate-limiter';
 import { sendEnvelopeResponse } from '@/integrations/discord/response-sender';
 import type { ChannelId } from '@/integrations/discord/types';
-import { decodeDeliveryCode, maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
 import type { OutboxBackend, OutboxItem } from '@/services';
+import { decodeDeliveryCode, maxContentLengthForDeliveryCode } from '@/utils/delivery-code';
 
 describe('sendEnvelopeResponse', () => {
     let mockResponseRouter: ResponseRouter;

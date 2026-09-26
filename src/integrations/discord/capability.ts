@@ -3,8 +3,8 @@ import type { ChannelId } from '@/config';
 import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
 import { deliveryTokenFor, isIndeterminateDiscordError, messageChunksFor, textPartPayload } from '@/integrations/discord/outbox-replay';
 import { withDiscordRetry } from '@/integrations/discord/retry';
-import { appendDeliveryCode, maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
 import { serializedDiscordPayloadSchema, type ServiceHealthRegistry, type OutboxBackend, type OutboxItem, type OutboxPriority, type OutboxItemType } from '@/services';
+import { appendDeliveryCode, maxContentLengthForDeliveryCode } from '@/utils';
 
 /**
  * Result of a Discord send operation.

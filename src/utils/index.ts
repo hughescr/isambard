@@ -21,6 +21,15 @@ export {
     truncateToWordBoundary
 } from './text.js';
 
+export {
+    deliveryCodeFor,
+    appendDeliveryCode,
+    maxContentLengthForDeliveryCode,
+    decodeDeliveryCode,
+    deliveryTokenForBase,
+    DELIVERY_TOKEN_MAX_LENGTH
+} from './delivery-code';
+
 export { safeAsyncHandler } from './safe-async-handler';
 
 export { sanitizeFilename, deduplicateFilename } from './filename';

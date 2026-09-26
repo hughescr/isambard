@@ -44,8 +44,8 @@ export interface MCPDMTracker {
  * @internal Only consumed by src/agent/discord-mcp-server.ts.
  */
 export interface MCPMessageSplitter {
-    /** Split a message string into chunks */
-    splitMessage(content: string): string[]
+    /** Split a message string into chunks, each at most maxLength characters (implementation default when omitted). */
+    splitMessage(content: string, maxLength?: number): string[]
 }
 
 /**

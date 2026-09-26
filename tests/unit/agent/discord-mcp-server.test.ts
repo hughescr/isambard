@@ -7,6 +7,7 @@ import type { DiscordMcpChannelRegistry, MCPMessageSearchService } from '../../.
 import type { QuestionRegistry } from '../../../src/agent/question-registry';
 import type { SearchResponse, DiscordSearchResult } from '../../../src/integrations/discord/message-history/types';
 import type { ChannelId, GuildId } from '../../../src/integrations/discord/types';
+import { appendDeliveryCode, decodeDeliveryCode, deliveryTokenForBase, maxContentLengthForDeliveryCode } from '../../../src/utils/delivery-code';
 import { mockFsPromises, mockLogger, resetMockFsPrefix, textContent } from '../../setup';
 
 interface ZodShapeEntry {
@@ -1137,6 +1138,54 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
             expect(sentMessages).toHaveLength(2);
         });
 
+        test('sendDirect tags every chunk with its own decodable delivery code and nonce', async () => {
+            const sentPayloads: { content: string, nonce: string, enforceNonce: boolean }[] = [];
+            const mockChannel = {
+                isTextBased: () => true,
+                send:        mock(async (options: MessageCreateOptions) => {
+                    sentPayloads.push(options as unknown as { content: string, nonce: string, enforceNonce: boolean });
+                    return { id: `msg-${sentPayloads.length}` };
+                }),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+            mockMessageSplitter.splitMessage = mock(() => ['first chunk', 'second chunk']);
+
+            await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId: '123456789012345678',
+                content:   'split message',
+                ...DIRECT_SEND,
+            });
+
+            expect(sentPayloads).toHaveLength(2);
+            const [first, second] = sentPayloads;
+            expect(decodeDeliveryCode(first.content)).toBe(first.nonce);
+            expect(decodeDeliveryCode(second.content)).toBe(second.nonce);
+            expect(first.nonce).not.toBe(second.nonce);
+            // The two nonces differ only in their trailing (fixed-width) part suffix.
+            expect(first.nonce.slice(0, -6)).toBe(second.nonce.slice(0, -6));
+            expect(first.enforceNonce).toBe(true);
+            expect(second.enforceNonce).toBe(true);
+        });
+
+        test('sendDirect reserves the delivery-code budget before splitting', async () => {
+            const mockChannel = {
+                isTextBased: () => true,
+                send:        mock(async () => ({ id: 'sent-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+
+            await getToolHandler(createServer(), 'sendDiscordMessage')({
+                channelId: '123456789012345678',
+                content:   'short',
+                ...DIRECT_SEND,
+            });
+
+            expect(mockMessageSplitter.splitMessage).toHaveBeenCalledTimes(1);
+            const [, budget] = mockMessageSplitter.splitMessage.mock.calls[0] as [string, number];
+            expect(budget).toBe(maxContentLengthForDeliveryCode(deliveryTokenForBase('0'.repeat(16), 0)));
+            expect(budget).toBeLessThan(2000);
+        });
+
         test('should start a thread from the first message when content is split into chunks', async () => {
             const firstMessage = {
                 id:          'first-message',
@@ -1430,7 +1479,7 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
         test('should send a direct-path reply through the original message', async () => {
             const mockMessage = {
                 id:    'original-message-id',
-                reply: mock(async (_content: string) => ({ id: 'reply-message-id' })),
+                reply: mock(async (_content: unknown) => ({ id: 'reply-message-id' })),
             };
             mockClient.channels.fetch = mock(async () => ({
                 id:          '123456789012345678',
@@ -1450,7 +1499,10 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
             const parsed = JSON.parse(textContent(result.content[0])) as { success: boolean, messageIds: string[], chunksCount: number };
             expect(parsed.messageIds).toEqual(['reply-message-id']);
             expect(parsed.chunksCount).toBe(1);
-            expect(mockMessage.reply).toHaveBeenCalledWith({ content: 'Reply message' });
+            expect(mockMessage.reply).toHaveBeenCalledTimes(1);
+            const [payload] = mockMessage.reply.mock.calls[0] as [{ content: string, nonce: string, enforceNonce: boolean }];
+            expect(payload.content).toBe(appendDeliveryCode('Reply message', payload.nonce));
+            expect(payload.enforceNonce).toBe(true);
         });
 
         test('should create thread when createThread is true', async () => {
@@ -1765,6 +1817,10 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
                 expect(sentOptions?.files).toEqual([testFile]);
                 // Attachments are never queued: they bypass the outbox-backed sender entirely.
                 expect(mockOutboundSender.sendText).not.toHaveBeenCalled();
+                // A files send is still tagged with its own complete delivery code and nonce.
+                expect(sentOptions?.nonce).toBeDefined();
+                expect(decodeDeliveryCode(sentOptions!.content!)).toBe(sentOptions!.nonce as string);
+                expect(sentOptions?.enforceNonce).toBe(true);
             });
 
             test('should fail a file send with the health error while Discord is unavailable, without touching Discord', async () => {
@@ -2128,9 +2184,9 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
                 question:  'What is your favorite color?',
             });
 
-            expect(mockChannel.send).toHaveBeenCalledWith(expect.objectContaining({
-                content: 'What is your favorite color?'
-            }));
+            const [payload] = mockChannel.send.mock.calls[0] as [{ content: string, nonce: string, enforceNonce: boolean }];
+            expect(payload.content).toBe(appendDeliveryCode('What is your favorite color?', payload.nonce));
+            expect(payload.enforceNonce).toBe(true);
         });
 
         test('should create buttons when options provided', async () => {
@@ -2263,12 +2319,12 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
             });
 
             expect(mockChannel.threads.create).toHaveBeenCalledWith({ name: 'Q&A Thread' });
-            expect(mockThread.send).toHaveBeenCalledWith(expect.objectContaining({
-                content: 'Thread question?'
-            }));
+            const [payload] = mockThread.send.mock.calls[0] as [{ content: string, nonce: string, enforceNonce: boolean }];
+            expect(payload.content).toBe(appendDeliveryCode('Thread question?', payload.nonce));
+            expect(payload.enforceNonce).toBe(true);
         });
 
-        test('should register question in registry', async () => {
+        test('should register question in registry with the raw, untagged question text', async () => {
             const mockChannel = {
                 id:          '123456789012345678',
                 isTextBased: () => true,
@@ -2289,7 +2345,12 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
             expect(mockQuestionRegistry.register).toHaveBeenCalled();
             const registerCall = mockQuestionRegistry.register.mock.calls[0][0];
             expect(registerCall.channelId).toBe('123456789012345678');
+            // The registry's stored question text has no invisible delivery code, even though the
+            // Discord-bound content (checked below) does.
             expect(registerCall.questionText).toBe('Test question?');
+            const [sentPayload] = mockChannel.send.mock.calls[0] as [{ content: string }];
+            expect(sentPayload.content).not.toBe(registerCall.questionText);
+            expect(sentPayload.content.startsWith(registerCall.questionText)).toBe(true);
             expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
                 channelId:   '123456789012345678',
                 hasOptions:  false,
@@ -2639,9 +2700,91 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
             });
 
             expect(mockChannel.send).toHaveBeenCalled();
-            const sendCall = mockChannel.send.mock.calls[0][0] as { content?: string, components?: unknown[] };
-            expect(sendCall.content).toBe('What is your favorite color?');
+            const sendCall = mockChannel.send.mock.calls[0][0] as { content: string, nonce: string, components?: unknown[] };
+            expect(sendCall.content).toBe(appendDeliveryCode('What is your favorite color?', sendCall.nonce));
             expect(sendCall.content).not.toContain('<@');
+        });
+
+        test('accepts a question exactly at the tagged-content budget', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+            const budget = maxContentLengthForDeliveryCode(deliveryTokenForBase('0'.repeat(16), 0));
+            const question = 'a'.repeat(budget);
+
+            const result = await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId: '123456789012345678',
+                question,
+            });
+
+            expect(result.isError).toBeUndefined();
+            expect(mockChannel.send).toHaveBeenCalledTimes(1);
+        });
+
+        test('rejects a question one character over the tagged-content budget without sending or registering it', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+            const budget = maxContentLengthForDeliveryCode(deliveryTokenForBase('0'.repeat(16), 0));
+            const question = 'a'.repeat(budget + 1);
+
+            const result = await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId: '123456789012345678',
+                question,
+            });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('too long once tagged for delivery verification');
+            expect(mockChannel.send).not.toHaveBeenCalled();
+            expect(mockQuestionRegistry.register).not.toHaveBeenCalled();
+        });
+
+        test('rejects an over-budget question before touching the channel, even when Discord is unreachable', async () => {
+            mockClient.channels.fetch = mock(() => Promise.reject(new Error('Discord unavailable')));
+            const budget = maxContentLengthForDeliveryCode(deliveryTokenForBase('0'.repeat(16), 0));
+            const question = 'a'.repeat(budget + 1);
+
+            const result = await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId: '123456789012345678',
+                question,
+            });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('too long once tagged for delivery verification');
+            expect(mockClient.channels.fetch).not.toHaveBeenCalled();
+        });
+
+        test('rejects a mentioned question whose tagged, mentioned content exceeds the budget even though the raw question alone fits', async () => {
+            const mockChannel = {
+                id:          '123456789012345678',
+                isTextBased: () => true,
+                isThread:    () => false,
+                isDMBased:   () => false,
+                send:        mock(async (_content: unknown) => ({ id: 'question-message-id' })),
+            };
+            mockClient.channels.fetch = mock(async () => mockChannel);
+            const budget = maxContentLengthForDeliveryCode(deliveryTokenForBase('0'.repeat(16), 0));
+            const question = 'a'.repeat(budget);
+
+            const result = await getToolHandler(createServer(), 'askUserQuestion')({
+                channelId:    '123456789012345678',
+                question,
+                targetUserId: 'user-123',
+            });
+
+            expect(result.isError).toBe(true);
+            expect(textContent(result.content[0])).toContain('too long once tagged for delivery verification');
+            expect(mockChannel.send).not.toHaveBeenCalled();
         });
 
         test('should return error when askUserQuestion encounters Error exception', async () => {
@@ -4003,8 +4146,10 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
                 targetUserId: 'user-123',
             });
 
-            const sendCall = mockChannel.send.mock.calls[0][0] as { content?: string };
-            expect(sendCall.content).toBe('<@user-123> What is your favorite color?');
+            const sendCall = mockChannel.send.mock.calls[0][0] as { content: string, nonce: string, enforceNonce: boolean };
+            expect(sendCall.content).toBe(appendDeliveryCode('<@user-123> What is your favorite color?', sendCall.nonce));
+            expect(decodeDeliveryCode(sendCall.content)).toBe(sendCall.nonce);
+            expect(sendCall.enforceNonce).toBe(true);
         });
 
         test('retries a transient fetch failure when replying to a message', async () => {

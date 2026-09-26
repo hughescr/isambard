@@ -12,7 +12,7 @@ import { createChannelId, createUserId, type ChannelId, type UserId } from './ty
 import { InvariantViolationError, PathSecurityError } from '@/errors';
 import type { ServiceHealthRegistry, ReconnectionLoop } from '@/services';
 import type { PersonAllowlist } from '@/storage';
-import { validateFilePaths, formatLocalDateTime } from '@/utils';
+import { appendDeliveryCode, deliveryTokenForBase, maxContentLengthForDeliveryCode, validateFilePaths, formatLocalDateTime } from '@/utils';
 
 /** Button-builder port for question messages sent by the Discord MCP server. */
 interface MCPQuestionButtonBuilder {
@@ -117,17 +117,24 @@ async function fetchAndValidateChannel(
 }
 
 /**
- * Helper: Sends a message to a Discord channel, with optional reply and files.
+ * Helper: Sends a message to a Discord channel, with optional reply and files. Every direct send
+ * carries its own complete invisible delivery code and a matching Discord nonce (enforced), the
+ * same tagging the outbox-backed path already applies to every chunk it sends.
  * Returns the sent message.
  */
 async function sendMessage(
     channel: TextChannel,
     content: string,
+    deliveryToken: string,
     retryHelper: MCPRetryHelper,
     replyToMessageId?: string,
     files?: string[]
 ): Promise<Message> {
-    const messageOptions: MessageCreateOptions = { content };
+    const messageOptions: MessageCreateOptions = {
+        content:      appendDeliveryCode(content, deliveryToken),
+        nonce:        deliveryToken,
+        enforceNonce: true,
+    };
     // Stryker disable next-line llm: files is string[] or undefined, so both guards accept exactly the non-empty arrays.
     if(files && files.length > 0) {
         messageOptions.files = files;
@@ -151,11 +158,14 @@ async function sendMessage(
 /**
  * Helper: Sends all message chunks to a channel, appending each confirmed Message to
  * `sentMessages` as it goes, so a caller can report what was sent when a later chunk fails.
+ * Every chunk gets its own delivery token derived from `deliveryBase` and its chunk index, so
+ * every chunk carries a distinct, complete, decodable delivery code and nonce.
  * Throws if chunks is empty (splitMessage invariant violation).
  */
 async function sendAllChunks(
     channel: TextChannel,
     chunks: string[],
+    deliveryBase: string,
     retryHelper: MCPRetryHelper,
     sentMessages: Message[],
     replyToMessageId?: string,
@@ -165,7 +175,7 @@ async function sendAllChunks(
     if(firstChunk === undefined) {
         throw new InvariantViolationError('sendAllChunks', 'splitMessage returned empty chunks array');
     }
-    const firstMessage = await sendMessage(channel, firstChunk, retryHelper, replyToMessageId, files);
+    const firstMessage = await sendMessage(channel, firstChunk, deliveryTokenForBase(deliveryBase, 0), retryHelper, replyToMessageId, files);
     // Stryker disable next-line ArrayMethodSwap: the caller passes an empty sentMessages, so this first insertion has the same order.
     sentMessages.push(firstMessage);
     for(let i = 1; i < chunks.length; i++) {
@@ -174,7 +184,7 @@ async function sendAllChunks(
             throw new InvariantViolationError('sendAllChunks', 'chunks[i] undefined despite i < chunks.length');
         }
         // eslint-disable-next-line no-await-in-loop -- send chunks in order and return sent messages in that same order
-        const msg = await sendMessage(channel, chunk, retryHelper);
+        const msg = await sendMessage(channel, chunk, deliveryTokenForBase(deliveryBase, i), retryHelper);
         sentMessages.push(msg);
     }
 }
@@ -394,22 +404,28 @@ async function prepareQuestionChannel(
     return { targetChannel: channel };
 }
 
+/** Helper: Builds the visible question content, with its optional @mention prefix. */
+function buildQuestionContent(question: string, targetUserId?: string): string {
+    return targetUserId ? `<@${targetUserId}> ${question}` : question;
+}
+
 /**
- * Helper: Builds message options for a question, including optional mention and buttons.
+ * Helper: Builds message options for a question, tagging it with its own complete invisible
+ * delivery code and a matching Discord nonce (enforced), the same tagging the outbox-backed
+ * path already applies. Includes optional buttons.
  */
 function buildQuestionMessage(
+    questionContent: string,
+    deliveryToken: string,
     questionId: string,
-    question: string,
     buttonBuilder: MCPQuestionButtonBuilder,
-    targetUserId?: string,
     options?: { label: string, value: string }[]
 ): MessageCreateOptions {
-    let questionContent = question;
-    if(targetUserId) {
-        questionContent = `<@${targetUserId}> ${question}`;
-    }
-
-    const messageOptions: MessageCreateOptions = { content: questionContent };
+    const messageOptions: MessageCreateOptions = {
+        content:      appendDeliveryCode(questionContent, deliveryToken),
+        nonce:        deliveryToken,
+        enforceNonce: true,
+    };
 
     // Stryker disable next-line llm: options is an array or undefined, making both guards true exactly for non-empty arrays.
     if(options && options.length > 0) {
@@ -417,6 +433,20 @@ function buildQuestionMessage(
     }
 
     return messageOptions;
+}
+
+/**
+ * Helper: Rejects a question whose tagged content would exceed Discord's content limit, before
+ * any channel is prepared or the question is sent. A question is never queued or truncated, so a
+ * question that does not fit must fail clearly instead of risking a definitively-rejected send.
+ */
+function validateQuestionLength(questionContent: string, deliveryToken: string): CallToolResult | null {
+    const budget = maxContentLengthForDeliveryCode(deliveryToken);
+    if(questionContent.length > budget) {
+        logger.warn({ length: questionContent.length, budget }, 'Discord tool returned error: question too long once tagged for delivery verification');
+        return toolError(`Error: question is too long once tagged for delivery verification (${questionContent.length} chars including any @mention prefix; limit ${budget} chars). Shorten the question and ask again; it was not sent.`);
+    }
+    return null;
 }
 
 /**
@@ -614,11 +644,16 @@ async function sendDirect(args: SendDiscordMessageArgs, validatedFiles: string[]
         return channelResult.error;
     }
 
+    // A fresh base per call, shaped exactly like the outbox's buildOutboxItem fallback base,
+    // so every chunk of this send gets its own complete, distinct delivery code and nonce.
+    const deliveryBase = randomUUID().replaceAll('-', '').slice(0, 16);
+    // Any part index gives the same budget: the part suffix is fixed-width, so every delivery code has the same length.
+    const budget = maxContentLengthForDeliveryCode(deliveryTokenForBase(deliveryBase, 0));
     // Stryker disable next-line llm: MCP validation requires a string, and every accepted string satisfies s || '' === s.
-    const chunks = options.messageSplitter.splitMessage(args.content);
+    const chunks = options.messageSplitter.splitMessage(args.content, budget);
     const sentMessages: Message[] = [];
     try {
-        await sendAllChunks(channelResult.channel, chunks, options.retryHelper, sentMessages, args.replyToMessageId, validatedFiles);
+        await sendAllChunks(channelResult.channel, chunks, deliveryBase, options.retryHelper, sentMessages, args.replyToMessageId, validatedFiles);
     } catch (error: unknown) {
         return directSendFailure(error, sentMessages, chunks.length);
     }
@@ -886,26 +921,34 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
                             return optionsError;
                         }
 
-                        // 2. Resolve channel name to ID if needed
+                        // 2. Build message with optional buttons, tagged with its own delivery code and nonce.
+                        // Validated before any channel is resolved or touched, so an over-budget question
+                        // fails clearly without a Discord round trip.
+                        const questionId = randomUUID();
+                        const deliveryToken = deliveryTokenForBase(questionId.replaceAll('-', '').slice(0, 16), 0);
+                        const questionContent = buildQuestionContent(args.question, args.targetUserId);
+                        const lengthError = validateQuestionLength(questionContent, deliveryToken);
+                        if(lengthError) {
+                            return lengthError;
+                        }
+                        const messageOptions = buildQuestionMessage(
+                            questionContent,
+                            deliveryToken,
+                            questionId,
+                            buttonBuilder,
+                            args.options
+                        );
+
+                        // 3. Resolve channel name to ID if needed
                         const channelId = channelRegistry.resolveChannelId(args.channelId);
 
-                        // 3. Normalize channel ID (handles threads)
+                        // 4. Normalize channel ID (handles threads)
                         const normalizeResult = await normalizeChannelId(client, channelId, retryHelper);
                         if(isErrorResult(normalizeResult)) {
                             return normalizeResult.error;
                         }
 
                         const { normalizedChannelId, existingThreadId, channel } = normalizeResult;
-
-                        // 4. Build message with optional buttons
-                        const questionId = randomUUID();
-                        const messageOptions = buildQuestionMessage(
-                            questionId,
-                            args.question,
-                            buttonBuilder,
-                            args.targetUserId,
-                            args.options
-                        );
 
                         // 5. Prepare target channel (existing thread or create new)
                         const { targetChannel, threadId } = await prepareQuestionChannel(

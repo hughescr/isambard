@@ -5,9 +5,9 @@ import { ChannelNotFoundByIdError } from '../../../../src/errors';
 import { DiscordCapabilityImpl, type DiscordCapability, type DiscordCapabilityDeps, type DiscordCapabilityLogger, type SendOptions } from '../../../../src/integrations/discord/capability';
 import { DISCORD_MAX_LENGTH } from '../../../../src/integrations/discord/messages';
 import { createOutboxReplayDeliverFn, DELIVERY_TOKEN_MAX_LENGTH, deliveryTokenFor } from '../../../../src/integrations/discord/outbox-replay';
-import { appendDeliveryCode, decodeDeliveryCode, maxContentLengthForDeliveryCode } from '../../../../src/integrations/discord/zero-width-delivery-code';
 import type { ServiceHealthRegistry } from '../../../../src/services/health-registry';
 import type { OutboxBackend, OutboxItem } from '../../../../src/services/outbox';
+import { appendDeliveryCode, decodeDeliveryCode, maxContentLengthForDeliveryCode } from '../../../../src/utils/delivery-code';
 
 afterEach(() => {
     mock.restore();

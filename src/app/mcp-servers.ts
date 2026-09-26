@@ -371,7 +371,7 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
             getOrCreateDMByUsername: username => dmTracker.getOrCreateDMByUsername(username),
         },
         messageSplitter: {
-            splitMessage: content => splitMessage(content),
+            splitMessage: (content, maxLength) => splitMessage(content, maxLength),
         },
         buttonBuilder: {
             buildQuestionButtons: config => buildQuestionButtons(config),

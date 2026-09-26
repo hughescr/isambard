@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
-import { appendDeliveryCode, decodeDeliveryCode, deliveryCodeFor, maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
+import { appendDeliveryCode, decodeDeliveryCode, deliveryCodeFor, deliveryTokenForBase, maxContentLengthForDeliveryCode, DELIVERY_TOKEN_MAX_LENGTH } from '@/utils/delivery-code';
 
 const zeroWidth = (...codePoints: string[]): string => String.fromCodePoint(...codePoints.map(codePoint => Number.parseInt(codePoint, 16)));
 
@@ -79,5 +79,26 @@ describe('zero-width delivery code', () => {
         expect(decodeDeliveryCode(withDigits())).toBe('iz');
         expect(decodeDeliveryCode(withDigits('200B'))).toBeUndefined();
         expect(decodeDeliveryCode(withDigits('200B', '200B'))).toBeUndefined();
+    });
+});
+
+describe('deliveryTokenForBase', () => {
+    test('pads part 0 to six zero-padded base36 digits', () => {
+        expect(deliveryTokenForBase('abc', 0)).toBe('izabc000000');
+    });
+
+    test('encodes part 35 as a single base36 digit padded to six characters', () => {
+        expect(deliveryTokenForBase('abc', 35)).toBe('izabc00000z');
+    });
+
+    test('truncates a base longer than 17 characters to the base budget', () => {
+        const longBase = '0'.repeat(20);
+        expect(deliveryTokenForBase(longBase, 0)).toBe(`iz${'0'.repeat(17)}000000`);
+    });
+
+    test('DELIVERY_TOKEN_MAX_LENGTH is 25 and bounds every token generated from a short base', () => {
+        expect(DELIVERY_TOKEN_MAX_LENGTH).toBe(25);
+        expect(deliveryTokenForBase('ab', 0).length).toBeLessThanOrEqual(DELIVERY_TOKEN_MAX_LENGTH);
+        expect(deliveryTokenForBase('0'.repeat(17), 35)).toHaveLength(DELIVERY_TOKEN_MAX_LENGTH);
     });
 });

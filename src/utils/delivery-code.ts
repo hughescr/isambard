@@ -95,3 +95,21 @@ export function decodeDeliveryCode(content: string): string | undefined {
     }
     return token;
 }
+
+const DELIVERY_TOKEN_PREFIX = 'iz';
+const DELIVERY_TOKEN_BASE_MAX_LENGTH = 17;
+const DELIVERY_TOKEN_PART_LENGTH = 6;
+
+/** Upper bound on delivery-token length, used by tests to assert the token and chunk budgets. */
+export const DELIVERY_TOKEN_MAX_LENGTH = DELIVERY_TOKEN_PREFIX.length + DELIVERY_TOKEN_BASE_MAX_LENGTH + DELIVERY_TOKEN_PART_LENGTH;
+
+/**
+ * A compact token that is both a Discord nonce and invisible history correlation code, built from
+ * a caller-supplied base (truncated to the base budget) and a zero-padded base-36 part suffix. Any
+ * part index gives a token of the same length: the suffix is always exactly
+ * {@link DELIVERY_TOKEN_PART_LENGTH} base-36 digits, so a budget reserved for one part's token
+ * applies equally to every other part.
+ */
+export function deliveryTokenForBase(base: string, part: number): string {
+    return `${DELIVERY_TOKEN_PREFIX}${base.slice(0, DELIVERY_TOKEN_BASE_MAX_LENGTH)}${part.toString(36).padStart(DELIVERY_TOKEN_PART_LENGTH, '0')}`;
+}

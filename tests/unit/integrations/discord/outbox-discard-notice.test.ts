@@ -4,8 +4,8 @@ import { createChannelId } from '@/agent/types';
 import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
 import { createOutboxDiscardReporter, describeDiscardedMessage } from '@/integrations/discord/outbox-discard-notice';
 import { DISCARD_NOTICE_TEXT_LIMIT, deliveryTokenFor, messageChunksFor } from '@/integrations/discord/outbox-replay';
-import { maxContentLengthForDeliveryCode } from '@/integrations/discord/zero-width-delivery-code';
 import type { OutboxItem } from '@/services/outbox';
+import { maxContentLengthForDeliveryCode } from '@/utils/delivery-code';
 
 const ITEM_ID = 'aaaaaaaa-1111-4222-8333-444444444444';
 const HEAD = 'A queued Discord message to channel ch-1 was dropped and NOT delivered: ';

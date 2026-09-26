@@ -42,8 +42,8 @@ const outboxProgressSchema = z.object({
     outcome:        z.enum(['retryable', 'unknown']).optional(),
     /**
      * Visible token used for history verification; nonce is not returned by REST history.
-     * Bounded to the delivery-token base budget (see DELIVERY_TOKEN_BASE_MAX_LENGTH in
-     * src/integrations/discord/outbox-replay.ts) so every derived Discord nonce stays
+     * Bounded to the delivery-token base budget (the 17-character base length baked into
+     * deliveryTokenForBase in src/utils/delivery-code.ts) so every derived Discord nonce stays
      * within Discord's 25-character nonce limit.
      */
     deliveryToken:  z.string().min(1).max(17).optional(),

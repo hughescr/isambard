@@ -26,6 +26,7 @@ import type { DMTracker } from '@/integrations/discord/channel-registry/dm-track
 import type { ChannelRegistryManager } from '@/integrations/discord/channel-registry/manager';
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
+import { splitMessage } from '@/integrations/discord/messages';
 import type { ServiceHealthRegistry } from '@/services';
 import type { TokenBucketRateLimiter } from '@/services/rate-limiters/token-bucket';
 import type { ContactBackend, ContactChangeRequest, PersonAllowlist } from '@/storage';
@@ -235,6 +236,21 @@ describe('createMcpSharedDeps + createMcpServerInstances (conversation role) —
                 timezone:         mockOptions.timezone,
             })
         );
+    });
+
+    test('forwards maxLength through the messageSplitter wiring', () => {
+        const createDiscordMcpServerSpy = spyOn(discordMcpModule, 'createDiscordMCPServer').mockReturnValue({} as unknown as McpServerInstance);
+
+        spies.push(
+            spyOn(memoryMcpModule, 'createMemoryMCPServer').mockReturnValue({} as unknown as McpServerInstance),
+            createDiscordMcpServerSpy,
+            spyOn(discordInboxMcpModule, 'createDiscordInboxMCPServer').mockReturnValue({} as unknown as McpServerInstance)
+        );
+
+        buildConversationServers(mockOptions);
+
+        const { messageSplitter } = createDiscordMcpServerSpy.mock.calls[0][0];
+        expect(messageSplitter.splitMessage('a'.repeat(3000), 100)).toEqual(splitMessage('a'.repeat(3000), 100));
     });
 
     test('adapts the Discord capability into the outbound sender with reply priority and type', async () => {
