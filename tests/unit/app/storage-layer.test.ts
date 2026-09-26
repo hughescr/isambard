@@ -1010,6 +1010,55 @@ describe('createStorageLayer', () => {
         expect(() => capturedDriftCallback!()).toThrow();
     });
 
+    test('stops the cross-check scheduler before releasing the index on failed construction', async () => {
+        const constructionError = new Error('backend failed');
+        const order: string[] = [];
+        let resolveStop!: () => void;
+        const stop = mock(() => new Promise<void>((resolve) => {
+            resolveStop = resolve;
+        }));
+        const close = mock(() => {
+            order.push('vector');
+        });
+        spies.push(
+            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
+                client: { destroy: mock(() => {
+                    order.push('holder');
+                }) } as unknown as DynamoDBClient,
+                docClient: {} as DynamoDBDocumentClient,
+                tableName: 'TestTable',
+            }),
+            spyOn(staticVecStoreModule.VectorIndex, 'open').mockResolvedValue({ close } as unknown as typeof staticVecStoreModule.VectorIndex.prototype),
+            spyOn(staticVecStoreModule, 'createVectorCrossCheckScheduler').mockReturnValue({ stop } as unknown as ReturnType<typeof staticVecStoreModule.createVectorCrossCheckScheduler>),
+            // @ts-expect-error - Deliberately failing backend constructor
+            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => { throw constructionError; })
+        );
+        const embedder = { encode: mock(async () => ({ data: new Uint8Array(128) })), close: mock(async () => {}) };
+        let settled = false;
+        const pending = staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+            enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
+        }, embedder);
+        void pending.catch(() => {
+            settled = true;
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(stop).toHaveBeenCalledTimes(1);
+        expect(settled).toBe(false);
+        expect(order).toEqual([]);
+        resolveStop();
+        await expect(pending).rejects.toBe(constructionError);
+        expect(order).toEqual(['vector', 'holder']);
+    });
+
     test('waits for releaseFailedStorage to finish before rejecting when a later constructor fails', async () => {
         // AwaitDrop guard: if the `await` on releaseFailedStorage(...) in the catch block were
         // dropped, createStorageLayer would reject immediately, racing ahead of cleanup instead

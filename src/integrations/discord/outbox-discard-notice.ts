@@ -23,10 +23,11 @@ const DISCARD_REASON_TEXT: Record<DrainerDiscardReason, string> = {
 export function describeDiscardedMessage(item: OutboxItem, reason: DrainerDiscardReason): NotifyParams {
     const lastError = item.progress.lastError === undefined ? '' : ` (last error: ${item.progress.lastError})`;
     const cause = `${DISCARD_REASON_TEXT[reason]}${lastError}`;
-    const posted = item.progress.deliveredParts ?? 0;
+    const posted = item.progress.deliveredParts;
     let partial = '';
     let remainder = item.payload.text ?? '';
-    if(posted > 0) {
+    // deliveredParts is validated as a nonnegative integer; absent and zero both mean none posted.
+    if(posted) {
         const chunks = messageChunksFor(item);
         partial = ` The first ${posted} of ${chunks.length} parts were already posted; only the rest is shown.`;
         remainder = chunks.slice(posted).join('\n\n');

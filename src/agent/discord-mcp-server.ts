@@ -647,11 +647,11 @@ async function sendDirect(args: SendDiscordMessageArgs, validatedFiles: string[]
     // A fresh base per call, shaped exactly like the outbox's buildOutboxItem fallback base,
     // so every chunk of this send gets its own complete, distinct delivery code and nonce.
     const deliveryBase = randomUUID().replaceAll('-', '').slice(0, 16);
-    // Any part index gives the same budget: the part suffix is fixed-width, so every delivery code has the same length.
-    const budget = maxContentLengthForDeliveryCode(deliveryTokenForBase(deliveryBase, 0));
+    const sentMessages: Message[] = [];
+    // The first part is index zero. Every later part has the same budget: its suffix is fixed-width.
+    const budget = maxContentLengthForDeliveryCode(deliveryTokenForBase(deliveryBase, sentMessages.length));
     // Stryker disable next-line llm: MCP validation requires a string, and every accepted string satisfies s || '' === s.
     const chunks = options.messageSplitter.splitMessage(args.content, budget);
-    const sentMessages: Message[] = [];
     try {
         await sendAllChunks(channelResult.channel, chunks, deliveryBase, options.retryHelper, sentMessages, args.replyToMessageId, validatedFiles);
     } catch (error: unknown) {

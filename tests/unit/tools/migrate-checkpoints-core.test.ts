@@ -275,6 +275,10 @@ describe('parseArgs', () => {
     test('a single-dash argument with = is not split', () => {
         expect(() => parseArgs(argv('-x=1'))).toThrow('Unknown option: -x=1');
     });
+
+    test('an embedded double-dash does not make a positional argument a flag', () => {
+        expect(() => parseArgs(argv('prefix--execute=yes'))).toThrow('Unknown option: prefix--execute=yes');
+    });
 });
 
 // ── Capacity pacing ───────────────────────────────────────────────────────────
@@ -324,6 +328,44 @@ describe('createCapacityPacer', () => {
         await pacer.wait();
         await pacer.wait();
         expect(clock.sleeps).toEqual([3000]);
+    });
+
+    test('wait sleeps even for precisely one millisecond of debt', async () => {
+        const clock = fakeClock();
+        const pacer = createCapacityPacer(1000, clock.now, clock.sleep);
+        pacer.record(1);
+        await pacer.wait();
+        expect(clock.sleeps).toEqual([1]);
+    });
+
+    test('wait and charge do not settle before a pending capacity sleep resolves', async () => {
+        let release!: () => void;
+        const sleep = mock(() => new Promise<void>((resolve) => {
+            release = resolve;
+        }));
+        const pacer = createCapacityPacer(1, () => 0, sleep);
+        pacer.record(1);
+        let waited = false;
+        const pendingWait = pacer.wait().finally(() => {
+            waited = true;
+        });
+        expect(sleep).toHaveBeenCalledWith(1000);
+        await Promise.resolve();
+        expect(waited).toBe(false);
+        release();
+        await pendingWait;
+        expect(waited).toBe(true);
+
+        let charged = false;
+        const pendingCharge = pacer.charge(1).finally(() => {
+            charged = true;
+        });
+        expect(sleep).toHaveBeenCalledTimes(2);
+        await Promise.resolve();
+        expect(charged).toBe(false);
+        release();
+        await pendingCharge;
+        expect(charged).toBe(true);
     });
 });
 
@@ -382,6 +424,7 @@ describe('toLegacyRow', () => {
     test.each([
         ['another state path', rawItem('/state/notes.md', 'x')],
         ['a sibling of the services directory', rawItem('/state/servicesX/a/checkpoint', 'x')],
+        ['the services prefix embedded after another directory', rawItem('/archive/state/services/bsky/dm/checkpoint', 'x')],
         ['keys that are not memory keys', { PK: 'TAG#x', SK: 'PATH#/state/services/bsky/dm/checkpoint' }],
         ['a row without keys', {}],
     ])('skips %s', (_label, raw) => {

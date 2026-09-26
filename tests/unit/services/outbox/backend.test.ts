@@ -544,6 +544,29 @@ describe('OutboxBackend', () => {
     });
 
     describe('markPendingDiscard()', () => {
+        test('does not resolve until the pending-discard row is persisted', async () => {
+            let release!: () => void;
+            ddbMock.on(PutCommand).callsFake(() => new Promise((resolve) => {
+                release = () => {
+                    resolve({});
+                };
+            }));
+            let settled = false;
+            const pending = backend.markPendingDiscard(makeItem(), 'stale_epoch', '2030-01-01T00:00:30.000Z').finally(() => {
+                settled = true;
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(ddbMock.commandCalls(PutCommand)).toHaveLength(1);
+            expect(settled).toBe(false);
+            release();
+            await pending;
+            expect(settled).toBe(true);
+        });
+
         test('persists the discard reason and retry time while keeping the delivery error and replay progress', async () => {
             jest.useFakeTimers();
             jest.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));

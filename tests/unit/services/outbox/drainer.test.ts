@@ -1293,6 +1293,42 @@ describe('createOutboxDrainer', () => {
             expect(jest.getTimerCount()).toBe(0);
         });
 
+        test('waits to persist a decided discard after delete fails before completing the drain', async () => {
+            const item = makeItem({ epoch: 2 });
+            outboxBackend.dequeue.mockImplementationOnce(async (): Promise<OutboxItem[]> => [item]).mockImplementation(async (): Promise<OutboxItem[]> => []);
+            outboxBackend.discard.mockImplementationOnce(async (): Promise<void> => {
+                throw new Error('delete unavailable');
+            });
+            let release!: () => void;
+            outboxBackend.markPendingDiscard.mockImplementation(() => new Promise<void>((resolve) => {
+                release = resolve;
+            }));
+            let settled = false;
+            const pending = reporting.drain(SERVICE).finally(() => {
+                settled = true;
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(outboxBackend.markPendingDiscard).toHaveBeenCalledTimes(1);
+            expect(settled).toBe(false);
+            release();
+            await pending;
+            expect(settled).toBe(true);
+        });
+
         test('keeps a stale-epoch row whose delete failed after Izzy was told, so a later epoch never resends it', async () => {
             const item = makeItem({ epoch: 2 });
             const discardError = new Error('delete unavailable');

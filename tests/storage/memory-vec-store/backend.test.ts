@@ -40,6 +40,16 @@ describe('VectorIndex', () => {
         }
     });
 
+    describe('cross-check closed-index safety', () => {
+        it('rejects every cross-check read and write after close with VectorIndexClosedError', () => {
+            index.close();
+            expect(() => index.listRowSnapshotsAfter(0, 1)).toThrow(VectorIndexClosedError);
+            expect(() => index.getCrossCheckState()).toThrow(VectorIndexClosedError);
+            expect(() => index.enrollCrossCheck(10, 100)).toThrow(VectorIndexClosedError);
+            expect(() => index.saveCrossCheckState({ nextDueAt: 10, lastRunAt: null, lastCompletedRowid: 0 })).toThrow(VectorIndexClosedError);
+        });
+    });
+
     describe('schema verification', () => {
         it('creates both memory_vectors table and vec_memory virtual table', () => {
             const rows = db.query<{ name: string }, []>(

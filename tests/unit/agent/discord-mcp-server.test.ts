@@ -2701,6 +2701,7 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
 
             expect(mockChannel.send).toHaveBeenCalled();
             const sendCall = mockChannel.send.mock.calls[0][0] as { content: string, nonce: string, components?: unknown[] };
+            expect(sendCall.nonce).toEndWith('000000');
             expect(sendCall.content).toBe(appendDeliveryCode('What is your favorite color?', sendCall.nonce));
             expect(sendCall.content).not.toContain('<@');
         });
@@ -2745,6 +2746,10 @@ Delivery: plain text messages go through a durable outbox. The result's "status"
 
             expect(result.isError).toBe(true);
             expect(textContent(result.content[0])).toContain('too long once tagged for delivery verification');
+            expect(mockLogger.warn).toHaveBeenCalledWith(
+                { length: budget + 1, budget },
+                'Discord tool returned error: question too long once tagged for delivery verification'
+            );
             expect(mockChannel.send).not.toHaveBeenCalled();
             expect(mockQuestionRegistry.register).not.toHaveBeenCalled();
         });
