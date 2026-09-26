@@ -385,6 +385,12 @@ describe('Vector feature wiring', () => {
                 runOnce: mock(() => undefined),
             };
             const createPruneScheduler = spyOn(vecStoreModule, 'createVectorPruneScheduler').mockReturnValue(pruneScheduler);
+            const crossCheckScheduler = {
+                start:   mock(() => { callOrder.push('crossCheckScheduler.start'); }),
+                stop:    mock(async () => { callOrder.push('crossCheckScheduler.stop'); }),
+                runOnce: mock(async () => undefined),
+            };
+            const createCrossCheckScheduler = spyOn(vecStoreModule, 'createVectorCrossCheckScheduler').mockReturnValue(crossCheckScheduler);
 
             const mockAsyncIndexer = {
                 isClosed: false,
@@ -416,6 +422,7 @@ describe('Vector feature wiring', () => {
                 openVectorIndex,
                 createAsyncIndexer,
                 createPruneScheduler,
+                createCrossCheckScheduler,
                 spyOn(storageModule, 'loadEmbedder').mockResolvedValue(
                     fakeEmbedder as unknown as Awaited<ReturnType<typeof storageModule.loadEmbedder>>
                 ),
@@ -485,6 +492,10 @@ describe('Vector feature wiring', () => {
             expect(createPruneScheduler).toHaveBeenCalledWith({ vectorIndex: mockVectorIndex, logger: expect.anything() });
             expect(callOrder.indexOf('pruneScheduler.stop')).toBeGreaterThan(-1);
             expect(callOrder.indexOf('pruneScheduler.stop')).toBeLessThan(asyncIdx);
+            expect(createCrossCheckScheduler).toHaveBeenCalledWith({ vectorIndex: mockVectorIndex, docClient: expect.anything(), tableName: 'IsambardMemory', indexer: mockAsyncIndexer, logger: expect.anything() });
+            expect(callOrder.indexOf('crossCheckScheduler.stop')).toBeGreaterThan(-1);
+            expect(callOrder.indexOf('crossCheckScheduler.stop')).toBeLessThan(asyncIdx);
+            expect(crossCheckScheduler.stop).toHaveBeenCalledTimes(1);
             expect(mockAsyncIndexer.close).toHaveBeenCalledTimes(1);
             expect(mockVectorIndex.close).toHaveBeenCalledTimes(1);
             expect(destroyHolder).toHaveBeenCalledTimes(1);
@@ -507,8 +518,12 @@ describe('Vector feature wiring', () => {
 
                 await app.start();
                 expect(callOrder).toContain('pruneScheduler.start');
+                expect(callOrder).toContain('crossCheckScheduler.start');
                 await app.stop();
                 expect(callOrder.lastIndexOf('pruneScheduler.stop')).toBeLessThan(callOrder.indexOf('next asyncIndexer.close'));
+                expect(crossCheckScheduler.stop).toHaveBeenCalledTimes(2);
+                expect(callOrder.lastIndexOf('crossCheckScheduler.stop')).toBeGreaterThan(-1);
+                expect(callOrder.lastIndexOf('crossCheckScheduler.stop')).toBeLessThan(callOrder.indexOf('next asyncIndexer.close'));
 
                 expect(firstClient).not.toBe(nextClient);
                 expect(createDynamoDBClient.mock.calls.length).toBeGreaterThan(firstCycleClientCreations);

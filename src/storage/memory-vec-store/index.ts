@@ -9,6 +9,7 @@
 // Core classes
 export { VectorIndex, PRUNE_EXPIRED_BATCH_SIZE, PRUNE_TOMBSTONE_BATCH_SIZE, DELETE_TOMBSTONE_TTL_MS } from './backend.js';
 export { AsyncIndexer } from './indexer.js';
+export { createVectorCrossCheckScheduler, VECTOR_CROSS_CHECK_INTERVAL_MS, type VectorCrossCheckScheduler } from './cross-check.js';
 export {
     createVectorPruneScheduler,
     VECTOR_PRUNE_INTERVAL_MS,

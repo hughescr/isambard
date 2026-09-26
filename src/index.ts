@@ -320,6 +320,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     registerCleanup({ name: 'vector index', run: () => storage.vectorIndex?.close() });
     registerCleanup({ name: 'async indexer', run: () => storage.asyncIndexer?.close() });
     registerCleanup({ name: 'vector prune scheduler', run: () => storage.vectorPruneScheduler?.stop() });
+    registerCleanup({ name: 'vector cross-check scheduler', run: () => storage.vectorCrossCheckScheduler?.stop() });
     registerCleanup({ name: 'tag reconciliation scheduler', run: () => storage.tagIndexReconciliationScheduler?.stop() });
     registerCleanup({ name: 'contact reconciliation scheduler', run: () => storage.contactReconciliationScheduler?.stop() });
 
@@ -1382,6 +1383,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 storage.vectorPruneScheduler.start();
                 logger.info('Vector index prune scheduler started');
             }
+            storage.vectorCrossCheckScheduler?.start();
 
             // Start the approved-outbound-action executor and outcome reporter polling loops
             approvedActionExecutor.start();
@@ -1449,6 +1451,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 // Each step settles before the next starts, including after a rejection.
                 // This keeps indexer writes (and the last expiry prune) ahead of vector-index closure.
                 { name: 'vector prune scheduler', run: () => storage.vectorPruneScheduler?.stop(), onFailure: 'propagate' },
+                { name: 'vector cross-check scheduler', run: () => storage.vectorCrossCheckScheduler?.stop(), onFailure: 'propagate' },
                 { name: 'async indexer', run: () => storage.asyncIndexer?.close(), onFailure: 'propagate' },
                 { name: 'vector index', run: () => storage.vectorIndex?.close(), onFailure: 'propagate' },
                 { name: 'DynamoDB probe', run: () => clearInterval(dynamoDBProbeInterval), onFailure: 'propagate' },

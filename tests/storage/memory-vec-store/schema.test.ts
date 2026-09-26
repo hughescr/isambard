@@ -21,6 +21,15 @@ describe('runSchemaMigration', () => {
         db.close();
     });
 
+    it('adds the singleton cross-check state table without changing existing vectors', () => {
+        runSchemaMigration(db);
+        db.run('INSERT INTO memory_vectors (pk, sk, layer, content_hash, updated_at) VALUES (?, ?, ?, ?, ?)', ['DIR#/identity', 'FILE#old.md', 'identity', 'original', 1]);
+        db.run('INSERT INTO vector_cross_check_state (id, next_due_at, last_run_at, last_completed_rowid) VALUES (1, 70, 20, 10)');
+        runSchemaMigration(db);
+        expect(db.query<{ content_hash: string }, [string]>('SELECT content_hash FROM memory_vectors WHERE sk = ?').get('FILE#old.md')?.content_hash).toBe('original');
+        expect(db.query<{ next_due_at: number, last_run_at: number, last_completed_rowid: number }, []>('SELECT next_due_at, last_run_at, last_completed_rowid FROM vector_cross_check_state WHERE id = 1').get()).toEqual({ next_due_at: 70, last_run_at: 20, last_completed_rowid: 10 });
+    });
+
     it('creates memory_vectors table on first run', () => {
         runSchemaMigration(db);
         const row = db.query<{ name: string }, []>(

@@ -729,6 +729,56 @@ export class VectorIndex {
             }));
     }
 
+    /** Keyset-paged snapshots; rowid remains the cursor even when earlier rows disappear. */
+    listRowSnapshotsAfter(rowid: number, limit: number): (VectorRowSnapshot & { rowid: number })[] {
+        this.#assertOpen();
+        return this.#db.query<SnapshotRow & { rowid: number }, [number, number]>(
+            `SELECT rowid, pk, sk, content_hash, updated_at, ttl, source_updated_at
+             FROM memory_vectors WHERE rowid > ? ORDER BY rowid LIMIT ?`
+        ).all(rowid, limit).map(row => ({
+            rowid:           row.rowid,
+            pk:              row.pk,
+            sk:              row.sk,
+            contentHash:     row.content_hash,
+            updatedAt:       row.updated_at,
+            ttl:             row.ttl,
+            sourceUpdatedAt: row.source_updated_at,
+        }));
+    }
+
+    getCrossCheckState(): { nextDueAt: number, lastRunAt: number | null, lastCompletedRowid: number } | undefined {
+        this.#assertOpen();
+        const row = this.#db.query<{ next_due_at: number, last_run_at: number | null, last_completed_rowid: number }, []>(
+            'SELECT next_due_at, last_run_at, last_completed_rowid FROM vector_cross_check_state WHERE id = 1'
+        ).get();
+        if(row === null) {
+            return undefined;
+        }
+        return {
+            nextDueAt:          row.next_due_at,
+            lastRunAt:          row.last_run_at,
+            lastCompletedRowid: row.last_completed_rowid,
+        };
+    }
+
+    /** Enrol a new local database once, without a boot-time network scan. */
+    enrollCrossCheck(now: number, intervalMs: number): NonNullable<ReturnType<VectorIndex['getCrossCheckState']>> {
+        this.#assertOpen();
+        this.#db.run(
+            'INSERT OR IGNORE INTO vector_cross_check_state (id, next_due_at, last_run_at, last_completed_rowid) VALUES (1, ?, NULL, 0)',
+            [now + intervalMs]
+        );
+        return this.getCrossCheckState()!;
+    }
+
+    saveCrossCheckState(state: NonNullable<ReturnType<VectorIndex['getCrossCheckState']>>): void {
+        this.#assertOpen();
+        this.#db.run(
+            'UPDATE vector_cross_check_state SET next_due_at = ?, last_run_at = ?, last_completed_rowid = ? WHERE id = 1',
+            [state.nextDueAt, state.lastRunAt, state.lastCompletedRowid]
+        );
+    }
+
     /**
      * Runs a KNN query against the vec0 virtual table using sqlite-vec Hamming distance.
      *

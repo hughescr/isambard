@@ -124,5 +124,15 @@ export function runSchemaMigration(db: Database): void {
             CREATE INDEX IF NOT EXISTS idx_vector_delete_tombstones_created_at
             ON vector_delete_tombstones(created_at)
         `);
+
+        // Local-only schedule and keyset checkpoint; survives restarts without DynamoDB writes.
+        db.run(`
+            CREATE TABLE IF NOT EXISTS vector_cross_check_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                next_due_at INTEGER NOT NULL,
+                last_run_at INTEGER,
+                last_completed_rowid INTEGER NOT NULL
+            )
+        `);
     }).immediate();
 }

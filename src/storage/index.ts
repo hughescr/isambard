@@ -66,6 +66,8 @@ export {
     AsyncIndexer,
     createVectorPruneScheduler,
     type VectorPruneScheduler,
+    createVectorCrossCheckScheduler,
+    type VectorCrossCheckScheduler,
     type VectorRowSnapshot,
     type VectorTtlUpdate,
     PACKED_EMBEDDING_BYTES,

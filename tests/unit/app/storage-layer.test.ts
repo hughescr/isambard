@@ -529,6 +529,7 @@ describe('createStorageLayer', () => {
         expect(result.vectorIndex).toBeUndefined();
         expect(result.asyncIndexer).toBeUndefined();
         expect(result.vectorPruneScheduler).toBeUndefined();
+        expect(result.vectorCrossCheckScheduler).toBeUndefined();
     });
 
     test('should NOT create vector index when vectorIndexConfig.enabled is false', async () => {
@@ -558,6 +559,7 @@ describe('createStorageLayer', () => {
         expect(result.vectorIndex).toBeUndefined();
         expect(result.asyncIndexer).toBeUndefined();
         expect(result.vectorPruneScheduler).toBeUndefined();
+        expect(result.vectorCrossCheckScheduler).toBeUndefined();
     });
 
     test('should NOT create vector index when embedder is undefined even if vectorIndexConfig.enabled is true', async () => {
@@ -587,6 +589,7 @@ describe('createStorageLayer', () => {
         expect(result.vectorIndex).toBeUndefined();
         expect(result.asyncIndexer).toBeUndefined();
         expect(result.vectorPruneScheduler).toBeUndefined();
+        expect(result.vectorCrossCheckScheduler).toBeUndefined();
     });
 
     test('should create vector index and asyncIndexer when vectorIndexConfig.enabled and embedder provided', async () => {
@@ -636,6 +639,7 @@ describe('createStorageLayer', () => {
         expect(result.asyncIndexer).toBeDefined();
         // The prune scheduler is built over the opened index but not started (app.start() does that)
         expect(result.vectorPruneScheduler).toBeDefined();
+        expect(result.vectorCrossCheckScheduler).toBeDefined();
         expect(mockVectorIndex.pruneExpired).not.toHaveBeenCalled();
         result.vectorPruneScheduler!.runOnce();
         expect(mockVectorIndex.pruneExpired).toHaveBeenCalledTimes(1);
