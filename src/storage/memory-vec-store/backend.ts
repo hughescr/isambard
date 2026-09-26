@@ -698,38 +698,6 @@ export class VectorIndex {
         return setTx.immediate();
     }
 
-    /**
-     * Lists every row whose memory path is under `prefix` (which must start and end with `/`, and
-     * is not the root), ordered by rowid. Matches the directory itself (`DIR#/a/b` for `/a/b/`)
-     * and anything nested below it; a sibling such as `/a/bx/` is not matched. Uses substr
-     * rather than LIKE, whose `_` wildcard would match any character in a path.
-     *
-     * @throws {VectorIndexError} For a prefix that is not a non-root `/…/` directory.
-     */
-    listRowsByPathPrefix(prefix: string): VectorRowSnapshot[] {
-        this.#assertOpen();
-        if(!prefix.startsWith('/') || !prefix.endsWith('/') || prefix === '/') {
-            throw new VectorIndexError(`Path prefix must start and end with '/' and not be the root; got '${prefix}'`);
-        }
-        const directoryPk = `DIR#${prefix.slice(0, -1)}`;
-        const nestedPkPrefix = `DIR#${prefix}`;
-        return this.#db
-            .query<SnapshotRow, [string, string]>(
-                `SELECT pk, sk, content_hash, updated_at, ttl, source_updated_at FROM memory_vectors
-                 WHERE pk = ?1 OR substr(pk, 1, length(?2)) = ?2
-                 ORDER BY rowid`
-            )
-            .all(directoryPk, nestedPkPrefix)
-            .map(row => ({
-                pk:              row.pk,
-                sk:              row.sk,
-                contentHash:     row.content_hash,
-                updatedAt:       row.updated_at,
-                ttl:             row.ttl,
-                sourceUpdatedAt: row.source_updated_at,
-            }));
-    }
-
     /** Keyset-paged snapshots; rowid remains the cursor even when earlier rows disappear. */
     listRowSnapshotsAfter(rowid: number, limit: number): (VectorRowSnapshot & { rowid: number })[] {
         this.#assertOpen();

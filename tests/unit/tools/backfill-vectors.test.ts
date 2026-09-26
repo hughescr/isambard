@@ -136,7 +136,7 @@ describe('vector backfill options', () => {
         expect(runtime.write.mock.calls[0]?.[0]).toContain(`default: ${expectedPath}`);
         expect(runtime.write.mock.calls[0]?.[0]).toContain('Usage: bun tools/backfill-vectors.ts [options]');
         expect(runtime.write.mock.calls[0]?.[0]).toContain('Without --layer, walks identity, state, events and users');
-        expect(runtime.write.mock.calls[0]?.[0]).toContain('Run once with --force --layer users after deploying #58');
+        expect(runtime.write.mock.calls[0]?.[0]).toContain('Use --force to re-embed rows that already exist');
         expect(runtime.openStorage).not.toHaveBeenCalled();
     });
 
@@ -603,7 +603,8 @@ describe('vector backfill TTL (#129)', () => {
         }
 
         function storedTtl(index: VectorIndex, item: ReturnType<typeof makeItem>): number | null | undefined {
-            return index.listRowsByPathPrefix('/identity/').find(row => row.sk === MemoryToolKeyGenerator.createKeys(item.path).SK)?.ttl;
+            const keys = MemoryToolKeyGenerator.createKeys(item.path);
+            return index.listRowSnapshotsAfter(0, 1000).find(row => row.pk === keys.PK && row.sk === keys.SK)?.ttl;
         }
 
         test('an expired item stamps its TTL onto a migrated NULL-TTL row, so the local prune removes it', async () => {
@@ -623,7 +624,7 @@ describe('vector backfill TTL (#129)', () => {
         test('an expired item never creates a row', async () => {
             const index = openIndex();
             await processPage([ttlItem(0, NOW_S - 5)], DEFAULT_OPTIONS, index, embedder(), sha256Hex, clock);
-            expect(index.listRowsByPathPrefix('/identity/')).toEqual([]);
+            expect(index.listRowSnapshotsAfter(0, 1000)).toEqual([]);
         });
 
         test('a stale page never rolls back a TTL a newer live write stored (unchanged content)', async () => {
@@ -670,7 +671,7 @@ describe('vector backfill TTL (#129)', () => {
             const stats = await processPage([item], DEFAULT_OPTIONS, index, embedder(), sha256Hex, clock);
 
             expect(stats).toEqual({ scanned: 1, skipped: 0, indexed: 0, errors: 0, ttlUpdated: 0, expired: 0, superseded: 1 });
-            expect(index.listRowsByPathPrefix('/identity/')).toEqual([]);
+            expect(index.listRowSnapshotsAfter(0, 1000)).toEqual([]);
         });
 
         test('a page read at a version after the delete it raced can legitimately recreate the row (#134)', async () => {
@@ -682,7 +683,7 @@ describe('vector backfill TTL (#129)', () => {
             const stats = await processPage([item], DEFAULT_OPTIONS, index, embedder(), sha256Hex, clock);
 
             expect(stats).toEqual({ scanned: 1, skipped: 0, indexed: 1, errors: 0, ttlUpdated: 0, expired: 0, superseded: 0 });
-            expect(index.listRowsByPathPrefix('/identity/')).toHaveLength(1);
+            expect(index.listRowSnapshotsAfter(0, 1000)).toHaveLength(1);
         });
     });
 

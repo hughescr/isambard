@@ -1025,39 +1025,6 @@ describe('VectorIndex TTL and prune (#129)', () => {
             expect(rowCounts()).toEqual({ meta: 1, vec: 1 });
         });
     });
-
-    describe('listRowsByPathPrefix', () => {
-        it('returns directory children and nested rows with their generation, in rowid order, excluding siblings', () => {
-            index.upsert(entry('direct', NOW_S + 1, { pk: 'DIR#/events/activity', updatedAt: 11, sourceUpdatedAt: 21 }));
-            index.upsert(entry('nested', null, { pk: 'DIR#/events/activity/chat/deep', updatedAt: 12 }));
-            index.upsert(entry('sibling', null, { pk: 'DIR#/events/activityx' }));
-            index.upsert(entry('sibling-nested', null, { pk: 'DIR#/events/activityx/chat' }));
-            index.upsert(entry('other', null, { pk: 'DIR#/events/other' }));
-            index.upsert(entry('parent', null, { pk: 'DIR#/events' }));
-            expect(index.listRowsByPathPrefix('/events/activity/')).toEqual([
-                { pk: 'DIR#/events/activity', sk: 'FILE#direct', contentHash: 'hash-direct', updatedAt: 11, ttl: NOW_S + 1, sourceUpdatedAt: 21 },
-                { pk: 'DIR#/events/activity/chat/deep', sk: 'FILE#nested', contentHash: 'hash-nested', updatedAt: 12, ttl: null, sourceUpdatedAt: null },
-            ]);
-        });
-
-        it('treats _ and % literally, unlike LIKE', () => {
-            index.upsert(entry('match', null, { pk: 'DIR#/events/a_b' }));
-            index.upsert(entry('wildcard-bait', null, { pk: 'DIR#/events/axb' }));
-            index.upsert(entry('percent-bait', null, { pk: 'DIR#/events/a%b' }));
-            expect(index.listRowsByPathPrefix('/events/a_b/').map(row => row.sk)).toEqual(['FILE#match']);
-        });
-
-        it.each(['/', '', 'events/activity/', '/events/activity'])('rejects the prefix %p', (prefix) => {
-            expect(() => index.listRowsByPathPrefix(prefix)).toThrow(
-                new VectorIndexError(`Path prefix must start and end with '/' and not be the root; got '${prefix}'`)
-            );
-        });
-
-        it('throws VectorIndexClosedError once closed', () => {
-            index.close();
-            expect(() => index.listRowsByPathPrefix('/events/activity/')).toThrow(VectorIndexClosedError);
-        });
-    });
 });
 
 // ── #129: two connections on one file (WAL + busy_timeout + IMMEDIATE writes) ─────────────
@@ -1106,7 +1073,7 @@ describe('VectorIndex with a second connection on the same file (#129)', () => {
         first.close();
         const second = await VectorIndex.open(tmpPath);
         try {
-            expect(second.listRowsByPathPrefix('/events/activity/')).toEqual([
+            expect(second.listRowSnapshotsAfter(0, 10).map(({ rowid: _rowid, ...rest }) => rest)).toEqual([
                 { pk: 'DIR#/events/activity/chat', sk: 'FILE#old', contentHash: 'h', updatedAt: 1, ttl: null, sourceUpdatedAt: null },
             ]);
             second.setTtls([{ pk: 'DIR#/events/activity/chat', sk: 'FILE#old', ttl: createEpochSeconds(NOW_S), sourceUpdatedAt: 7 }]);
@@ -1116,7 +1083,7 @@ describe('VectorIndex with a second connection on the same file (#129)', () => {
         // A third open of the migrated file changes nothing and keeps the stamped values.
         const third = await VectorIndex.open(tmpPath);
         try {
-            expect(third.listRowsByPathPrefix('/events/activity/')).toEqual([
+            expect(third.listRowSnapshotsAfter(0, 10).map(({ rowid: _rowid, ...rest }) => rest)).toEqual([
                 { pk: 'DIR#/events/activity/chat', sk: 'FILE#old', contentHash: 'h', updatedAt: 1, ttl: NOW_S, sourceUpdatedAt: 7 },
             ]);
         } finally {
@@ -1131,7 +1098,7 @@ describe('VectorIndex with a second connection on the same file (#129)', () => {
             vi.upsert(entry('refreshed', NOW_S - 10));
             other.run('UPDATE memory_vectors SET ttl = ? WHERE sk = ?', [NOW_S + 1000, 'FILE#refreshed']);
             expect(vi.pruneExpired()).toBe(0);
-            expect(vi.listRowsByPathPrefix('/events/activity/').map(row => row.ttl)).toEqual([NOW_S + 1000]);
+            expect(vi.listRowSnapshotsAfter(0, 10).map(row => row.ttl)).toEqual([NOW_S + 1000]);
         } finally {
             other.close();
             vi.close();

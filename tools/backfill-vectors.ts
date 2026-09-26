@@ -80,8 +80,9 @@ and the average read rate stays at or below N. A single page can momentarily
 exceed N (up to 4 items' worth, absorbed by DynamoDB burst capacity) and is paid
 back before the next read. The run stops if DynamoDB omits ConsumedCapacity.
 GSI1 is provisioned at 2 RCU, so keep the rate at or below 2.
-Run once with --force --layer users after deploying #58 so /users vectors written
-before it (labelled 'unknown') are rewritten as 'users'.
+Use --force to re-embed rows that already exist (for example after an embedding
+change), overwriting their stored content hash and vector even when the source
+content is unchanged.
 
 TTL (#129): every row written carries the item's DynamoDB TTL. An unchanged item
 is not re-embedded, but its TTL is stamped onto the existing row (one batched
