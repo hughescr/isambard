@@ -10,7 +10,6 @@ import {
     emailConfigSchema,
     perchConfigSchema,
     quotaConfigSchema,
-    reconciliationConfigSchema,
     sessionConfigSchema
 } from '@/config/schemas';
 
@@ -69,11 +68,5 @@ describe('configuration schema boundaries', () => {
             wrapUpLeadMinutes:     5,
             interruptGraceMinutes: 2,
         });
-    });
-
-    test('a partially specified reconciliation backoff fills each omitted field', () => {
-        expect(reconciliationConfigSchema.parse({ backoff: {} }).backoff).toEqual({ baseDelayMs: 100, maxAttempts: 3 });
-        expect(reconciliationConfigSchema.parse({ backoff: { baseDelayMs: 7 } }).backoff).toEqual({ baseDelayMs: 7, maxAttempts: 3 });
-        expect(reconciliationConfigSchema.parse({ backoff: { maxAttempts: 7 } }).backoff).toEqual({ baseDelayMs: 100, maxAttempts: 7 });
     });
 });

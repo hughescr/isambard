@@ -1,8 +1,7 @@
 /**
- * Read-capacity pacing shared by the operator tool that reads DynamoDB while Izzy is live
- * (tools/backfill-vectors.ts) and by the memory-tool tag index
- * reconciler (src/storage/memory-tool/reconciliation/reconciler.ts), which paces its own reads
- * the same way but stays within `src` and must not import from `tools/`.
+ * Read-capacity pacing shared by operator tools that read DynamoDB while Izzy is live
+ * (tools/backfill-vectors.ts and tools/repair-tag-index.ts). It stays in `src` so tools
+ * and storage clients can reuse the same pacing primitives.
  *
  * Each request asks DynamoDB for its ConsumedCapacity; before the next request the caller pauses
  * (consumed RCU / rate) seconds less the time already spent, so the average read rate stays at or
@@ -47,7 +46,7 @@ export async function paceAfterRead(
 
 /**
  * RCU debt carried across reads of one DynamoDB resource (a table or index) for the life of a
- * caller-chosen scope, such as one reconciliation run. Unlike {@link paceAfterRead}, which paces a
+ * caller-chosen scope, such as one repair run. Unlike {@link paceAfterRead}, which paces a
  * single request against its own start time, a pacer's debt persists across separate calls -- so
  * pacing holds across pages, partitions and phases, not just within one pagination loop.
  */
@@ -65,8 +64,7 @@ export function createRcuPacer(): RcuPacer {
  * Sleeps for `ms`, rejecting early with an `AbortError` DOMException if `signal` fires during the
  * wait (an already-aborted `signal` rejects immediately without scheduling a timer). `ms <= 0`
  * resolves immediately without checking `signal` -- callers that must not proceed past an abort
- * during a zero-length wait check `signal.aborted` themselves before their next step, the same
- * convention the reconciler's own loops use around its equivalent `delay` helper.
+ * during a zero-length wait check `signal.aborted` themselves before their next step.
  */
 export async function sleepRespectingSignal(ms: number, signal?: AbortSignal): Promise<void> {
     if(ms <= 0) {

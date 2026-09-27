@@ -70,7 +70,7 @@ export function buildClientConfig() {
         maxAttempts:    3, // Retry configuration for production
         requestHandler: new NodeHttpHandler({
             connectionTimeout:     5000,   // 5s to establish connection
-            requestTimeout:        30_000, // 30s for full response (reconciliation scans + throttled batch writes can approach 15s)
+            requestTimeout:        30_000, // 30s for full response (throttled batch writes may approach 15s)
             throwOnRequestTimeout: true,   // throw TimeoutError instead of emitting a warning
         }),
     };

@@ -1,6 +1,4 @@
 export {
-    reconciliationConfigSchema,
-    contactReconciliationConfigSchema,
     guildIdSchema,
     PresenceConfigSchema,
     inboxConfigSchema,
@@ -16,8 +14,6 @@ export {
     type PresenceConfig,
     type InboxConfig,
     type TaskBoardConfig,
-    type ReconciliationConfig,
-    type ContactReconciliationConfig,
     type VectorIndexConfig,
     type SessionConfig,
     type Config,

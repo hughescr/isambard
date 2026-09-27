@@ -159,12 +159,11 @@ describe('recordMemoryAccess operation labels, under a configured DynamoDB timeo
         ddb.reset();
         jest.useFakeTimers();
         jest.setSystemTime(0);
-        // The 6th constructor argument threads a timeout through to DynamoTableAccess, the same
+        // The 5th constructor argument threads a timeout through to DynamoTableAccess, the same
         // way every other repository is exercised in tests/unit/storage/repositories/base.test.ts.
         timeoutBackend = new MemoryToolBackend(
             ddb as unknown as DynamoDBDocumentClient,
             'TestTable',
-            undefined,
             undefined,
             undefined,
             5000

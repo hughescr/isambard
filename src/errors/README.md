@@ -361,7 +361,7 @@ try {
 }
 ```
 
-**Examples:** `buildEmailInboxSection`, `buildBskyDMSection` in `context-builder.ts`, tag reconciliation phases.
+**Examples:** `buildEmailInboxSection` and `buildBskyDMSection` in `context-builder.ts`.
 
 ### Pattern 3: Return Structured MCP Error
 

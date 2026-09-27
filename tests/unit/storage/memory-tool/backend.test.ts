@@ -11,7 +11,7 @@ import {
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../setup';
 import { ItemNotFoundError, ValidationError } from '@/errors/storage';
-import { MemoryToolBackend, reconciliationAccess } from '@/storage/memory-tool/backend';
+import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryToolItem, MemoryPath, ContentType, LayerName as _LayerName } from '@/storage/memory-tool/types';
 import { createEpochSeconds } from '@/storage/repositories/types';
 
@@ -967,17 +967,6 @@ describe('MemoryToolBackend', () => {
         });
     });
 
-    describe('reconciliation internal binding', () => {
-        test('provides exactly the tag-index operations needed for reconciliation', () => {
-            const tagIndexBackend = backend[reconciliationAccess]().tagIndex;
-
-            expect(tagIndexBackend).toBeDefined();
-            expect(tagIndexBackend).toBeInstanceOf(Object);
-            // Should have the expected methods from MemoryToolBackendTagIndex
-            expect(typeof tagIndexBackend.createTagIndexItems).toBe('function');
-        });
-    });
-
     describe('indexer integration', () => {
         let enqueueMock: ReturnType<typeof mock>;
 
@@ -1172,14 +1161,13 @@ describe('MemoryToolBackend', () => {
                         ddbMock as unknown as DynamoDBDocumentClient,
                         'TestTable',
                         { enqueue: enqueueMock as (job: unknown) => void },
-                        undefined,
                         onIdentityWrite
                     );
                     await backendWithIndexer.update('/identity/foo' as MemoryPath, { ttl: createEpochSeconds(1_900_000_000) });
                     expect(enqueueMock.mock.calls).toEqual([[ttlJob('old content', 1_900_000_000)]]);
                     expect(onIdentityWrite).not.toHaveBeenCalled();
-                    // Only the core read: no tag comparison read for a TTL-only change
-                    expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+                    // The index pre-read and core update read both occur for a TTL-only change.
+                    expect(ddbMock.commandCalls(GetCommand)).toHaveLength(2);
                 });
 
                 test('a metadata-only update enqueues nothing', async () => {
@@ -1197,7 +1185,6 @@ describe('MemoryToolBackend', () => {
                         ddbMock as unknown as DynamoDBDocumentClient,
                         'TestTable',
                         { enqueue: enqueueMock as (job: unknown) => void },
-                        undefined,
                         onIdentityWrite
                     );
                     await backendWithIndexer.update('/identity/foo' as MemoryPath, { content: 'new content' });
@@ -1270,7 +1257,6 @@ describe('MemoryToolBackend', () => {
             return new MemoryToolBackend(
                 ddbMock as unknown as DynamoDBDocumentClient,
                 'TestTable',
-                undefined,
                 undefined,
                 onIdentityWriteMock as () => void
             );

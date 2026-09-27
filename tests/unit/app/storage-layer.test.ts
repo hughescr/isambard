@@ -5,20 +5,16 @@
 // real per-call overhead (~0.6-3ms even for an already-cached module) which compounds
 // toward the 60ms CI timeout cap on slow runners (see tests/unit/index.test.ts for the
 // precedent fix).
-import { describe, test, expect, beforeEach, afterEach, spyOn, mock, jest } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn, mock } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { mockLogger } from '../../setup';
 import * as staticAgentSessionModule from '@/agent';
 import * as staticStorageLayerModule from '@/app/storage-layer';
-import type { DynamoDBConfig, ReconciliationConfig, ContactReconciliationConfig } from '@/config/schemas';
+import type { DynamoDBConfig } from '@/config/schemas';
 import type { EmbedderLike } from '@/storage';
 import * as staticStorageClientModule from '@/storage/client';
-import type { ContactReconciliationScheduler } from '@/storage/contacts/reconciliation/scheduler';
-import * as staticContactReconciliationModule from '@/storage/contacts/reconciliation/scheduler';
 import * as staticMemoryToolModule from '@/storage/memory-tool';
-import * as staticReconciliationModule from '@/storage/memory-tool/reconciliation';
-import type { TagIndexReconciliationScheduler } from '@/storage/memory-tool/reconciliation/scheduler';
 import * as staticVecStoreModule from '@/storage/memory-vec-store';
 import type { OperationalStateBackend } from '@/storage/operational-state';
 import * as staticOperationalStateModule from '@/storage/operational-state';
@@ -31,17 +27,6 @@ describe('createStorageLayer', () => {
     const mockDynamoDBConfig: DynamoDBConfig = {
         tableName: 'TestTable',
     };
-    const mockReconciliationConfig: ReconciliationConfig = {
-        enabled:          true,
-        intervalMs:       24 * 60 * 60 * 1000, // 24 hours
-        operationDelayMs: 1000,
-        scanPageSize:     25,
-        backoff:          {
-            baseDelayMs: 100,
-            maxAttempts: 3,
-        },
-    };
-
     beforeEach(() => {
         spies = [];
         mockLogger.warn.mockClear();
@@ -79,17 +64,6 @@ describe('createStorageLayer', () => {
         const MemoryToolBackendSpy = spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend);
         spies.push(MemoryToolBackendSpy);
 
-        // Mock reconciliation scheduler
-        const mockTagIndexReconciliationScheduler = {
-            start:       mock(() => {}),
-            stop:        mock(() => {}),
-            getState:    mock(() => ({ isRunning: false })),
-            triggerNow:  mock(async () => undefined),
-            notifyDrift: mock(() => {}),
-        };
-        const createMemoryTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue(mockTagIndexReconciliationScheduler);
-        spies.push(createMemoryTagIndexReconciliationSchedulerSpy);
-
         // Mock task persistence components
         const mockSessionResumeBackend = {};
         // @ts-expect-error - Mocking constructor
@@ -104,13 +78,12 @@ describe('createStorageLayer', () => {
 
         // Import and call createStorageLayer
         const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
+        const result = await createStorageLayer(mockDynamoDBConfig);
 
         // Verify all required fields are present
         expect(result).toHaveProperty('holder');
         expect(result).toHaveProperty('tableName');
         expect(result).toHaveProperty('memoryBackend');
-        expect(result).toHaveProperty('tagIndexReconciliationScheduler');
         expect(result).toHaveProperty('sessionJournalBackend');
         expect(result).toHaveProperty('createJournal');
         expect(result).toHaveProperty('createResumeStore');
@@ -121,12 +94,10 @@ describe('createStorageLayer', () => {
         expect(result.holder.getDocClient()).toBe(mockDocClient);
         expect(result.tableName).toBe('TestTable');
         expect(result.memoryBackend).toBeDefined();
-        expect(result.tagIndexReconciliationScheduler).toBeDefined();
         expect(result.sessionJournalBackend).toBe(mockSessionJournalBackend);
         expect(typeof result.createJournal).toBe('function');
         expect(typeof result.createResumeStore).toBe('function');
         expect(mockLogger.info).toHaveBeenCalledWith('Memory system initialized with DynamoDB: TestTable');
-        expect(mockLogger.info).toHaveBeenCalledWith('Tag index reconciliation scheduler configured');
     });
 
     describe('P8: sessionJournalBackend, createJournal, createResumeStore', () => {
@@ -263,116 +234,12 @@ describe('createStorageLayer', () => {
 
         // Verify MemoryToolBackend constructor was called with the holder (not raw docClient)
         // The holder wraps the docClient created by createDynamoDBClient
-        // Third arg (indexer) is undefined when no vectorIndexConfig provided
-        // Fourth arg is the drift callback closure (always provided)
-        // Fifth arg (onIdentityWrite) is undefined when not supplied to createStorageLayer
         expect(MemoryToolBackendSpy).toHaveBeenCalledWith(
             expect.any(Object),
             'TestTable',
             undefined,
-            expect.any(Function),
             undefined
         );
-    });
-
-    test('should create reconciliation scheduler when config.enabled is true', async () => {
-        // Mock all dependencies
-        const mockDocClient = {} as unknown as DynamoDBDocumentClient;
-        spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as unknown as DynamoDBClient,
-            docClient: mockDocClient,
-            tableName: 'TestTable',
-        }));
-
-        const mockMemoryBackend = {
-            get: mock(async () => undefined),
-        };
-        // @ts-expect-error - Mocking constructor
-        spies.push(spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => mockMemoryBackend));
-
-        const createMemoryTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
-        spies.push(
-            createMemoryTagIndexReconciliationSchedulerSpy,
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
-        );
-
-        // Import and call createStorageLayer with reconciliation enabled
-        const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
-
-        // Verify reconciliation scheduler was created
-        expect(createMemoryTagIndexReconciliationSchedulerSpy).toHaveBeenCalled();
-        expect(result.tagIndexReconciliationScheduler).toBeDefined();
-        expect(createMemoryTagIndexReconciliationSchedulerSpy).toHaveBeenCalledWith(
-            mockMemoryBackend,
-            mockReconciliationConfig,
-            { docClient: result.holder, tableName: 'TestTable' }
-        );
-    });
-
-    test('should NOT create reconciliation scheduler when config is undefined', async () => {
-        // Mock all dependencies
-        spies.push(
-            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-                client:    {} as unknown as DynamoDBClient,
-                docClient: {} as unknown as DynamoDBDocumentClient,
-                tableName: 'TestTable',
-            }),
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                get: mock(async () => undefined),
-            }))
-        );
-
-        const createMemoryTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
-        spies.push(
-            createMemoryTagIndexReconciliationSchedulerSpy,
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
-        );
-
-        // Import and call createStorageLayer without reconciliation config
-        const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig);
-
-        // Verify reconciliation scheduler was NOT created
-        expect(createMemoryTagIndexReconciliationSchedulerSpy).not.toHaveBeenCalled();
-        expect(result.tagIndexReconciliationScheduler).toBeUndefined();
-    });
-
-    test('should NOT create reconciliation scheduler when config.enabled is false', async () => {
-        // Mock all dependencies
-        spies.push(
-            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-                client:    {} as unknown as DynamoDBClient,
-                docClient: {} as unknown as DynamoDBDocumentClient,
-                tableName: 'TestTable',
-            }),
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                get: mock(async () => undefined),
-            }))
-        );
-
-        const createMemoryTagIndexReconciliationSchedulerSpy = spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue({} as unknown as TagIndexReconciliationScheduler);
-        spies.push(
-            createMemoryTagIndexReconciliationSchedulerSpy,
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
-        );
-
-        // Import and call createStorageLayer with reconciliation disabled
-        const { createStorageLayer } = staticStorageLayerModule;
-        const configWithDisabledReconciliation: ReconciliationConfig = {
-            ...mockReconciliationConfig,
-            enabled: false,
-        };
-        const result = await createStorageLayer(mockDynamoDBConfig, configWithDisabledReconciliation);
-
-        // Verify reconciliation scheduler was NOT created
-        expect(createMemoryTagIndexReconciliationSchedulerSpy).not.toHaveBeenCalled();
-        expect(result.tagIndexReconciliationScheduler).toBeUndefined();
     });
 
     test('should throw when createDynamoDBClient throws', async () => {
@@ -422,7 +289,7 @@ describe('createStorageLayer', () => {
         );
         const embedder = { encode: mock(async () => ({ data: new Uint8Array(128) })), close: mock(async () => {}) };
 
-        await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+        await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, {
             enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
         }, embedder)).rejects.toBe(openError);
         expect(destroy).toHaveBeenCalledTimes(1);
@@ -465,40 +332,12 @@ describe('createStorageLayer', () => {
             spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => { throw constructionError; })
         );
 
-        await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+        await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, {
             enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
         }, embedder, undefined, onIndexerEmbedderCloseAttempt)).rejects.toBe(constructionError);
         expect(cleanupOrder).toEqual(['prune', 'transfer', 'embedder', 'vector', 'holder']);
         expect(embedder.close).toHaveBeenCalledTimes(1);
         expect(onIndexerEmbedderCloseAttempt).toHaveBeenCalledTimes(1);
-    });
-
-    test('stops both schedulers before releasing the client when a later backend fails', async () => {
-        const failure = new Error('task session backend failed');
-        const released: string[] = [];
-        const scheduler = { start: mock(() => {}), stop:  mock(() => {
-            released.push('reconciliation');
-        }), notifyDrift: mock(() => {}) };
-        const contactScheduler = { start: mock(() => {}), stop:  mock(() => {
-            released.push('contact');
-        }) };
-        spies.push(
-            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-                client:    { destroy: mock(() => { released.push('holder'); }) } as unknown as DynamoDBClient,
-                docClient: {} as unknown as DynamoDBDocumentClient,
-                tableName: 'TestTable',
-            }),
-            // @ts-expect-error -- mocking constructor
-            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({})),
-            spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue(scheduler as unknown as TagIndexReconciliationScheduler),
-            spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockReturnValue(contactScheduler as unknown as ContactReconciliationScheduler),
-            // @ts-expect-error -- deliberate constructor failure
-            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => { throw failure; })
-        );
-        await expect(staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig, {
-            enabled: true, intervalMs: 60_000, operationDelayMs: 0, scanPageSize: 25, strayLookupAgeThresholdMs: 300_000,
-        })).rejects.toBe(failure);
-        expect(released).toEqual(['contact', 'reconciliation', 'holder']);
     });
 
     test('should NOT create vector index or asyncIndexer when vectorIndexConfig is undefined', async () => {
@@ -543,7 +382,7 @@ describe('createStorageLayer', () => {
         );
 
         const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+        const result = await createStorageLayer(mockDynamoDBConfig, {
             enabled:    false,
             dbPath:     'memory-vec.sqlite',
             modelSlug:  '0.6b',
@@ -573,7 +412,7 @@ describe('createStorageLayer', () => {
         );
 
         const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+        const result = await createStorageLayer(mockDynamoDBConfig, {
             enabled:    true,
             dbPath:     'memory-vec.sqlite',
             modelSlug:  '0.6b',
@@ -621,7 +460,7 @@ describe('createStorageLayer', () => {
         };
 
         const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+        const result = await createStorageLayer(mockDynamoDBConfig, {
             enabled:    true,
             dbPath:     'memory-vec.sqlite',
             modelSlug:  '0.6b',
@@ -642,288 +481,6 @@ describe('createStorageLayer', () => {
         await result.asyncIndexer?.close();
         await result.asyncIndexer?.close();
         expect(mockEmbedder.close).toHaveBeenCalledTimes(1);
-    });
-
-    test('drift callback calls notifyDrift on the reconciliation scheduler when set', async () => {
-        spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as unknown as DynamoDBClient,
-            docClient: {} as unknown as DynamoDBDocumentClient,
-            tableName: 'TestTable',
-        }));
-
-        // Capture the drift callback passed to MemoryToolBackend
-        let capturedDriftCallback: (() => void) | undefined;
-        type MemoryToolConstructorArgs = ConstructorParameters<typeof staticMemoryToolModule.MemoryToolBackend>;
-        // @ts-expect-error -- Bun types constructor-only spy implementations as never
-        spies.push(spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation((
-            _holder: MemoryToolConstructorArgs[0],
-            _tableName: MemoryToolConstructorArgs[1],
-            _indexer: MemoryToolConstructorArgs[2],
-            driftCallback: MemoryToolConstructorArgs[3]
-        ) => {
-            capturedDriftCallback = driftCallback;
-            return {
-                get: mock(async () => undefined),
-            };
-        }));
-
-        // Create a mock reconciliation scheduler with a notifyDrift spy
-        const mockNotifyDrift = mock(() => {});
-        const mockTagIndexReconciliationScheduler: TagIndexReconciliationScheduler = {
-            start:       mock(() => {}),
-            stop:        mock(() => {}),
-            getState:    mock(() => ({ isRunning: false as const, lastCompletedAt: undefined })),
-            triggerNow:  mock(async () => undefined),
-            notifyDrift: mockNotifyDrift,
-        };
-        spies.push(
-            spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue(mockTagIndexReconciliationScheduler),
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
-        );
-
-        const { createStorageLayer } = staticStorageLayerModule;
-        await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
-
-        // The drift callback should have been captured and, when invoked, delegates to notifyDrift
-        expect(capturedDriftCallback).toBeDefined();
-        expect(mockNotifyDrift).not.toHaveBeenCalled();
-
-        // Invoke the drift callback — should call reconciliationScheduler.notifyDrift()
-        capturedDriftCallback!();
-        expect(mockNotifyDrift).toHaveBeenCalledTimes(1);
-    });
-
-    test('should create contactReconciliationScheduler when contactReconciliationConfig.enabled is true', async () => {
-        spies.push(
-            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-                client:    {} as unknown as DynamoDBClient,
-                docClient: {} as unknown as DynamoDBDocumentClient,
-                tableName: 'TestTable',
-            }),
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                get: mock(async () => undefined),
-            })),
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
-        );
-
-        // Spy on createContactReconciliationScheduler
-        const mockContactScheduler: ContactReconciliationScheduler = {
-            start:      mock(() => {}),
-            stop:       mock(() => {}),
-            getState:   mock(() => ({ isRunning: false })),
-            triggerNow: mock(async () => undefined),
-        };
-        const createContactSchedulerSpy = spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockReturnValue(mockContactScheduler);
-        spies.push(createContactSchedulerSpy);
-
-        const mockContactConfig: ContactReconciliationConfig = {
-            enabled:                   true,
-            intervalMs:                60_000,
-            operationDelayMs:          0,
-            scanPageSize:              25,
-            strayLookupAgeThresholdMs: 300_000,
-        };
-
-        const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig, undefined, mockContactConfig);
-
-        expect(createContactSchedulerSpy).toHaveBeenCalledTimes(1);
-        expect(result.contactReconciliationScheduler).toBeDefined();
-        expect(mockLogger.info).toHaveBeenCalledWith('Contact reconciliation scheduler configured');
-    });
-
-    // ======================================================================
-    // Fix 3: sleep rejects with proper DOMException(AbortError)
-    // Fix 5: sleep abort listener is removed on normal completion (bounded listener count)
-    // ======================================================================
-    describe('contact reconciler sleep function (Fix 3 + Fix 5)', () => {
-        afterEach(() => {
-            jest.useRealTimers();
-        });
-
-        /** Helper: capture the sleep function injected into createContactReconciliationScheduler. */
-        async function captureSleep(): Promise<(ms: number, signal?: AbortSignal) => Promise<void>> {
-            spies.push(
-                spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-                    client:    {} as unknown as DynamoDBClient,
-                    docClient: {} as unknown as DynamoDBDocumentClient,
-                    tableName: 'TestTable',
-                }),
-                // @ts-expect-error -- mocking constructor
-                spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                    get: mock(async () => undefined),
-                })),
-                // @ts-expect-error -- mocking constructor
-                spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
-            );
-
-            let capturedSleep: ((ms: number, signal?: AbortSignal) => Promise<void>) | undefined;
-            const mockContactScheduler: ContactReconciliationScheduler = {
-                start:      mock(() => {}),
-                stop:       mock(() => {}),
-                getState:   mock(() => ({ isRunning: false })),
-                triggerNow: mock(async () => undefined),
-            };
-            spies.push(spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockImplementation((opts) => {
-                capturedSleep = opts.reconcilerDeps.sleep;
-                return mockContactScheduler;
-            }));
-
-            const { createStorageLayer } = staticStorageLayerModule;
-            await createStorageLayer(mockDynamoDBConfig, undefined, {
-                enabled:                   true,
-                intervalMs:                60_000,
-                operationDelayMs:          0,
-                scanPageSize:              25,
-                strayLookupAgeThresholdMs: 300_000,
-            });
-
-            if(!capturedSleep) {
-                throw new Error('sleep not captured — createContactReconciliationScheduler spy did not fire');
-            }
-            return capturedSleep;
-        }
-
-        test('Fix 3: abort() with no reason → rejection has name="AbortError"', async () => {
-            const sleep = await captureSleep();
-            const controller = new AbortController();
-
-            // Pre-abort before calling sleep — sleep checks signal.aborted immediately
-            controller.abort();
-
-            let rejected: unknown;
-            await sleep(10_000, controller.signal).catch((err) => {
-                rejected = err;
-            });
-
-            expect(rejected).toBeInstanceOf(Error);
-            expect((rejected as Error).name).toBe('AbortError');
-        });
-
-        test('Fix 3: abort("stop reason") → rejection has name="AbortError", message="stop reason"', async () => {
-            const sleep = await captureSleep();
-            const controller = new AbortController();
-
-            controller.abort('stop reason');
-
-            let rejected: unknown;
-            await sleep(10_000, controller.signal).catch((err) => {
-                rejected = err;
-            });
-
-            expect((rejected as Error).name).toBe('AbortError');
-            expect((rejected as DOMException).message).toBe('stop reason');
-        });
-
-        test('Fix 3: abort(new Error("something")) → rejection has name="AbortError" and message="something"', async () => {
-            const sleep = await captureSleep();
-            const controller = new AbortController();
-
-            controller.abort(new Error('something'));
-
-            let rejected: unknown;
-            await sleep(10_000, controller.signal).catch((err) => {
-                rejected = err;
-            });
-
-            expect((rejected as Error).name).toBe('AbortError');
-            expect((rejected as DOMException).message).toBe('something');
-        });
-
-        test('preserves an existing AbortError reason and wraps a different DOMException', async () => {
-            const sleep = await captureSleep();
-            const existing = new DOMException('already cancelled', 'AbortError');
-            const first = new AbortController();
-            first.abort(existing);
-            await expect(sleep(10, first.signal)).rejects.toBe(existing);
-
-            const second = new AbortController();
-            second.abort(new DOMException('connection lost', 'NetworkError'));
-            await expect(sleep(10, second.signal)).rejects.toMatchObject({ name: 'AbortError', message: 'connection lost' });
-        });
-
-        test('uses the default abort message when a signal has no reason', async () => {
-            const sleep = await captureSleep();
-            const signal = { aborted: true, reason: undefined } as AbortSignal;
-            await expect(sleep(10, signal)).rejects.toMatchObject({ name: 'AbortError', message: 'Aborted' });
-        });
-
-        test('an in-flight abort cancels the timer and rejects with the caller reason', async () => {
-            jest.useFakeTimers();
-            const sleep = await captureSleep();
-            const controller = new AbortController();
-            const addListener = spyOn(controller.signal, 'addEventListener');
-            const clearTimer = spyOn(globalThis, 'clearTimeout');
-            try {
-                const pending = sleep(10_000, controller.signal);
-                let settled = 'pending';
-                void pending.catch(() => {
-                    settled = 'rejected';
-                });
-                expect(addListener).toHaveBeenCalledWith('abort', expect.any(Function), { once: true });
-                controller.abort('interrupted');
-                jest.advanceTimersByTime(10_000);
-                await Promise.resolve();
-                expect(settled).toBe('rejected');
-                await expect(pending).rejects.toMatchObject({ name: 'AbortError', message: 'interrupted' });
-                expect(clearTimer).toHaveBeenCalledTimes(1);
-            } finally {
-                addListener.mockRestore();
-                clearTimer.mockRestore();
-            }
-        });
-
-        test('Fix 5+6: sleep completes normally (no abort) — once:true listener auto-removes; no double-cleanup error', async () => {
-            jest.useFakeTimers();
-            const sleep = await captureSleep();
-
-            const controller = new AbortController();
-            const removeListener = spyOn(controller.signal, 'removeEventListener');
-
-            // Call sleep 100 times with the same signal and advance the timer each time
-            const sleepPromises: Promise<void>[] = [];
-            for(let i = 0; i < 100; i++) {
-                sleepPromises.push(sleep(1, controller.signal));
-            }
-            // Advance time past all sleeps — all timers fire, all abort listeners are removed
-            jest.advanceTimersByTime(100);
-            await Promise.all(sleepPromises);
-            expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
-            removeListener.mockRestore();
-
-            // If Fix 5 is correct, the signal should have no accumulated listeners.
-            // We can't directly query listener count, but aborting after all sleeps complete
-            // should not call any stale handlers — no throw, no unexpected side effects.
-            expect(() => controller.abort()).not.toThrow();
-        });
-    });
-
-    test('should NOT create contactReconciliationScheduler when contactReconciliationConfig is undefined', async () => {
-        spies.push(
-            spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-                client:    {} as unknown as DynamoDBClient,
-                docClient: {} as unknown as DynamoDBDocumentClient,
-                tableName: 'TestTable',
-            }),
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation(() => ({
-                get: mock(async () => undefined),
-            })),
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
-        );
-
-        const createContactSchedulerSpy = spyOn(staticContactReconciliationModule, 'createContactReconciliationScheduler').mockReturnValue({} as unknown as ContactReconciliationScheduler);
-        spies.push(createContactSchedulerSpy);
-
-        const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig, undefined, undefined);
-
-        expect(createContactSchedulerSpy).not.toHaveBeenCalled();
-        expect(result.contactReconciliationScheduler).toBeUndefined();
     });
 
     test('propagates a missing embedder.close() through the wrapped indexer embedder rather than silently succeeding', async () => {
@@ -953,55 +510,11 @@ describe('createStorageLayer', () => {
         } as unknown as EmbedderLike;
 
         const { createStorageLayer } = staticStorageLayerModule;
-        const result = await createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+        const result = await createStorageLayer(mockDynamoDBConfig, {
             enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
         }, brokenEmbedder, undefined, () => {});
 
         await expect(result.asyncIndexer!.close()).rejects.toThrow();
-    });
-
-    test('propagates a missing notifyDrift() on the reconciliation scheduler rather than silently succeeding', async () => {
-        // TagIndexReconciliationScheduler.notifyDrift is a required method, so a conforming scheduler
-        // always has one. This deliberately-nonconforming double proves the drift callback
-        // really does call `reconciliationScheduler.notifyDrift()` unguarded.
-        spies.push(spyOn(staticStorageClientModule, 'createDynamoDBClient').mockReturnValue({
-            client:    {} as unknown as DynamoDBClient,
-            docClient: {} as unknown as DynamoDBDocumentClient,
-            tableName: 'TestTable',
-        }));
-
-        let capturedDriftCallback: (() => void) | undefined;
-        type MemoryToolConstructorArgs = ConstructorParameters<typeof staticMemoryToolModule.MemoryToolBackend>;
-        // @ts-expect-error -- Bun types constructor-only spy implementations as never
-        spies.push(spyOn(staticMemoryToolModule, 'MemoryToolBackend').mockImplementation((
-            _holder: MemoryToolConstructorArgs[0],
-            _tableName: MemoryToolConstructorArgs[1],
-            _indexer: MemoryToolConstructorArgs[2],
-            driftCallback: MemoryToolConstructorArgs[3]
-        ) => {
-            capturedDriftCallback = driftCallback;
-            return {
-                get: mock(async () => undefined),
-            };
-        }));
-
-        const brokenScheduler = {
-            start:      mock(() => {}),
-            stop:       mock(() => {}),
-            getState:   mock(() => ({ isRunning: false as const, lastCompletedAt: undefined })),
-            triggerNow: mock(async () => undefined),
-        } as unknown as TagIndexReconciliationScheduler;
-        spies.push(
-            spyOn(staticReconciliationModule, 'createMemoryTagIndexReconciliationScheduler').mockReturnValue(brokenScheduler),
-            // @ts-expect-error - Mocking constructor
-            spyOn(staticSessionResumeModule, 'SessionResumeBackend').mockImplementation(() => ({}))
-        );
-
-        const { createStorageLayer } = staticStorageLayerModule;
-        await createStorageLayer(mockDynamoDBConfig, mockReconciliationConfig);
-
-        expect(capturedDriftCallback).toBeDefined();
-        expect(() => capturedDriftCallback!()).toThrow();
     });
 
     test('stops the cross-check scheduler before releasing the index on failed construction', async () => {
@@ -1029,7 +542,7 @@ describe('createStorageLayer', () => {
         );
         const embedder = { encode: mock(async () => ({ data: new Uint8Array(128) })), close: mock(async () => {}) };
         let settled = false;
-        const pending = staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+        const pending = staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, {
             enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
         }, embedder);
         void pending.catch(() => {
@@ -1086,7 +599,7 @@ describe('createStorageLayer', () => {
         );
 
         let settled = false;
-        const promise = staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, undefined, undefined, {
+        const promise = staticStorageLayerModule.createStorageLayer(mockDynamoDBConfig, {
             enabled: true, dbPath: 'test.sqlite', modelSlug: '0.6b', modelQuant: 'Q8_0',
         }, embedder);
         void promise.catch(() => {

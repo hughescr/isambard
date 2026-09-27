@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { epochSecondsSchema } from '../repositories/types';
+import { epochSecondsSchema, type EpochSeconds } from '../repositories/types';
 
 export const CONTENT_PREVIEW_MAX_LENGTH = 100;
 
@@ -46,33 +46,6 @@ export function decodeMemoryAccessStats(metadata: unknown, fallbackLastAccessedA
     return {
         accessCount:    count.success ? count.data : 0,
         lastAccessedAt: timestamp.success ? timestamp.data : fallbackLastAccessedAt,
-    };
-}
-
-/** Decode-only legacy rename tombstone: its original writer has been removed. */
-const stringTagsSchema = z.array(z.string());
-export const pendingRenameIndexCleanupSchema = z.object({
-    oldPath: memoryPathSchema,
-    tags:    z.discriminatedUnion('kind', [
-        z.object({ kind: z.literal('known'), tags: stringTagsSchema }),
-        z.object({ kind: z.literal('legacy-unknown') }),
-    ]),
-});
-export type PendingRenameIndexCleanup = z.infer<typeof pendingRenameIndexCleanupSchema>;
-
-export function decodePendingRenameIndexCleanup(metadata: unknown): PendingRenameIndexCleanup | undefined {
-    if(metadata === null || typeof metadata !== 'object' || Array.isArray(metadata)) {
-        return undefined;
-    }
-    const raw = metadata as Record<string, unknown>;
-    const oldPath = memoryPathSchema.safeParse(raw.previouslyKnownAs);
-    if(!oldPath.success) {
-        return undefined;
-    }
-    const tags = stringTagsSchema.safeParse(raw.previouslyKnownAsTags);
-    return {
-        oldPath: oldPath.data,
-        tags:    tags.success ? { kind: 'known', tags: tags.data } : { kind: 'legacy-unknown' },
     };
 }
 
@@ -166,12 +139,13 @@ export interface TagIndexItem {
     updatedAt:      string       // ISO 8601
     tags:           Set<string>  // Full normalized tags set
     contentPreview: string       // First 100 chars of content
+    TTL?:           EpochSeconds // Copied from memory; absent rows are permanent and counted
 }
 
 /**
  * A tag row as read back from DynamoDB. Legacy rows may predate the content preview field, and
  * `/users/` rows written before #58 carry `layer: 'unknown'`, so a read `layer` is an untrusted
- * string until compared against the classified path (the reconciler rewrites mismatches).
+ * string until compared against the classified path.
  */
 export type TagIndexReadItem = Omit<TagIndexItem, 'contentPreview' | 'layer'> & { contentPreview?: string, layer: string };
 
@@ -234,7 +208,7 @@ export const LAYER_NAMES: readonly LayerName[] = LAYER_NAME_VALUES.map(name => l
 
 export const searchableNamespaceSchema = z.enum(SEARCHABLE_NAMESPACE_VALUES).brand<'PathNamespace'>();
 export type SearchableNamespace = z.infer<typeof searchableNamespaceSchema>;
-/** Every indexed namespace the reconciler and the vector backfill walk: three layers plus `users`. */
+/** Every indexed namespace the vector backfill walks: three layers plus `users`. */
 export const SEARCHABLE_NAMESPACES: readonly SearchableNamespace[] = SEARCHABLE_NAMESPACE_VALUES.map(name => searchableNamespaceSchema.parse(name));
 
 /**

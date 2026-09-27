@@ -309,8 +309,6 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // Create infrastructure layers
     const storage = await createStorageLayer(
         dynamoDBConfig,
-        config.reconciliation,
-        config.contactReconciliation,
         config.vectorIndex,
         embedder,
         onIdentityWrite,
@@ -321,8 +319,6 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     registerCleanup({ name: 'async indexer', run: () => storage.asyncIndexer?.close() });
     registerCleanup({ name: 'vector prune scheduler', run: () => storage.vectorPruneScheduler?.stop() });
     registerCleanup({ name: 'vector cross-check scheduler', run: () => storage.vectorCrossCheckScheduler?.stop() });
-    registerCleanup({ name: 'tag reconciliation scheduler', run: () => storage.tagIndexReconciliationScheduler?.stop() });
-    registerCleanup({ name: 'contact reconciliation scheduler', run: () => storage.contactReconciliationScheduler?.stop() });
 
     const { dynamoDBReconnectionLoop, unsubscribeDynamoDBReconnect, dynamoDBProbeInterval } = await wireDynamoDBHealth(storage, dynamoDBConfig, healthRegistry, registerCleanup);
 
@@ -1366,16 +1362,6 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             }
 
             // These start regardless of Discord availability
-            if(storage.tagIndexReconciliationScheduler) {
-                storage.tagIndexReconciliationScheduler.start();
-                logger.info('Tag index reconciliation scheduler started');
-            }
-
-            if(storage.contactReconciliationScheduler) {
-                storage.contactReconciliationScheduler.start();
-                logger.info('Contact reconciliation scheduler started');
-            }
-
             // #129: prune expired vector-index rows now and hourly (local only, no DynamoDB reads)
             if(storage.vectorPruneScheduler) {
                 storage.vectorPruneScheduler.start();
@@ -1430,18 +1416,6 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 { name: 'Discord reconnect subscription', run: unsubscribeDiscordReconnect, onFailure: 'propagate' },
                 { name: 'email reconnect subscription', run: () => unsubscribeEmailReconnect?.(), onFailure: 'propagate' },
                 { name: 'Bluesky reconnect subscription', run: () => unsubscribeBskyReconnect?.(), onFailure: 'propagate' },
-                { name: 'tag reconciliation scheduler',     run:  () => {
-                    if(storage.tagIndexReconciliationScheduler) {
-                        storage.tagIndexReconciliationScheduler.stop();
-                        logger.info('Tag index reconciliation scheduler stopped');
-                    }
-                }, onFailure: 'propagate' },
-                { name: 'contact reconciliation scheduler', run:  () => {
-                    if(storage.contactReconciliationScheduler) {
-                        storage.contactReconciliationScheduler.stop();
-                        logger.info('Contact reconciliation scheduler stopped');
-                    }
-                }, onFailure: 'propagate' },
                 { name: 'browser adapter', run: () => browserAdapter?.close(), onFailure: 'propagate' },
                 { name: 'email listener', run: () => emailSetup?.listener.stop(), onFailure: 'log-and-continue' },
                 { name: 'WildDuck client', run: shutdownEmailClient, onFailure: 'log-and-continue' },

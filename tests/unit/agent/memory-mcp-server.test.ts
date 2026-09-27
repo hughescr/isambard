@@ -1079,6 +1079,17 @@ describe.concurrent('createMemoryMCPServer', () => {
     });
 
     describe('search tool', () => {
+        test('returns the cursor when a filtered page has no live memories', async () => {
+            mockBackend.searchByTags = mock(async () => ({ items: [], nextCursor: 'after-expired-rows' }));
+            const server = createMemoryMCPServer(mockBackend);
+            const handler = getToolHandler(server, 'search');
+
+            const result = await handler({ tags: ['auto-logged'], limit: 10 });
+
+            expect(textContent(result.content[0])).toBe('No memories found matching tags\n\n---\nMore results available. Use cursor: after-expired-rows');
+            expect(result.isError).toBeUndefined();
+        });
+
         test('should show "No content" when memory item has no contentPreview', async () => {
             const itemWithoutPreview: TagIndexReadItem = {
                 PK:         'TAG#test',

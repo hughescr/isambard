@@ -3,7 +3,7 @@ import { logger } from '@hughescr/logger';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { type DynamoDBClientHolder, resolveDocClientGetter } from '../client-holder';
-import { type RcuPacer, waitForRcuPacer, recordRcuPage, sleepRespectingSignal } from '../utils/rcu-pacing';
+import type { EpochSeconds } from '../repositories/types';
 import type { ListOptions, ListResult } from './backend-query';
 import { normalizeTags } from './key-generator';
 import { type IndexLayer, type TagIndexItem, type TagIndexReadItem, type MemoryPath  } from './types';
@@ -72,16 +72,13 @@ async function retryWithBackoff<T>(
  * Manages the tag index table with fat pointers carrying preview data.
  */
 export class MemoryToolBackendTagIndex {
-    private readonly getDocClient:    () => DynamoDBDocumentClient;
-    private readonly onDriftDetected: (() => void) | undefined;
+    private readonly getDocClient: () => DynamoDBDocumentClient;
 
     constructor(
         docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
-        private readonly tableName: string,
-        onDriftDetected?: () => void
+        private readonly tableName: string
     ) {
         this.getDocClient = resolveDocClientGetter(docClientOrHolder);
-        this.onDriftDetected = onDriftDetected;
     }
 
     /**
@@ -103,7 +100,8 @@ export class MemoryToolBackendTagIndex {
         normalizedRowTags: Set<string>,
         updatedAt: string,
         contentPreview: string,
-        layer: IndexLayer
+        layer: IndexLayer,
+        ttl?: EpochSeconds
     ): BatchWriteRequest[] {
         return [...normalizedTags].map(tag => ({
             PutRequest: {
@@ -115,6 +113,7 @@ export class MemoryToolBackendTagIndex {
                     updatedAt,
                     tags:       normalizedRowTags,
                     contentPreview,
+                    ...(ttl === undefined ? {} : { TTL: ttl }),
                 } satisfies TagIndexItem,
             },
         }));
@@ -179,10 +178,9 @@ export class MemoryToolBackendTagIndex {
         return failedRequests;
     }
 
-    /** Settle every in-flight batch, then report drift once for partial or malformed results. */
+    /** Settle every in-flight batch and return tags whose row writes stayed unprocessed. */
     private async writeBatchesAndCollectFailures(
         batches: BatchWriteRequest[][],
-        path: MemoryPath,
         operation: 'createTagIndexItems' | 'deleteTagIndexItems' | 'refreshTagIndexItems'
     ): Promise<Set<string>> {
         const limit = pLimit(TAG_INDEX_WRITE_CONCURRENCY);
@@ -190,29 +188,16 @@ export class MemoryToolBackendTagIndex {
             limit(async () => this.batchWriteWithRetry({ [this.tableName]: batch }))
         ));
 
-        let failedRequests: BatchWriteRequest[];
-        let failedTags: Set<string>;
-        try {
-            failedRequests = outcomes.flatMap((outcome) => {
-                if(outcome.status === 'rejected') {
-                    throw outcome.reason;
-                }
-                return outcome.value;
-            });
-            // Stryker disable next-line llm: failedTagFromRequest returns a scalar string, so flatMap and map are equivalent.
-            failedTags = new Set(failedRequests.map(req => failedTagFromRequest(
-                req, operation === 'deleteTagIndexItems' ? 'delete' : 'put'
-            )));
-        } catch (error) {
-            logger.warn({ error, path, operation, msg: 'Invalid tag index BatchWrite response; scheduling reconciliation' });
-            this.onDriftDetected?.();
-            throw error;
-        }
-
-        if(failedRequests.length > 0) {
-            this.onDriftDetected?.();
-        }
-        return failedTags;
+        const failedRequests = outcomes.flatMap((outcome) => {
+            if(outcome.status === 'rejected') {
+                throw outcome.reason;
+            }
+            return outcome.value;
+        });
+        // Stryker disable next-line llm: failedTagFromRequest returns a scalar string, so flatMap and map are equivalent.
+        return new Set(failedRequests.map(req => failedTagFromRequest(
+            req, operation === 'deleteTagIndexItems' ? 'delete' : 'put'
+        )));
     }
 
     /**
@@ -290,39 +275,17 @@ export class MemoryToolBackendTagIndex {
         await Promise.all(operations);
     }
 
-    /**
-     * Lists all tag counts by querying GSI2.
-     * Returns tags sorted by name.
-     *
-     * `pacing`, when given, requests `ReturnConsumedCapacity` and paces a continuing page against
-     * the shared `pacer` at `rateLimitRcuPerSec` (the memory-tool reconciler's Phase C uses this to
-     * share its GSI2 pacing debt with Phase A/B's own GSI2 reads). Omitted (the default, used by
-     * the live list-tags MCP tool), behaviour is unchanged: no ConsumedCapacity requested, no pacing.
-     * `pacing.signal`, when given, cancels promptly: it aborts the pacing sleep itself (rather than
-     * waiting out the full owed delay) and is also checked immediately before every page's query,
-     * including the first, so cancellation during a page with no debt owed still takes effect.
-     * @throws {Error} When `pacing` is given and a continuing page omits ConsumedCapacity.
-     * @throws {DOMException} Named `AbortError`, when `pacing.signal` aborts before or during a page.
-     */
-    async listTagCounts(pacing?: { pacer: RcuPacer, rateLimitRcuPerSec: number, signal?: AbortSignal }): Promise<{ tag: string, count: number }[]> {
+    /** Lists counts of permanent tag rows through GSI2, sorted by tag name. */
+    async listTagCounts(): Promise<{ tag: string, count: number }[]> {
         const results: { tag: string, count: number }[] = [];
         let exclusiveStartKey: Record<string, unknown> | undefined;
 
         do {
-            if(pacing) {
-                // eslint-disable-next-line no-await-in-loop -- sequential: pacing wait depends on the previous page's reported capacity
-                await waitForRcuPacer(pacing.pacer, () => Date.now(), ms => sleepRespectingSignal(ms, pacing.signal));
-                if(pacing.signal?.aborted) {
-                    throw new DOMException('Aborted', 'AbortError');
-                }
-            }
-
             const queryParams: Record<string, unknown> = {
                 IndexName:                 'GSI2',
                 KeyConditionExpression:    'GSI2PK = :gsi2pk',
                 ExpressionAttributeValues: { ':gsi2pk': 'TAG_COUNTS' },
                 ExclusiveStartKey:         exclusiveStartKey,
-                ...(pacing ? { ReturnConsumedCapacity: 'TOTAL' as const } : {}),
             };
 
             // eslint-disable-next-line no-await-in-loop -- sequential: pagination loop depends on prior response cursor
@@ -343,18 +306,6 @@ export class MemoryToolBackendTagIndex {
             }
 
             exclusiveStartKey = result.LastEvaluatedKey;
-
-            if(pacing) {
-                recordRcuPage(
-                    pacing.pacer,
-                    result.ConsumedCapacity?.CapacityUnits,
-                    pacing.rateLimitRcuPerSec,
-                    Boolean(exclusiveStartKey),
-                    () => {
-                        throw new Error('listTagCounts reported no ConsumedCapacity on a continuing page; refusing to continue without RCU pacing');
-                    }
-                );
-            }
         } while(exclusiveStartKey);
 
         // Sort by tag name
@@ -372,28 +323,31 @@ export class MemoryToolBackendTagIndex {
         updatedAt: string,
         contentPreview: string,
         layer: IndexLayer,
-        allTags: Set<string> = tags
+        allTags: Set<string> = tags,
+        ttl?: EpochSeconds
     ): Promise<void> {
         const normalizedTags = normalizeTags(tags);
 
         // Build write requests for tag index items
-        const writeRequests = this.buildPutRequests(path, normalizedTags, normalizeTags(allTags), updatedAt, contentPreview, layer);
+        const writeRequests = this.buildPutRequests(path, normalizedTags, normalizeTags(allTags), updatedAt, contentPreview, layer, ttl);
 
         // Split into batches of 25 (DynamoDB BatchWriteItem limit)
         const batches = this.splitIntoBatches(writeRequests, 25);
 
         // A malformed retry response may follow partial writes, so validate before updating counts.
-        const failedTags = await this.writeBatchesAndCollectFailures(batches, path, 'createTagIndexItems');
+        const failedTags = await this.writeBatchesAndCollectFailures(batches, 'createTagIndexItems');
 
-        // Only increment counts for tags that succeeded
-        const succeededTags = new Set([...normalizedTags].filter(t => !failedTags.has(t)));
-        await this.incrementTagCounts(succeededTags);
+        // Only permanent rows contribute to META_COUNT.
+        if(ttl === undefined) {
+            const succeededTags = new Set([...normalizedTags].filter(t => !failedTags.has(t)));
+            await this.incrementTagCounts(succeededTags);
+        }
     }
 
     /**
      * Deletes tag index items for a memory path.
      */
-    async deleteTagIndexItems(path: MemoryPath, tags: Set<string>): Promise<void> {
+    async deleteTagIndexItems(path: MemoryPath, tags: Set<string>, ttl?: EpochSeconds): Promise<void> {
         const normalizedTags = normalizeTags(tags);
 
         // Build delete requests for tag index items
@@ -410,11 +364,12 @@ export class MemoryToolBackendTagIndex {
         const batches = this.splitIntoBatches(writeRequests, 25);
 
         // A malformed retry response may follow partial deletes, so validate before updating counts.
-        const failedTags = await this.writeBatchesAndCollectFailures(batches, path, 'deleteTagIndexItems');
+        const failedTags = await this.writeBatchesAndCollectFailures(batches, 'deleteTagIndexItems');
 
-        // Only decrement counts for tags that succeeded
-        const succeededTags = new Set([...normalizedTags].filter(t => !failedTags.has(t)));
-        await this.decrementTagCounts(succeededTags);
+        if(ttl === undefined) {
+            const succeededTags = new Set([...normalizedTags].filter(t => !failedTags.has(t)));
+            await this.decrementTagCounts(succeededTags);
+        }
     }
 
     /**
@@ -428,18 +383,15 @@ export class MemoryToolBackendTagIndex {
         updatedAt: string,
         contentPreview: string,
         layer: IndexLayer,
-        allTags: Set<string> = tags
-    ): Promise<void> {
+        allTags: Set<string> = tags,
+        ttl?: EpochSeconds
+    ): Promise<Set<string>> {
         const normalizedTags = normalizeTags(tags);
 
-        // Build write requests for tag index items
-        const writeRequests = this.buildPutRequests(path, normalizedTags, normalizeTags(allTags), updatedAt, contentPreview, layer);
-
-        // Split into batches of 25 (DynamoDB BatchWriteItem limit)
+        const writeRequests = this.buildPutRequests(path, normalizedTags, normalizeTags(allTags), updatedAt, contentPreview, layer, ttl);
         const batches = this.splitIntoBatches(writeRequests, 25);
-
-        // Refresh does not change counts, but a partial or malformed write still needs repair.
-        await this.writeBatchesAndCollectFailures(batches, path, 'refreshTagIndexItems');
+        const failedTags = await this.writeBatchesAndCollectFailures(batches, 'refreshTagIndexItems');
+        return new Set([...normalizedTags].filter(t => !failedTags.has(t)));
     }
 
     /**
@@ -452,7 +404,8 @@ export class MemoryToolBackendTagIndex {
         newTags: Set<string>,
         updatedAt: string,
         contentPreview: string,
-        layer: IndexLayer
+        layer: IndexLayer,
+        ttl: { before?: EpochSeconds, after?: EpochSeconds } = {}
     ): Promise<void> {
         const normalizedOld = normalizeTags(oldTags);
         const normalizedNew = normalizeTags(newTags);
@@ -461,15 +414,25 @@ export class MemoryToolBackendTagIndex {
         const removed = new Set([...normalizedOld].filter(t => !normalizedNew.has(t)));
         const unchanged = new Set([...normalizedOld].filter(t => normalizedNew.has(t)));
 
-        // Execute all operations in parallel
-        await Promise.all([
-            // Create items for added tags (increments counts); every row carries the full new tag set
-            this.createTagIndexItems(path, added, updatedAt, contentPreview, layer, normalizedNew),
-            // Delete items for removed tags (decrements counts)
-            this.deleteTagIndexItems(path, removed),
-            // Refresh unchanged tags with current data (no count change)
-            this.refreshTagIndexItems(path, unchanged, updatedAt, contentPreview, layer, normalizedNew),
+        // Settle every operation: an unrelated added/removed-tag failure must not prevent
+        // count flips for unchanged rows that were already successfully refreshed.
+        const [created, deleted, refreshed] = await Promise.allSettled([
+            this.createTagIndexItems(path, added, updatedAt, contentPreview, layer, normalizedNew, ttl.after),
+            this.deleteTagIndexItems(path, removed, ttl.before),
+            this.refreshTagIndexItems(path, unchanged, updatedAt, contentPreview, layer, normalizedNew, ttl.after),
         ]);
+        if(refreshed.status === 'fulfilled') {
+            if(ttl.before === undefined && ttl.after !== undefined) {
+                await this.decrementTagCounts(refreshed.value);
+            } else if(ttl.before !== undefined && ttl.after === undefined) {
+                await this.incrementTagCounts(refreshed.value);
+            }
+        }
+        for(const result of [created, deleted, refreshed]) {
+            if(result.status === 'rejected') {
+                throw result.reason;
+            }
+        }
     }
 
     /**
@@ -550,7 +513,7 @@ export class MemoryToolBackendTagIndex {
             ...queryParams,
         }));
 
-        const items = (result.Items ?? []) as TagIndexReadItem[];
+        const items = ((result.Items ?? []) as TagIndexReadItem[]).filter(i => i.TTL === undefined || i.TTL > Date.now() / 1000);
         const nextCursor = result.LastEvaluatedKey
             ? Buffer.from(JSON.stringify(result.LastEvaluatedKey)).toString('base64')
             : undefined;

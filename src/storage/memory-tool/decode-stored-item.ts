@@ -7,8 +7,8 @@ import { normalizeStoredMemoryToolItem, storedMemoryToolItemSchema, type MemoryT
  * The DynamoDB `TTL` (epoch seconds) carried at runtime on a decoded item (see
  * {@link decodeStoredMemoryToolItem}), or undefined when absent or not valid epoch seconds.
  */
-export function storedTtl(item: object): EpochSeconds | undefined {
-    const ttl = (item as { TTL?: unknown }).TTL;
+export function storedTtl(item: object | undefined): EpochSeconds | undefined {
+    const ttl = (item as { TTL?: unknown } | undefined)?.TTL;
     return isEpochSeconds(ttl) ? ttl : undefined;
 }
 

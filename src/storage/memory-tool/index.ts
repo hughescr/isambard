@@ -32,11 +32,3 @@ export {
 export {
     MemoryToolBackend
 } from './backend';
-
-// Reconciliation
-export {
-    runTagIndexReconciliation,
-    createTagIndexReconciliationScheduler,
-    createMemoryTagIndexReconciliationScheduler,
-    type TagIndexReconciliationScheduler
-} from './reconciliation';

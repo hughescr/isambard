@@ -11,9 +11,7 @@ import {
     isContentType,
     layerNameSchema,
     decodeMemoryAccessStats,
-    decodePendingRenameIndexCleanup,
     memoryAccessStatsSchema,
-    pendingRenameIndexCleanupSchema,
     pathNamespaceSchema,
     type MemoryPath,
     type LayerName,
@@ -53,26 +51,6 @@ describe.concurrent('host-owned memory metadata', () => {
     test('access stats schema rejects malformed shape', () => {
         expect(memoryAccessStatsSchema.safeParse({ accessCount: -1, lastAccessedAt: accessed }).success).toBe(false);
         expect(memoryAccessStatsSchema.safeParse({ accessCount: 1, lastAccessedAt: accessed }).success).toBe(true);
-    });
-
-    test.each([
-        ['missing', undefined, undefined],
-        ['null', null, undefined],
-        ['array', Object.assign([], { previouslyKnownAs: '/state/old' }), undefined],
-        ['non-string path', { previouslyKnownAs: 4 }, undefined],
-        ['malformed path', { previouslyKnownAs: 'state/old' }, undefined],
-        ['known tags', { previouslyKnownAs: '/state/old', previouslyKnownAsTags: ['a'] }, { oldPath: '/state/old', tags: { kind: 'known', tags: ['a'] } }],
-        ['empty known tags', { previouslyKnownAs: '/state/old', previouslyKnownAsTags: [] }, { oldPath: '/state/old', tags: { kind: 'known', tags: [] } }],
-        ['legacy absent tags', { previouslyKnownAs: '/state/old' }, { oldPath: '/state/old', tags: { kind: 'legacy-unknown' } }],
-        ['legacy malformed tags', { previouslyKnownAs: '/state/old', previouslyKnownAsTags: ['a', 7] }, { oldPath: '/state/old', tags: { kind: 'legacy-unknown' } }],
-    ] as const)('decodes pending rename cleanup: %s', (_name, metadata, expected) => {
-        expect(decodePendingRenameIndexCleanup(metadata) as unknown).toEqual(expected);
-    });
-
-    test('pending cleanup schema validates known and legacy variants', () => {
-        expect(pendingRenameIndexCleanupSchema.safeParse({ oldPath: '/state/old', tags: { kind: 'legacy-unknown' } }).success).toBe(true);
-        expect(pendingRenameIndexCleanupSchema.safeParse({ oldPath: '/state/old', tags: { kind: 'known', tags: ['a'] } }).success).toBe(true);
-        expect(pendingRenameIndexCleanupSchema.safeParse({ oldPath: 'bad', tags: { kind: 'known', tags: [] } }).success).toBe(false);
     });
 });
 

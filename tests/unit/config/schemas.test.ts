@@ -12,8 +12,6 @@ import {
     configSchema,
     quotaConfigSchema,
     perchConfigSchema,
-    reconciliationConfigSchema,
-    contactReconciliationConfigSchema,
     vectorIndexConfigSchema,
     idleSignalsConfigSchema,
     sessionConfigSchema,
@@ -32,34 +30,6 @@ describe('guildIdSchema', () => {
         if(!result.success) {
             expect(result.error.issues[0]?.message).toBe('Discord ID must be a decimal snowflake');
         }
-    });
-});
-
-describe('contactReconciliationConfigSchema', () => {
-    test('applies the scheduler and scan defaults', () => {
-        expect(contactReconciliationConfigSchema.parse({})).toEqual({
-            enabled:                   false,
-            intervalMs:                86_400_000,
-            operationDelayMs:          1000,
-            scanPageSize:              25,
-            strayLookupAgeThresholdMs: 300_000,
-        });
-    });
-
-    test('retains explicit zero delays and scan overrides', () => {
-        expect(contactReconciliationConfigSchema.parse({
-            enabled:                   true,
-            intervalMs:                60_000,
-            operationDelayMs:          0,
-            scanPageSize:              7,
-            strayLookupAgeThresholdMs: 0,
-        })).toEqual({
-            enabled:                   true,
-            intervalMs:                60_000,
-            operationDelayMs:          0,
-            scanPageSize:              7,
-            strayLookupAgeThresholdMs: 0,
-        });
     });
 });
 
@@ -983,95 +953,6 @@ describe('perchConfigSchema', () => {
         };
 
         const result = perchConfigSchema.safeParse(configWithInvalidInterruptGrace);
-        expect(result.success).toBe(false);
-    });
-});
-
-describe('reconciliationConfigSchema', () => {
-    test('should apply all defaults when given empty object', () => {
-        const result = reconciliationConfigSchema.safeParse({});
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.enabled).toBe(false);
-            expect(result.data.intervalMs).toBe(24 * 60 * 60 * 1000);
-            expect(result.data.operationDelayMs).toBe(1000);
-            expect(result.data.scanPageSize).toBe(25);
-            expect(result.data.backoff.baseDelayMs).toBe(100);
-            expect(result.data.backoff.maxAttempts).toBe(3);
-            expect(result.data.testMode).toBeUndefined();
-            expect(result.data.rateLimitRcuPerSec).toBeUndefined();
-        }
-    });
-
-    test('should accept valid configuration with all fields', () => {
-        const config = {
-            enabled:          true,
-            intervalMs:       3_600_000,
-            operationDelayMs: 500,
-            scanPageSize:     50,
-            backoff:          {
-                baseDelayMs: 200,
-                maxAttempts: 5,
-            },
-            testMode: {
-                triggerOnStartup: true,
-                runOnce:          true,
-            },
-        };
-
-        const result = reconciliationConfigSchema.safeParse(config);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data).toEqual(config);
-        }
-    });
-
-    test('leaves rateLimitRcuPerSec undefined (no schema-level default) and round-trips an explicit value', () => {
-        const withoutRate = reconciliationConfigSchema.safeParse({ enabled: true });
-        expect(withoutRate.success).toBe(true);
-        if(withoutRate.success) {
-            expect(withoutRate.data.rateLimitRcuPerSec).toBeUndefined();
-        }
-
-        const withRate = reconciliationConfigSchema.safeParse({ enabled: true, rateLimitRcuPerSec: 3.5 });
-        expect(withRate.success).toBe(true);
-        if(withRate.success) {
-            expect(withRate.data.rateLimitRcuPerSec).toBe(3.5);
-        }
-    });
-
-    test('should reject a non-positive rateLimitRcuPerSec', () => {
-        expect(reconciliationConfigSchema.safeParse({ rateLimitRcuPerSec: 0 }).success).toBe(false);
-        expect(reconciliationConfigSchema.safeParse({ rateLimitRcuPerSec: -1 }).success).toBe(false);
-    });
-
-    test('should accept configuration with partial fields', () => {
-        const config = {
-            enabled:    true,
-            intervalMs: 7_200_000,
-        };
-
-        const result = reconciliationConfigSchema.safeParse(config);
-        expect(result.success).toBe(true);
-        if(result.success) {
-            expect(result.data.enabled).toBe(true);
-            expect(result.data.intervalMs).toBe(7_200_000);
-            expect(result.data.operationDelayMs).toBe(1000);
-            expect(result.data.scanPageSize).toBe(25);
-        }
-    });
-
-    test('should reject negative intervalMs', () => {
-        const result = reconciliationConfigSchema.safeParse({
-            intervalMs: -1000,
-        });
-        expect(result.success).toBe(false);
-    });
-
-    test('should reject zero intervalMs', () => {
-        const result = reconciliationConfigSchema.safeParse({
-            intervalMs: 0,
-        });
         expect(result.success).toBe(false);
     });
 });

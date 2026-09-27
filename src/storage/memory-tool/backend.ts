@@ -6,8 +6,8 @@ import { DynamoTableAccess } from '../repositories/base';
 import { MemoryToolBackendCore, type CreateMemoryToolItemInput, type UpdateMemoryToolItemInput } from './backend-core';
 import { MemoryToolBackendQuery, type IndexNamespacePage, type ListOptions, type ListResult, type ScoredMemoryItem } from './backend-query';
 import { MemoryToolBackendTagIndex } from './backend-tag-index';
+import { storedTtl } from './decode-stored-item';
 import { normalizeTags, generateContentPreview, MemoryToolKeyGenerator } from './key-generator';
-import type { TagIndexReconciliationOps } from './reconciliation/reconciler';
 import {
     type MemoryPath,
     type MemoryToolItemData,
@@ -45,9 +45,6 @@ function accessRepair(key: { PK: string, SK: string }, timestamp: string, gsi: s
     };
 }
 
-/** Module-only key for binding reconciliation without exposing named facade methods. */
-export const reconciliationAccess = Symbol('memory-tool-reconciliation-access');
-
 /**
  * Minimal interface for the async indexer dependency.
  * Typed as an interface to keep tests lightweight (no concrete class import required).
@@ -72,7 +69,6 @@ export class MemoryToolBackend extends DynamoTableAccess {
         docClientOrHolder: DynamoDBDocumentClient | DynamoDBClientHolder,
         tableName:         string,
         indexer?:          MemoryIndexer,
-        onDriftDetected?:  () => void,
         onIdentityWrite?:  () => void,
         timeoutMs?:        number
     ) {
@@ -88,11 +84,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
             this.deleteItem.bind(this)
         );
 
-        this.tagIndexOps = new MemoryToolBackendTagIndex(
-            docClientOrHolder,
-            tableName,
-            onDriftDetected
-        );
+        this.tagIndexOps = new MemoryToolBackendTagIndex(docClientOrHolder, tableName);
 
         this.queryOps = new MemoryToolBackendQuery(
             docClientOrHolder,
@@ -131,7 +123,9 @@ export class MemoryToolBackend extends DynamoTableAccess {
                 normalizedTags,
                 result.updatedAt,
                 contentPreview,
-                layerStr
+                layerStr,
+                normalizedTags,
+                input.ttl
             );
         } catch (error) {
             logger.warn({ error, path: input.path, msg: 'Failed to create tag index items' });
@@ -236,19 +230,18 @@ export class MemoryToolBackend extends DynamoTableAccess {
     }
 
     async update(path: MemoryPath, input: UpdateMemoryToolItemInput): Promise<MemoryToolItemData> {
-        // Skip tag index updates for metadata-only changes (e.g. reconciliation).
-        // The reconciler handles eventual consistency of tag index updatedAt/contentPreview.
+        // Metadata-only changes do not alter tags, preview or expiry.
         const contentOrTagsChanged = input.content !== undefined || input.tags !== undefined;
+        const indexChanged = contentOrTagsChanged || input.ttl !== undefined;
 
-        // Only fetch existing item for tag comparison when content/tags are changing
-        const existingItem = contentOrTagsChanged ? await this.coreOps.get(path) : undefined;
+        const existingItem = indexChanged ? await this.coreOps.get(path) : undefined;
         const oldTags = existingItem?.tags;
 
         // The TTL comes from the core write itself, so the index gets exactly what was persisted.
         const { item: result, ttl } = await this.coreOps.updateWithTtl(path, input);
         const layerStr = classifyMemoryPath(path).namespace;
 
-        if(contentOrTagsChanged) {
+        if(indexChanged) {
             const contentPreview = generateContentPreview(result.content);
             const normalizedNewTags = normalizeTags(result.tags);
 
@@ -261,7 +254,8 @@ export class MemoryToolBackend extends DynamoTableAccess {
                     normalizedNewTags,
                     result.updatedAt,
                     contentPreview,
-                    layerStr
+                    layerStr,
+                    { before: storedTtl(existingItem), after: ttl }
                 );
             } catch (error) {
                 logger.warn({ error, path, msg: 'Failed to update tag index items' });
@@ -299,7 +293,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
 
         // Delete tag index items (best-effort)
         try {
-            await this.tagIndexOps.deleteTagIndexItems(path, normalizedTags);
+            await this.tagIndexOps.deleteTagIndexItems(path, normalizedTags, storedTtl(existing));
         } catch (error) {
             logger.warn({ error, path, msg: 'Failed to delete tag index items' });
         }
@@ -368,13 +362,9 @@ export class MemoryToolBackend extends DynamoTableAccess {
         return this.queryOps.getStateItemsScored(options);
     }
 
-    [reconciliationAccess](): { tagIndex: TagIndexReconciliationOps } {
-        return { tagIndex: this.tagIndexOps };
-    }
-
     /**
-     * Lists all tag counts by querying META_COUNT items.
-     * Returns tags sorted by name.
+     * Lists permanent-memory tag counts from META_COUNT items.
+     * Expiring memories do not contribute; returns tags sorted by name.
      */
     async listTagCounts(): Promise<{ tag: string, count: number }[]> {
         return this.tagIndexOps.listTagCounts();

@@ -1,15 +1,14 @@
 /**
- * Read-capacity pacing for the operator tool that reads DynamoDB while Izzy is live
- * (tools/backfill-vectors.ts).
+ * Read-capacity pacing for operator tools that read DynamoDB while Izzy is live
+ * (tools/backfill-vectors.ts and tools/repair-tag-index.ts).
  *
  * Each request asks DynamoDB for its ConsumedCapacity; before the next request the tool pauses
  * (consumed RCU / rate) seconds less the time already spent, so the average read rate stays at or
  * below the budget whatever the items cost. A request that reports no ConsumedCapacity stops the
  * tool: its true cost is unknown, so it fails closed rather than read unpaced.
  *
- * The pacing primitives themselves live in src/storage/utils/rcu-pacing.ts (so the memory-tool
- * reconciler can import them too, without `src` importing from `tools/`); this module re-exports
- * them for the backfill and keeps `parseRcuRate`, which is CLI-arg parsing only.
+ * The pacing primitives live in src/storage/utils/rcu-pacing.ts; this module re-exports
+ * them for CLI consumers and keeps `parseRcuRate`, which is CLI-arg parsing only.
  */
 export { requireConsumedReadUnits, type PacingInput, pacingDelayMs, paceAfterRead } from '@/storage/utils/rcu-pacing';
 

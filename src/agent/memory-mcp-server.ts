@@ -301,7 +301,7 @@ export function createMemoryMCPServer(
                         );
                         // Stryker disable next-line llm: array length is always nonnegative, so === 0 and <= 0 are identical here.
                         if(results.items.length === 0) {
-                            return mcpTextResult('No memories found matching tags');
+                            return mcpTextResult(appendCursorInfo('No memories found matching tags', results.nextCursor));
                         }
                         const formatted = results.items.map((r) => {
                             const preview = r.contentPreview ?? 'No content';
@@ -375,7 +375,7 @@ export function createMemoryMCPServer(
 
             tool(
                 'listTags',
-                'List all tags with their usage counts',
+                'List tags with their usage counts. Counts cover permanent memories only: auto-expiring entries (such as auto-logged activity) are not counted, so a tag used only by expiring entries is not listed; `search` still finds those entries.',
                 {},
                 async (): Promise<CallToolResult> => {
                     try {

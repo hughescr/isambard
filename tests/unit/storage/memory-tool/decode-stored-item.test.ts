@@ -2,9 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { decodeStoredMemoryToolItem, storedTtl as brandedStoredTtl } from '@/storage/memory-tool/decode-stored-item';
 
 /** The brand is irrelevant to these assertions; compare plain numbers. */
-const storedTtl = (item: object): number | undefined => brandedStoredTtl(item);
+const storedTtl = (item: object | undefined): number | undefined => brandedStoredTtl(item);
 
 describe('storedTtl', () => {
+    test('returns undefined when the memory was absent', () => {
+        expect(storedTtl(undefined)).toBeUndefined();
+    });
+
     test('returns a valid epoch-seconds TTL, zero included', () => {
         expect(storedTtl({ TTL: 1_800_000_000 })).toBe(1_800_000_000);
         expect(storedTtl({ TTL: 0 })).toBe(0);
@@ -35,6 +39,6 @@ describe('storedTtl', () => {
             TTL:            1_800_000_000,
         });
         expect(decoded).toBeDefined();
-        expect(storedTtl(decoded!)).toBe(1_800_000_000);
+        expect(storedTtl(decoded)).toBe(1_800_000_000);
     });
 });

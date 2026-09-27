@@ -400,14 +400,9 @@ describe.concurrent('loadConfig', () => {
     });
 });
 
-describe('loadConfig - contact reconciliation and vector index', () => {
+describe('loadConfig - vector index', () => {
     afterEach(() => {
         for(const key of [
-            'CONTACT_RECONCILIATION_ENABLED',
-            'CONTACT_RECONCILIATION_INTERVAL_MS',
-            'CONTACT_RECONCILIATION_OPERATION_DELAY_MS',
-            'CONTACT_RECONCILIATION_SCAN_PAGE_SIZE',
-            'CONTACT_RECONCILIATION_STRAY_LOOKUP_AGE_THRESHOLD_MS',
             'VECTOR_INDEX_ENABLED',
             'VECTOR_INDEX_DB_PATH',
             'VECTOR_INDEX_MODEL_SLUG',
@@ -417,36 +412,7 @@ describe('loadConfig - contact reconciliation and vector index', () => {
         }
     });
 
-    test('loads contact scheduler overrides from their respective environment keys', () => {
-        process.env.CONTACT_RECONCILIATION_ENABLED = 'true';
-        process.env.CONTACT_RECONCILIATION_INTERVAL_MS = '61000';
-        process.env.CONTACT_RECONCILIATION_OPERATION_DELAY_MS = '0';
-        process.env.CONTACT_RECONCILIATION_SCAN_PAGE_SIZE = '11';
-        process.env.CONTACT_RECONCILIATION_STRAY_LOOKUP_AGE_THRESHOLD_MS = '45000';
-
-        expect(loadConfig(createMockResources()).contactReconciliation).toEqual({
-            enabled:                   true,
-            intervalMs:                61_000,
-            operationDelayMs:          0,
-            scanPageSize:              11,
-            strayLookupAgeThresholdMs: 45_000,
-        });
-    });
-
-    test('uses the documented contact reconciliation defaults when enabled', () => {
-        process.env.CONTACT_RECONCILIATION_ENABLED = 'true';
-        expect(() => loadConfig(createMockResources())).not.toThrow();
-        expect(loadConfig(createMockResources()).contactReconciliation).toEqual({
-            enabled:                   true,
-            intervalMs:                24 * 60 * 60 * 1000,
-            operationDelayMs:          1000,
-            scanPageSize:              25,
-            strayLookupAgeThresholdMs: 300_000,
-        });
-    });
-
-    test('uses the disabled default and exposes every vector-index override', () => {
-        expect(loadConfig(createMockResources()).contactReconciliation).toBeUndefined();
+    test('exposes every vector-index override', () => {
         process.env.VECTOR_INDEX_ENABLED = 'false';
         process.env.VECTOR_INDEX_DB_PATH = '/tmp/vec-test.sqlite';
         process.env.VECTOR_INDEX_MODEL_SLUG = '4b';

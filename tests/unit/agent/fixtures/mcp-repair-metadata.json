@@ -438,7 +438,7 @@
         }
       },
       "listTags": {
-        "description": "List all tags with their usage counts",
+        "description": "List tags with their usage counts. Counts cover permanent memories only: auto-expiring entries (such as auto-logged activity) are not counted, so a tag used only by expiring entries is not listed; `search` still finds those entries.",
         "annotations": {
           "readOnlyHint": true,
           "destructiveHint": false,

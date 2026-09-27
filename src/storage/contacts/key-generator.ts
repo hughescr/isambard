@@ -79,8 +79,8 @@ export const ContactKeyGenerator = {
      * Creates a DynamoDB lookup key for resolving an identifier to a contact.
      * The value is normalized with {@link normalizeIdentifierValue} for case-insensitive lookup.
      *
-     * Also sets GSI2PK='CONTACT_LOOKUPS' so that Phase A reconciliation can
-     * query all lookup rows efficiently via the GSI2 index.
+     * Also sets GSI2PK='CONTACT_LOOKUPS'; those keys have no current reader
+     * but remain persisted with the existing backfill tool.
      * GSI2SK encodes both the personId and the platform+value so it is unique
      * within the CONTACT_LOOKUPS partition.
      *

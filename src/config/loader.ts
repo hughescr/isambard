@@ -125,16 +125,6 @@ export function loadConfig(resources: SstResources = Resource): Config {
         typesafe: resources.TypesafeApiKey.value
             ? { apiKey: resources.TypesafeApiKey.value }
             : undefined,
-        contactReconciliation: env.get('CONTACT_RECONCILIATION_ENABLED').default('false').asBool()
-            ? {
-                enabled:                   true,
-                intervalMs:                env.get('CONTACT_RECONCILIATION_INTERVAL_MS').default(String(24 * 60 * 60 * 1000)).asIntPositive(),
-                // operationDelayMs allows 0 (no delay) — asInt() with non-negative validation via Zod schema
-                operationDelayMs:          env.get('CONTACT_RECONCILIATION_OPERATION_DELAY_MS').default('1000').asInt(),
-                scanPageSize:              env.get('CONTACT_RECONCILIATION_SCAN_PAGE_SIZE').default('25').asIntPositive(),
-                strayLookupAgeThresholdMs: env.get('CONTACT_RECONCILIATION_STRAY_LOOKUP_AGE_THRESHOLD_MS').default('300000').asInt(),
-            }
-            : undefined,
         // Browser config: unconditionally provide an empty object so Zod fills in all defaults.
         // Feature gating is done at runtime (process.platform === 'darwin') in src/index.ts.
         browser:     {},
