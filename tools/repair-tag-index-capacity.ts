@@ -198,7 +198,7 @@ export function restoreCommands(saved: CapacityState): string[] {
 }
 
 function errorName(error: unknown): string {
-    return (new Object(error) as { name?: string }).name ?? '';
+    return (new Object(error) as { name?: string }).name ?? String();
 }
 
 /** Restores one resource, retrying the decrease limit and in-flight updates until `deadline`. */

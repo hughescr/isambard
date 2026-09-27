@@ -3,6 +3,7 @@ import {
     ACTIVE_TIMEOUT_MS,
     DEFAULT_RATES,
     EXPECTED,
+    RESTORE_WINDOW_MS,
     UNBOOSTED_CAPS,
     applyBoost,
     boostTargets,
@@ -132,6 +133,10 @@ describe('repair-tag-index capacity rates', () => {
         expect(UNBOOSTED_CAPS).toStrictEqual({ baseRcu: 2.5, baseWcu: 1, gsi1Rcu: 1, gsi2Rcu: 0.5, gsi2Wcu: 0.5 });
     });
 
+    test('restore window is exactly 75 minutes', () => {
+        expect(RESTORE_WINDOW_MS).toBe(4_500_000);
+    });
+
     test('boostedRates leave the original capacity as headroom', () => {
         expect(boostedRates(6)).toStrictEqual({ baseRcu: 1, baseWcu: 4, gsi1Rcu: 4, gsi2Rcu: 0.5, gsi2Wcu: 5 });
         expect(boostedRates(50)).toStrictEqual({ baseRcu: 45, baseWcu: 48, gsi1Rcu: 48, gsi2Rcu: 0.5, gsi2Wcu: 49 });
@@ -252,6 +257,16 @@ describe('repair-tag-index capacity boost', () => {
         await expect(applyBoost(admin, provisioned(), 50, deps())).rejects.toThrow('Boost verification failed for GSI1, GSI2');
     });
 
+    test('applyBoost fails verification when exactly one resource differs', async () => {
+        const admin = new FakeAdmin();
+        const update = admin.update.bind(admin);
+        admin.update = async (resource, rcu, wcu) => {
+            await update(resource, resource === 'GSI1' ? rcu - 1 : rcu, wcu);
+        };
+
+        await expect(applyBoost(admin, provisioned(), 50, deps())).rejects.toThrow('Boost verification failed for GSI1');
+    });
+
     test('waitActive times out after 15 minutes of polling', async () => {
         const admin = new FakeAdmin(provisioned({ GSI1: { status: 'UPDATING' } }));
         const d = deps();
@@ -350,10 +365,15 @@ describe('repair-tag-index capacity restore', () => {
         admin.failures.push('access denied');
         const file = new FakeFile(provisioned());
         const d = deps();
+        let caught: unknown;
 
-        const outcome = restoreCapacity(admin, file, d);
+        try {
+            await restoreCapacity(admin, file, d);
+        } catch (error) {
+            caught = error;
+        }
 
-        await expect(outcome).rejects.toThrow('Capacity restore failed: access denied');
+        expect(caught).toMatchObject({ message: 'Capacity restore failed: access denied', cause: 'access denied' });
         expect(d.sleeps).toStrictEqual([]);
         expect(file.saved).toStrictEqual(provisioned());
     });
@@ -365,6 +385,18 @@ describe('repair-tag-index capacity restore', () => {
 
         await expect(restoreCapacity(admin, file, deps())).rejects.toThrow('Capacity restore failed: verification found table at RCU 50, WCU 50, GSI1 at RCU 50, WCU 2, GSI2 at RCU 1, WCU 50');
         expect(file.saved).toStrictEqual(provisioned());
+    });
+
+    test('restoreCapacity fails verification when exactly one resource differs', async () => {
+        const admin = boosted();
+        const update = admin.update.bind(admin);
+        admin.update = async (resource, rcu, wcu) => {
+            if(resource !== 'GSI1') {
+                await update(resource, rcu, wcu);
+            }
+        };
+
+        await expect(restoreCapacity(admin, new FakeFile(provisioned()), deps())).rejects.toThrow('Capacity restore failed: verification found GSI1 at RCU 50, WCU 2');
     });
 
     test('restoreCapacity refuses a restore file for another table', async () => {
