@@ -31,7 +31,7 @@ export const APPROVAL_PENDING = 0x58_65_F2;
  */
 export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
     /** @param cardEdits orders the pending-card edit before the outcome edit; the process-wide gate by default. */
-    constructor(private readonly cardEdits: ApprovalCardEditGate = approvalCardEditGate) {}
+    constructor(protected readonly cardEdits: ApprovalCardEditGate = approvalCardEditGate) {}
 
     // ---------------------------------------------------------------------------
     // Abstract hooks — subclasses implement platform-specific behaviour
@@ -232,21 +232,26 @@ export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
      * means a crash can never leave a card whose controls (and, for Bluesky, the payload in its
      * embed) are gone with no row to execute or report: before the row exists the card is
      * untouched and the admin can click again; after it, the executor sends and the outcome
-     * reporter writes the result over the card. The card is held on the {@link ApprovalCardEditGate}
-     * for the whole record + edit, so a fast outcome waits for this pending edit and is never
-     * overwritten by it. A failed record throws (nothing recorded, the caller shows the retry
-     * error); a failed pending edit is only logged — the approval stands, so offering a retry
-     * would invite a duplicate send, and the outcome will replace the card anyway.
+     * reporter writes the result over the card. The card is held exclusively on the
+     * {@link ApprovalCardEditGate} (after any other holder of it) for the whole record + edit, so
+     * a fast outcome waits for this pending edit and is never overwritten by it, and a repaint of
+     * the card never interleaves with the decision. A failed record throws (nothing recorded, the
+     * caller shows the retry error); a record that refused (returned false, having told the admin
+     * why) shows no pending card; a failed pending edit is only logged — the approval stands, so
+     * offering a retry would invite a duplicate send, and the outcome will replace the card
+     * anyway. Resolves whether the approval was recorded.
      */
     protected async recordApprovalThenShowPending(
         interaction:  ButtonInteraction | StringSelectMenuInteraction,
         pendingTitle: string,
-        record:       (card: ApprovalCardRef) => Promise<void>
-    ): Promise<void> {
+        record:       (card: ApprovalCardRef) => Promise<boolean>
+    ): Promise<boolean> {
         const card = this.approvalCardRef(interaction);
-        const release = this.cardEdits.hold(card.messageId);
+        const release = await this.cardEdits.acquire(card.messageId);
         try {
-            await record(card);
+            if(!await record(card)) {
+                return false;
+            }
             try {
                 await interaction.editReply({
                     content:    null,
@@ -256,6 +261,7 @@ export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
             } catch (err: unknown) {
                 logger.warn({ err, ...card, msg: 'Failed to show the pending approval card — the send outcome will replace it' });
             }
+            return true;
         } finally {
             release();
         }

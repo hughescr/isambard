@@ -1,18 +1,37 @@
 import { logger } from '@hughescr/logger';
-import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
+import { type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction, ActionRowBuilder, MessageFlags, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from 'discord.js';
+import { truncate } from 'lodash-es';
 import type { ApprovalCardEditGate } from './card-edit-gate';
+import { buildDraftGoneEmbed, currentCardDraftUid } from './email-approval-card';
 import { DiscordOutboundApprovalInteractionHandler } from './interaction-handler';
 import { EMAIL_ALLOWLIST_SELECT_PREFIX } from '@/config';
 import type { AllowlistApprovalStarter } from '@/integrations/discord/allowlist-interaction-handler';
-import type { EmailOutboundApprovals } from '@/integrations/email';
+import type { EmailApprovalRoute, EmailDecisionRefusal, EmailOutboundApprovals } from '@/integrations/email';
 import { encodeCustomId, parseCustomId } from '@/utils';
 
 export interface EmailApprovalInteractionAdapterDeps {
     approvals:  EmailOutboundApprovals
     allowlist:  AllowlistApprovalStarter
-    /** Orders the pending-card edit before the outcome edit; the process-wide gate when omitted. */
+    /** Orders every click on a card against its repaints and outcome edits; the process-wide gate when omitted. */
     cardEdits?: ApprovalCardEditGate
 }
+
+type EmailInteraction = ButtonInteraction | StringSelectMenuInteraction | ModalSubmitInteraction;
+
+/** A card as a click reads it fresh (bypassing the cache). */
+interface FetchableCard {
+    fetch(force: boolean): Promise<{ components: readonly unknown[] }>
+}
+
+/** Whether the clicked card's live controls still act on the clicked uid. */
+type CardCheck = 'current' | 'stale' | 'unreadable';
+
+const PENDING_TITLE = 'Approved ✓ — sending…';
+const STALE_CARD = 'This button belongs to an earlier version of this draft, or the card was already decided — nothing was approved or rejected. Use the current card.';
+const CARD_UNREADABLE = 'Couldn\'t read this approval card from Discord — nothing was approved or rejected; try again.';
+const ALREADY_DECIDED = 'This draft was already approved or rejected.';
+/** Discord's limit on a message's content. */
+const CONTENT_MAX = 2000;
 
 /**
  * Discord adapter for the outbound email approval card: turns button/modal/select-menu
@@ -28,6 +47,15 @@ export interface EmailApprovalInteractionAdapterDeps {
  *
  * Supports select menu customIds:
  * - email-allowlist-select:{uid}
+ *
+ * Every decision (approve, opening approve + allowlist, the allowlist select, the reject modal)
+ * runs holding the card exclusively on the {@link ApprovalCardEditGate}, and first reads the
+ * card fresh from Discord: nothing proceeds unless the clicked uid is the one the card's live
+ * controls act on now (#158), so a button left on a card edited to a newer draft, or a card
+ * already decided, can never approve or reject anything. The decision then runs under the
+ * draft's own key (card key first, draft key second), which refuses a draft that is gone,
+ * superseded or already decided. A refusal is explained to the admin privately and leaves the
+ * card as it is — except a vanished draft, whose card is marked so.
  *
  * **Authorization**: Delegated to Discord channel permissions on the admin review channel
  * (top-level `config.adminDiscordChannelId`).
@@ -90,29 +118,47 @@ export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInte
         interaction: ModalSubmitInteraction,
         uid:         number
     ): Promise<void> {
-        // Gate: persist the rejection — must succeed before updating Discord to "Rejected"
-        await this.approvals.rejectSend(uid, reason);
-
-        // Persist succeeded — update Discord to show rejection
-        const updatedEmbed = this.buildRejectedEmbed(reason);
-
-        let discordUpdated = false;
-        try {
-            await interaction.editReply({
-                embeds:     [updatedEmbed],
-                components: [],
-            });
-            discordUpdated = true;
-        } catch (editError) {
-            logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email rejection' });
+        const message = interaction.message;
+        if(message === null) {
+            await this.refuseCard(interaction, uid, 'unreadable');
+            return;
         }
+        const release = await this.cardEdits.acquire(message.id);
+        try {
+            const check = await this.checkCard(message, uid);
+            if(check !== 'current') {
+                await this.refuseCard(interaction, uid, check);
+                return;
+            }
+            // Gate: persist the rejection — must succeed before updating Discord to "Rejected".
+            // A WildDuck write failure throws to the base handler, which keeps the buttons for a retry.
+            const result = await this.approvals.rejectSend(uid, reason);
+            if(result.status === 'refused') {
+                await this.handleRefusal(interaction, uid, result);
+                return;
+            }
 
-        // Wake notification (Q7, plan amendment B2) — deliberately AFTER the Discord editReply
-        // block above so a stuck/failed notify can never be mistaken for a WildDuck-persist
-        // failure or delay the "Rejected" embed.
-        this.approvals.announceRejected(uid, reason);
+            // Persist succeeded — update Discord to show rejection
+            let discordUpdated = false;
+            try {
+                await interaction.editReply({
+                    embeds:     [this.buildRejectedEmbed(reason)],
+                    components: [],
+                });
+                discordUpdated = true;
+            } catch (editError) {
+                logger.warn({ err: editError, uid, msg: 'Failed to update Discord embed after email rejection' });
+            }
 
-        logger.info({ uid, reason, discordUpdated, msg: 'Discord admin rejected outbound email' });
+            // Wake notification (Q7, plan amendment B2) — deliberately AFTER the Discord editReply
+            // block above so a stuck/failed notify can never be mistaken for a WildDuck-persist
+            // failure or delay the "Rejected" embed.
+            this.approvals.announceRejected(uid, reason);
+
+            logger.info({ uid, reason, discordUpdated, msg: 'Discord admin rejected outbound email' });
+        } finally {
+            release();
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -137,10 +183,10 @@ export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInte
 
         try {
             // Record the approval, then show the pending card (see recordApprovalThenShowPending).
-            // A failed record lands in the catch below with nothing recorded.
-            await this.recordApprovalThenShowPending(interaction, 'Approved ✓ — sending…', async (card) => {
-                await this.approvals.approveSend(uid, 'allowlist', card);
-            });
+            // A refused approval has been explained to the admin; nothing is allowlisted.
+            if(!await this.recordApproval(interaction, uid, 'allowlist')) {
+                return;
+            }
 
             // Kick off the allowlist saga for each selected recipient address.
             // Uses followUp (not showModal) since deferUpdate was already called.
@@ -172,40 +218,131 @@ export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInte
     // ---------------------------------------------------------------------------
 
     private async handleApprove(interaction: ButtonInteraction, uid: number): Promise<void> {
-        // Record the approval, then show the pending card (see recordApprovalThenShowPending). A
-        // failed record throws to the base handler, which shows the retry error.
-        await this.recordApprovalThenShowPending(interaction, 'Approved ✓ — sending…', async (card) => {
-            await this.approvals.approveSend(uid, 'direct', card);
-        });
+        if(await this.recordApproval(interaction, uid, 'direct')) {
+            // Non-waking note (Q7, plan amendment B2); Izzy is woken by the real send outcome.
+            this.approvals.announceApproved(uid);
+        }
+    }
 
-        // Non-waking note (Q7, plan amendment B2); Izzy is woken by the real send outcome.
-        this.approvals.announceApproved(uid);
+    /**
+     * Approve under the card's exclusive hold, only if the card still acts on `uid`, then show
+     * the pending card (see recordApprovalThenShowPending). Resolves whether the approval was
+     * recorded; a refusal has been explained to the admin.
+     */
+    private async recordApproval(interaction: ButtonInteraction | StringSelectMenuInteraction, uid: number, via: EmailApprovalRoute): Promise<boolean> {
+        return this.recordApprovalThenShowPending(interaction, PENDING_TITLE, async (card) => {
+            const check = await this.checkCard(interaction.message, uid);
+            if(check !== 'current') {
+                await this.refuseCard(interaction, uid, check);
+                return false;
+            }
+            const result = await this.approvals.approveSend(uid, via, card);
+            if(result.status === 'refused') {
+                await this.handleRefusal(interaction, uid, result);
+                return false;
+            }
+            return true;
+        });
     }
 
     private async handleApproveShowAllowlist(interaction: ButtonInteraction, uid: number): Promise<void> {
-        const allRecipients = await this.approvals.draftRecipients(uid);
-
-        // Stryker disable next-line llm: an array length is never negative, so === 0, <= 0 and < 1 are the same condition
-        if(allRecipients === undefined || allRecipients.length === 0) {
-            // Draft unreadable, or no recipients to allowlist — fall back to simple approve
-            await this.handleApprove(interaction, uid);
+        if(await this.showAllowlistMenu(interaction, uid)) {
             return;
         }
+        // No recipients to allowlist — a plain approve, which re-checks everything.
+        await this.handleApprove(interaction, uid);
+    }
 
-        // Build Select Menu with all recipients
-        const menu = new StringSelectMenuBuilder()
-            .setCustomId(encodeCustomId({ prefix: EMAIL_ALLOWLIST_SELECT_PREFIX, id: String(uid) }))
-            .setPlaceholder('Select recipients to add to allowlist')
-            .setMinValues(0)
-            .setMaxValues(allRecipients.length)
-            .addOptions(allRecipients.map(r =>
-                new StringSelectMenuOptionBuilder().setLabel(r).setValue(r)));
+    /**
+     * Under the card's exclusive hold, offer the draft's recipients for allowlisting. Resolves
+     * false only when there are none to offer (the caller falls back to a plain approve); a
+     * refusal has been explained to the admin and resolves true.
+     */
+    private async showAllowlistMenu(interaction: ButtonInteraction, uid: number): Promise<boolean> {
+        const release = await this.cardEdits.acquire(interaction.message.id);
+        try {
+            const check = await this.checkCard(interaction.message, uid);
+            if(check !== 'current') {
+                await this.refuseCard(interaction, uid, check);
+                return true;
+            }
+            const candidates = await this.approvals.allowlistCandidates(uid);
+            if(candidates.status === 'refused') {
+                await this.handleRefusal(interaction, uid, candidates);
+                return true;
+            }
+            const recipients = candidates.recipients;
+            // Stryker disable next-line llm: an array length is never negative, so === 0, <= 0 and < 1 are the same condition
+            if(recipients.length === 0) {
+                return false;
+            }
 
-        const actionRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+            const menu = new StringSelectMenuBuilder()
+                .setCustomId(encodeCustomId({ prefix: EMAIL_ALLOWLIST_SELECT_PREFIX, id: String(uid) }))
+                .setPlaceholder('Select recipients to add to allowlist')
+                .setMinValues(0)
+                .setMaxValues(recipients.length)
+                .addOptions(recipients.map(r =>
+                    new StringSelectMenuOptionBuilder().setLabel(r).setValue(r)));
 
-        await interaction.editReply({
-            content:    'Select recipients to add to allowlist, then click Submit:',
-            components: [actionRow],
-        });
+            await interaction.editReply({
+                content:    'Select recipients to add to allowlist, then click Submit:',
+                components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],
+            });
+            return true;
+        } finally {
+            release();
+        }
+    }
+
+    /** Read the card fresh from Discord and compare its live controls' uid with the clicked one. */
+    private async checkCard(message: FetchableCard, uid: number): Promise<CardCheck> {
+        try {
+            const fresh = await message.fetch(true);
+            return currentCardDraftUid(fresh) === uid ? 'current' : 'stale';
+        } catch (err: unknown) {
+            logger.warn({ err, uid, msg: 'Could not read the approval card before acting on a click' });
+            return 'unreadable';
+        }
+    }
+
+    private async refuseCard(interaction: EmailInteraction, uid: number, check: Exclude<CardCheck, 'current'>): Promise<void> {
+        logger.info({ uid, check, msg: 'Email approval click refused: the card does not act on this draft now' });
+        await this.replyPrivately(interaction, check === 'stale' ? STALE_CARD : CARD_UNREADABLE);
+    }
+
+    /** Explain a refused decision privately; a vanished draft's card is marked so instead. */
+    private async handleRefusal(interaction: EmailInteraction, uid: number, refusal: EmailDecisionRefusal): Promise<void> {
+        logger.info({ uid, reason: refusal.reason, detail: refusal.detail, msg: 'Email approval decision refused' });
+        switch(refusal.reason) {
+            case 'gone': {
+                try {
+                    await interaction.editReply({ content: null, embeds: [buildDraftGoneEmbed()], components: [] });
+                } catch (err: unknown) {
+                    logger.warn({ err, uid, msg: 'Failed to mark the approval card of a vanished draft' });
+                }
+                return;
+            }
+            case 'decided': {
+                await this.replyPrivately(interaction, ALREADY_DECIDED);
+                return;
+            }
+            case 'unreadable': {
+                await this.replyPrivately(interaction, `${refusal.detail} — nothing was changed; try again.`);
+                return;
+            }
+            case 'unrecorded': {
+                await this.replyPrivately(interaction, refusal.detail);
+            }
+        }
+    }
+
+    /** An ephemeral follow-up only the admin sees; a failure is only logged. */
+    private async replyPrivately(interaction: EmailInteraction, content: string): Promise<void> {
+        try {
+            await interaction.followUp({ content: truncate(content, { length: CONTENT_MAX }), flags: MessageFlags.Ephemeral });
+        } catch (err: unknown) {
+            logger.warn({ err, msg: 'Failed to send a private reply to an email approval click' });
+        }
     }
 }

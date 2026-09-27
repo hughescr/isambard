@@ -2,8 +2,8 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:
 import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { buildAdminRejectedSubsection } from '../../../src/agent/context-builder';
-import { buildAttachments, createEmailMCPServer, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
-import type { WildDuckClient, WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
+import { buildAttachments, createEmailMCPServer, type EmailApprovalCardPort, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
+import { WildDuckError, type WildDuckClient, type WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
 import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
 import type { ServiceHealthEntry } from '../../../src/services/types';
@@ -39,6 +39,16 @@ interface RegisteredTool {
     annotations: Record<string, boolean>
 }
 interface RegisteredToolInstance { _registeredTools: Record<string, RegisteredTool>, server: { _serverInfo: { version: string } } }
+
+/** An approval card port whose present() is `present` (other methods are inert unless overridden). */
+function cardPort(present: ReturnType<typeof mock>, overrides: Partial<EmailApprovalCardPort> = {}): EmailApprovalCardPort {
+    return {
+        present,
+        markDeleted:    mock(async () => undefined),
+        markSuperseded: mock(async () => true),
+        ...overrides,
+    };
+}
 
 async function drainMicrotasks(ticks = 10): Promise<void> {
     for(let i = 0; i < ticks; i++) {
@@ -1991,7 +2001,7 @@ describe('createEmailMCPServer', () => {
             mockAllowlist = {
                 isAllowed: mock((_platform: string, _value: string) => false),
             } as unknown as PersonAllowlist;
-            mockSendApprovalRequest = mock(() => undefined);
+            mockSendApprovalRequest = mock(async () => 'posted');
         });
 
         test('encodes attachment bytes in input order before uploading the draft', async () => {
@@ -2221,9 +2231,9 @@ describe('createEmailMCPServer', () => {
             mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockSendWildDuck,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockSendWildDuck,
+                allowlist:      mockAllowlist,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'sendEmail');
 
@@ -2235,29 +2245,29 @@ describe('createEmailMCPServer', () => {
             expect(mockSubmitMessage).not.toHaveBeenCalled();
         });
 
-        test('should call sendApprovalRequest with to, subject, WildDuck UID, and undefined cc when not allowlisted', async () => {
+        test('should present the uploaded WildDuck UID, with no previous uid, when not allowlisted', async () => {
             mockAllowlist.isAllowed     = mock((_platform: string, _value: string) => false);
             mockUploadMessage           = mock(() => Promise.resolve(99));
             mockSendWildDuck.uploadMessage = mockUploadMessage;
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockSendWildDuck,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockSendWildDuck,
+                allowlist:      mockAllowlist,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'sendEmail');
 
             await handler({ to: 'bob@example.com', subject: 'Test', body: 'Body', senderProfile: 'formal' });
 
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99, undefined);
+            expect(mockSendApprovalRequest.mock.calls).toEqual([[99, undefined]]);
         });
 
         test('without an allowlist, the uploaded draft requires approval', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, sendApprovalRequest: mockSendApprovalRequest });
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, approvalCards: cardPort(mockSendApprovalRequest) });
             const result = await getToolHandler(server, 'sendEmail')({ to: 'bob@example.com', subject: 'Test', body: 'Body', senderProfile: 'formal' });
             expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 99).');
             expect(mockSubmitMessage).not.toHaveBeenCalled();
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('bob@example.com', 'Test', 99, undefined);
+            expect(mockSendApprovalRequest.mock.calls).toEqual([[99, undefined]]);
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload).not.toHaveProperty('attachments');
         });
@@ -2284,9 +2294,9 @@ describe('createEmailMCPServer', () => {
             mockAllowlist.isAllowed = mock((_platform: string, addr: string) => addr === 'alice@example.com');
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockSendWildDuck,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockSendWildDuck,
+                allowlist:      mockAllowlist,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'sendEmail');
 
@@ -2313,21 +2323,26 @@ describe('createEmailMCPServer', () => {
             expect(mockSubmitMessage).toHaveBeenCalledTimes(1);
         });
 
-        test('should pass joined to addresses to sendApprovalRequest when array not allowlisted', async () => {
-            mockAllowlist.isAllowed        = mock((_platform: string, _value: string) => false);
-            mockUploadMessage              = mock(() => Promise.resolve(99));
-            mockSendWildDuck.uploadMessage = mockUploadMessage;
+        test.each([
+            ['queued', 'Message saved to Drafts, pending admin approval (draft UID: 99).'],
+            ['failed', 'Draft saved as Drafts:99 but failed to notify admin. Please check pending drafts manually.'],
+        ])('maps a %s presentation to the tool text', async (presentation, expected) => {
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist, approvalCards: cardPort(mock(async () => presentation)) });
 
-            const server = createEmailMCPServer({
-                wildDuckClient:      mockSendWildDuck,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequest,
-            });
-            const handler = getToolHandler(server, 'sendEmail');
+            const result = await getToolHandler(server, 'sendEmail')({ to: 'bob@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
-            await handler({ to: ['alice@example.com', 'bob@example.com'], subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
+            expect(result.isError).toBeUndefined();
+            expect(getText(result)).toBe(expected);
+        });
 
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('alice@example.com, bob@example.com', 'Hi', 99, undefined);
+        test('reports an error when the uploaded draft cannot be found to present', async () => {
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist, approvalCards: cardPort(mock(async () => 'missing')) });
+
+            const result = await getToolHandler(server, 'sendEmail')({ to: 'bob@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Draft Drafts:99 not found after upload.' }], isError: true });
         });
 
         test('should include rate limit warning when over limit', async () => {
@@ -2367,16 +2382,16 @@ describe('createEmailMCPServer', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'sendEmail' }), 'MCP tool error');
         });
 
-        test('should return failure message when sendApprovalRequest fails', async () => {
+        test('should return failure message when presenting the approval card throws', async () => {
             mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
             mockSendApprovalRequest = mock(async () => {
                 throw new Error('Discord unavailable');
             });
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockSendWildDuck,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockSendWildDuck,
+                allowlist:      mockAllowlist,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'sendEmail');
 
@@ -2393,16 +2408,16 @@ describe('createEmailMCPServer', () => {
             expect(mockSendWildDuck.updateMessageFlags).not.toHaveBeenCalledWith('Drafts', 99, { addFlags: ['DiscordNotifyFailed'] });
         });
 
-        test('should log the string form of a non-Error sendApprovalRequest failure', async () => {
+        test('should log the string form of a non-Error approval card failure', async () => {
             mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
             mockSendApprovalRequest = mock(async () => {
                 throw 'transient outbox failure';
             });
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockSendWildDuck,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockSendWildDuck,
+                allowlist:      mockAllowlist,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'sendEmail');
 
@@ -2422,10 +2437,10 @@ describe('createEmailMCPServer', () => {
             });
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockSendWildDuck,
-                rateLimiter:         mockRateLimiter,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockSendWildDuck,
+                rateLimiter:    mockRateLimiter,
+                allowlist:      mockAllowlist,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'sendEmail');
 
@@ -2740,39 +2755,41 @@ describe('createEmailMCPServer', () => {
 
         test('reply upload and approval preserve subject and attachment details', async () => {
             mockAllowlist.isAllowed = mock(() => false);
-            const requestApproval = mock(async () => {});
+            const requestApproval = mock(async (_uid: number, _previousUid?: number) => 'posted');
             mockFsPromises.readFile.mockImplementation(async () => Buffer.from('reply file') as unknown as string);
-            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, sendApprovalRequest: requestApproval });
+            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, approvalCards: cardPort(requestApproval) });
             await getToolHandler(server, 'replyToEmail')({
                 message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal', attachments: ['/tmp/reply.txt'],
             });
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Re: Re: Hello');
             expect(payload.attachments).toEqual([{ filename: 'reply.txt', contentType: 'text/plain', content: Buffer.from('reply file').toString('base64') }]);
-            expect(requestApproval).toHaveBeenCalledWith('alice@example.com', 'Re: Re: Hello', 88, undefined);
+            expect(requestApproval.mock.calls).toEqual([[88, undefined]]);
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('email', 'alice@example.com');
         });
 
         test('reply with missing sender and subject retains empty fallbacks', async () => {
             mockGetMessage = mock(async () => ({ ...originalEmail, from: undefined, replyTo: undefined, subject: undefined }));
             mockReplyWildDuck.getMessage = mockGetMessage;
             mockAllowlist.isAllowed = mock(() => false);
-            const requestApproval = mock(async () => {});
-            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, sendApprovalRequest: requestApproval });
+            const requestApproval = mock(async (_uid: number, _previousUid?: number) => 'posted');
+            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, approvalCards: cardPort(requestApproval) });
             const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
             expect(result.isError).toBeUndefined();
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Re: ');
             expect(payload).not.toHaveProperty('attachments');
-            expect(requestApproval).toHaveBeenCalledWith('', 'Re: ', 88, undefined);
+            expect(requestApproval.mock.calls).toEqual([[88, undefined]]);
+            expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('email', '');
         });
 
         test('a plain reply without an allowlist remains pending approval', async () => {
-            const requestApproval = mock(async () => {});
-            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, sendApprovalRequest: requestApproval });
+            const requestApproval = mock(async (_uid: number, _previousUid?: number) => 'posted');
+            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, approvalCards: cardPort(requestApproval) });
             const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
             expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 88).');
             expect(mockSubmitMessage).not.toHaveBeenCalled();
-            expect(requestApproval).toHaveBeenCalledWith('alice@example.com', 'Re: Re: Hello', 88, undefined);
+            expect(requestApproval.mock.calls).toEqual([[88, undefined]]);
         });
 
         test('should use informalAddress from getUserAddresses for informal identity in reply', async () => {
@@ -2803,26 +2820,22 @@ describe('createEmailMCPServer', () => {
             expect(payload.from).toEqual({ address: 'formal@example.com', name: 'Izzy Formal' });
         });
 
-        test('should pass undefined cc to sendApprovalRequest in plain reply mode', async () => {
-            const mockSendApprovalRequestReply = mock(async () => { /* intentionally empty */ });
-            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
+        test('a plain reply to an allowlisted sender is sent without a card', async () => {
+            const mockSendApprovalRequestReply = mock(async () => 'posted');
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockReplyWildDuck,
-                allowlist:           mockAllowlist,
-                sendApprovalRequest: mockSendApprovalRequestReply,
+                wildDuckClient: mockReplyWildDuck,
+                allowlist:      mockAllowlist,
+                approvalCards:  cardPort(mockSendApprovalRequestReply),
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
-            await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
+            const result = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
-            // In plain reply mode, cc should be undefined (not extracted from original.cc)
-            expect(mockSendApprovalRequestReply).toHaveBeenCalledWith(
-                expect.any(String),
-                expect.any(String),
-                expect.any(Number),
-                undefined
-            );
+            expect(getText(result)).toBe('Reply sent to alice@example.com.');
+            expect(mockSendApprovalRequestReply).not.toHaveBeenCalled();
+            expect(mockSubmitMessage).toHaveBeenCalledTimes(1);
         });
 
         test('should call getMailboxId with mailbox name to resolve mailbox ID', async () => {
@@ -3095,7 +3108,7 @@ describe('createEmailMCPServer', () => {
             mockGetMessageReplyAll       = mock(async () => originalEmailWithCc);
             mockUploadMessageReplyAll    = mock(() => Promise.resolve(88));
             mockSubmitMessageReplyAll    = mock(async () => { /* intentionally empty */ });
-            mockSendApprovalRequestReplyAll = mock(async () => { /* intentionally empty */ });
+            mockSendApprovalRequestReplyAll = mock(async () => 'posted');
             mockWildDuckReplyAll = {
                 getMessage:       mockGetMessageReplyAll,
                 uploadMessage:    mockUploadMessageReplyAll,
@@ -3113,9 +3126,9 @@ describe('createEmailMCPServer', () => {
 
         test('replyAll should always route to approval even when primary recipient is on allowlist', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckReplyAll,
-                allowlist:           mockAllowlistReplyAll,
-                sendApprovalRequest: mockSendApprovalRequestReplyAll,
+                wildDuckClient: mockWildDuckReplyAll,
+                allowlist:      mockAllowlistReplyAll,
+                approvalCards:  cardPort(mockSendApprovalRequestReplyAll),
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
@@ -3129,38 +3142,25 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('pending admin approval');
         });
 
-        test('replyAll should call sendApprovalRequest with (to, subject, uid, cc) — cc extracted from original message', async () => {
-            const primaryTo = originalEmailWithCc.from.address;
-            const subject   = `Re: ${originalEmailWithCc.subject}`;
-            const uid       = 88;
-
+        test('replyAll presents the uploaded draft (whose stored Cc the card shows) with no previous uid, never consulting the allowlist', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckReplyAll,
-                allowlist:           mockAllowlistReplyAll,
-                sendApprovalRequest: mockSendApprovalRequestReplyAll,
+                wildDuckClient: mockWildDuckReplyAll,
+                allowlist:      mockAllowlistReplyAll,
+                approvalCards:  cardPort(mockSendApprovalRequestReplyAll),
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
             await handler({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', senderProfile: 'formal' });
 
-            // sendApprovalRequest is called with (to, subject, uid, cc) — cc extracted from original.cc
-            expect(mockSendApprovalRequestReplyAll).toHaveBeenCalledWith(primaryTo, subject, uid, ['bob@example.com']);
-        });
-
-        test('replyAll with no original Cc sends an empty approval Cc list', async () => {
-            mockWildDuckReplyAll.getMessage = mock(async () => ({ ...originalEmailWithCc, cc: undefined }));
-            const server = createEmailMCPServer({
-                wildDuckClient: mockWildDuckReplyAll, allowlist: mockAllowlistReplyAll, sendApprovalRequest: mockSendApprovalRequestReplyAll,
-            });
-            await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply all', mode: 'replyAll', senderProfile: 'formal' });
-            expect(mockSendApprovalRequestReplyAll).toHaveBeenCalledWith('alice@example.com', 'Re: Group Discussion', 88, []);
+            expect(mockSendApprovalRequestReplyAll.mock.calls).toEqual([[88, undefined]]);
+            expect(mockAllowlistReplyAll.isAllowed).not.toHaveBeenCalled();
         });
 
         test('replyAll upload payload should not contain cc (WildDuck derives recipients from reference object)', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckReplyAll,
-                allowlist:           mockAllowlistReplyAll,
-                sendApprovalRequest: mockSendApprovalRequestReplyAll,
+                wildDuckClient: mockWildDuckReplyAll,
+                allowlist:      mockAllowlistReplyAll,
+                approvalCards:  cardPort(mockSendApprovalRequestReplyAll),
             });
             const handler = getToolHandler(server, 'replyToEmail');
 
@@ -3176,24 +3176,75 @@ describe('createEmailMCPServer', () => {
     describe('deleteDraft tool', () => {
         let mockWildDuckDelete:   WildDuckClient;
         let mockDeleteMessage:    ReturnType<typeof mock>;
+        let mockGetMessageDelete: ReturnType<typeof mock>;
+        const LINKED_META = { approvalCard: { channelId: 'admin-ch', messageId: 'card-1', edits: 0 } };
 
         beforeEach(() => {
             mockDeleteMessage = mock(async () => { /* intentionally empty */ });
+            mockGetMessageDelete = mock(async (_folder: string, uid: number) => ({ id: uid, draft: true, subject: 'Hi', metaData: LINKED_META }));
             mockWildDuckDelete = {
                 deleteMessage: mockDeleteMessage,
+                getMessage:    mockGetMessageDelete,
             } as unknown as WildDuckClient;
         });
 
-        test('should delete draft and return success message', async () => {
+        test('should read, then delete the draft and return success message', async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete });
             const handler = getToolHandler(server, 'deleteDraft');
 
             const result: CallToolResult = await handler({ message: 'Drafts:42' });
 
             expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('Drafts:42');
-            expect(getText(result)).toContain('deleted');
+            expect(getText(result)).toBe('Draft Drafts:42 deleted.');
+            expect(mockGetMessageDelete).toHaveBeenCalledWith('Drafts', 42);
             expect(mockDeleteMessage).toHaveBeenCalledWith('Drafts', 42);
+            expect(mockGetMessageDelete.mock.invocationCallOrder[0]).toBeLessThan(mockDeleteMessage.mock.invocationCallOrder[0]);
+        });
+
+        test('marks the linked approval card deleted, from the pre-delete read, after the delete', async () => {
+            const markDeleted = mock(async (_draft: unknown, _uid: number) => {
+                expect(mockDeleteMessage).toHaveBeenCalledTimes(1);
+            });
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete, approvalCards: cardPort(mock(async () => 'posted'), { markDeleted }) });
+
+            const result = await getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' });
+
+            expect(markDeleted.mock.calls).toEqual([[{ id: 42, draft: true, subject: 'Hi', metaData: LINKED_META }, 42]]);
+            expect(getText(result)).toBe('Draft Drafts:42 deleted. The admin\'s approval card was marked deleted.');
+        });
+
+        test.each([
+            ['no card link', {}],
+            ['a rejection', { ...LINKED_META, rejectedAt: 'then' }],
+        ])('does not claim a card was marked for a draft with %s', async (_label, metaData) => {
+            mockGetMessageDelete.mockImplementation(async () => ({ id: 42, draft: true, metaData }));
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete, approvalCards: cardPort(mock(async () => 'posted')) });
+
+            const result = await getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' });
+
+            expect(getText(result)).toBe('Draft Drafts:42 deleted.');
+        });
+
+        test('refuses to delete a draft with an admin approval recorded', async () => {
+            mockGetMessageDelete.mockImplementation(async () => ({ id: 42, draft: true, metaData: { approval: { actionId: 'a', at: 'b' } } }));
+            const markDeleted = mock(async () => undefined);
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete, approvalCards: cardPort(mock(async () => 'posted'), { markDeleted }) });
+
+            const result = await getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Draft Drafts:42 has an admin approval recorded; it can\'t be deleted.' }], isError: true });
+            expect(mockDeleteMessage).not.toHaveBeenCalled();
+            expect(markDeleted).not.toHaveBeenCalled();
+        });
+
+        test('reports a draft that does not exist, deleting nothing', async () => {
+            mockGetMessageDelete.mockImplementation(async () => null);
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete });
+
+            const result = await getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Draft Drafts:42 not found.' }], isError: true });
+            expect(mockDeleteMessage).not.toHaveBeenCalled();
         });
 
         test('should parse UID from Drafts:UID format', async () => {
@@ -3234,30 +3285,186 @@ describe('createEmailMCPServer', () => {
         let mockUploadMessageAmend:  ReturnType<typeof mock>;
         let mockGetUserAddresses:    ReturnType<typeof mock>;
         let mockSendApprovalRequest: ReturnType<typeof mock>;
+        let mockDeleteMessageAmend:  ReturnType<typeof mock>;
 
+        const LINK = { channelId: 'admin-ch', messageId: 'card-1', edits: 1 };
         const originalDraft = {
-            id:      42,
-            subject: 'Original Subject',
-            to:      [{ address: 'original-to@example.com' }],
-            cc:      [] as { address: string }[],
-            text:    'Original body text',
+            id:       42,
+            subject:  'Original Subject',
+            to:       [{ address: 'original-to@example.com' }],
+            cc:       [] as { address: string }[],
+            text:     'Original body text',
+            metaData: {} as Record<string, unknown>,
         };
 
         beforeEach(() => {
             mockGetMessageAmend    = mock(async () => originalDraft);
-            mockUploadMessageAmend = mock(() => Promise.resolve(55));
+            mockUploadMessageAmend = mock(async () => ({ id: 55, previousDeleted: true }));
+            mockDeleteMessageAmend = mock(async () => undefined);
             mockGetUserAddresses   = mock(async () => [
                 { id: '1', address: 'formal@example.com',   name: 'Izzy Formal',   main: false, tags: ['formal']   },
                 { id: '2', address: 'informal@example.com', name: 'Izzy Informal', main: false, tags: ['informal'] },
             ]);
-            mockSendApprovalRequest = mock(async () => { /* intentionally empty */ });
+            mockSendApprovalRequest = mock(async () => 'posted');
             mockWildDuckAmend = {
                 getMessage:            mockGetMessageAmend,
-                uploadMessage:         mockUploadMessageAmend,
+                uploadReplacingDraft:  mockUploadMessageAmend,
+                deleteMessage:         mockDeleteMessageAmend,
                 getUserAddresses:      mockGetUserAddresses,
                 updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
                 updateMessageFlags:    mock(async () => { /* intentionally empty */ }),
             } as unknown as WildDuckClient;
+        });
+
+        test('uploads the new version carrying the card link with one more edit, and nothing else of the old metaData', async () => {
+            mockGetMessageAmend.mockImplementation(async () => ({
+                ...originalDraft,
+                metaData: { approvalCard: LINK, rejectedAt: 'then', reason: 'too long', previewToken: 'old', other: 'x' },
+            }));
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest) });
+
+            await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            const [payload, previousUid] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
+            expect(previousUid).toBe(42);
+            expect(payload.metaData).toEqual({ approvalCard: { ...LINK, edits: 2 } });
+            expect(mockSendApprovalRequest.mock.calls).toEqual([[55, 42]]);
+        });
+
+        test('uploads no metaData for a draft without a card link', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest) });
+
+            await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
+            expect(payload).not.toHaveProperty('metaData');
+        });
+
+        test('reports an in-place card update with its edit number', async () => {
+            mockGetMessageAmend.mockImplementation(async () => ({ ...originalDraft, metaData: { approvalCard: LINK } }));
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mock(async () => 'updated')) });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(result.isError).toBeUndefined();
+            expect(getText(result)).toBe('Draft saved as Drafts:55; the admin\'s approval card was updated in place (edit 2).');
+        });
+
+        test('reports an in-place update of an unlinked draft as its first edit', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mock(async () => 'updated')) });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(getText(result)).toBe('Draft saved as Drafts:55; the admin\'s approval card was updated in place (edit 1).');
+        });
+
+        test('refuses a draft with an admin approval recorded, uploading nothing', async () => {
+            mockGetMessageAmend.mockImplementation(async () => ({ ...originalDraft, metaData: { approval: { actionId: 'a', at: 'b' } } }));
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest) });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Draft Drafts:42 has an admin approval recorded; it can\'t be amended.' }], isError: true });
+            expect(mockUploadMessageAmend).not.toHaveBeenCalled();
+        });
+
+        test('refuses a draft already replaced, uploading nothing', async () => {
+            mockGetMessageAmend.mockImplementation(async () => ({ ...originalDraft, metaData: { supersededBy: 60 } }));
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest) });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Draft Drafts:42 was already replaced by Drafts:60.' }], isError: true });
+            expect(mockUploadMessageAmend).not.toHaveBeenCalled();
+        });
+
+        test('deletes nothing more when WildDuck reports the old draft deleted', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest) });
+
+            await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(mockDeleteMessageAmend).not.toHaveBeenCalled();
+        });
+
+        test('deletes the old draft itself when WildDuck did not, before presenting the new one', async () => {
+            mockUploadMessageAmend.mockImplementation(async () => ({ id: 55, previousDeleted: false }));
+            const markSuperseded = mock(async (_oldUid: number, _newUid: number) => true);
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest, { markSuperseded }) });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(mockDeleteMessageAmend.mock.calls).toEqual([['Drafts', 42]]);
+            expect(mockDeleteMessageAmend.mock.invocationCallOrder[0]).toBeLessThan(mockSendApprovalRequest.mock.invocationCallOrder[0]);
+            expect(markSuperseded).not.toHaveBeenCalled();
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+        });
+
+        test('treats an old draft already gone (404) as deleted', async () => {
+            mockUploadMessageAmend.mockImplementation(async () => ({ id: 55, previousDeleted: false }));
+            mockDeleteMessageAmend.mockImplementation(async () => {
+                throw new WildDuckError('WildDuck API error: 404 Not Found', undefined, { status: 404 });
+            });
+            const markSuperseded = mock(async (_oldUid: number, _newUid: number) => true);
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest, { markSuperseded }) });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(markSuperseded).not.toHaveBeenCalled();
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+        });
+
+        test('marks the old draft superseded when it cannot be deleted', async () => {
+            mockUploadMessageAmend.mockImplementation(async () => ({ id: 55, previousDeleted: false }));
+            const failure = new WildDuckError('WildDuck API error: 500', undefined, { status: 500 });
+            mockDeleteMessageAmend.mockImplementation(async () => {
+                throw failure;
+            });
+            const markSuperseded = mock(async (_oldUid: number, _newUid: number) => true);
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest, { markSuperseded }) });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(markSuperseded.mock.calls).toEqual([[42, 55]]);
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, oldUid: 42, newUid: 55, msg: 'Could not delete the amended draft’s previous version — marking it superseded' });
+        });
+
+        test('warns in the tool text when the old draft can be neither deleted nor marked superseded', async () => {
+            mockUploadMessageAmend.mockImplementation(async () => ({ id: 55, previousDeleted: false }));
+            mockDeleteMessageAmend.mockImplementation(async () => {
+                throw new Error('network down');
+            });
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest, { markSuperseded: mock(async () => false) }) });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55). Warning: the previous version Drafts:42 could not be removed; delete it with deleteDraft.');
+        });
+
+        test('without approval cards, marks the old draft superseded through the fallback', async () => {
+            mockUploadMessageAmend.mockImplementation(async () => ({ id: 55, previousDeleted: false }));
+            mockDeleteMessageAmend.mockImplementation(async () => {
+                throw new Error('network down');
+            });
+            const markSuperseded = mock(async (_oldUid: number, _newUid: number) => true);
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, markSuperseded });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(markSuperseded.mock.calls).toEqual([[42, 55]]);
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+        });
+
+        test('without approval cards or a fallback, warns that the old draft remains', async () => {
+            mockUploadMessageAmend.mockImplementation(async () => ({ id: 55, previousDeleted: false }));
+            mockDeleteMessageAmend.mockImplementation(async () => {
+                throw new Error('network down');
+            });
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend });
+
+            const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55). Warning: the previous version Drafts:42 could not be removed; delete it with deleteDraft.');
         });
 
         test('amend schema accepts multiple recipients and either identity', async () => {
@@ -3271,8 +3478,8 @@ describe('createEmailMCPServer', () => {
 
         test('should read original draft, amend, and re-upload with replacePrevious', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
@@ -3284,139 +3491,129 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('55');
             expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
             expect(mockGetMessageAmend).toHaveBeenCalledWith('Drafts', 42);
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.subject).toBe('Updated Subject');
-            expect(payload.replacePrevious).toEqual({ mailbox: 'Drafts', id: 42 });
+            expect(payload).not.toHaveProperty('replacePrevious');
+            expect(mockUploadMessageAmend.mock.calls[0]?.[1]).toBe(42);
         });
 
         test('should keep original subject when not provided', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.subject).toBe('Original Subject');
         });
 
         test('should NOT include flags field in amendAndResubmitDraft upload payload', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.flags).toBeUndefined();
         });
 
         test('should apply amended body text', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42', body: 'New body text' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.text).toBe('New body text');
         });
 
         test('should keep original body when not provided', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.text).toBe('Original body text');
         });
 
         test('should accept amended to address as plain string', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42', to: 'new-to@example.com' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.to).toEqual([{ address: 'new-to@example.com' }]);
         });
 
         test('should accept amended to as structured address object', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42', to: { name: 'Craig', email_address: 'craig@rungie.com' } });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.to).toEqual([{ name: 'Craig', address: 'craig@rungie.com' }]);
         });
 
         test('should accept amended to as array of addresses', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42', to: ['addr1@example.com', 'addr2@example.com'] });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.to).toEqual([{ address: 'addr1@example.com' }, { address: 'addr2@example.com' }]);
         });
 
         test('should keep original to addresses when not provided (already address objects from WildDuck)', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             // original.to is [{ address: 'original-to@example.com' }] from WildDuck — used directly
             expect(payload.to).toEqual([{ address: 'original-to@example.com' }]);
         });
 
-        test('should call sendApprovalRequest with new UID after re-upload', async () => {
+        test('should present the new UID, naming the replaced one, after re-upload — even to an allowlisted recipient', async () => {
+            const allowlist = { isAllowed: mock(() => true) } as unknown as PersonAllowlist;
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                allowlist,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42', subject: 'Updated' });
 
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('original-to@example.com', 'Updated', 55, undefined);
-        });
-
-        test('should join multiple to addresses with ", " separator in sendApprovalRequest', async () => {
-            const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
-            });
-            const handler = getToolHandler(server, 'amendAndResubmitDraft');
-
-            await handler({ message: 'Drafts:42', to: ['addr1@example.com', 'addr2@example.com'] });
-
-            // Two addresses joined with ', ' separator — validates join separator mutation
-            expect(mockSendApprovalRequest).toHaveBeenCalledWith('addr1@example.com, addr2@example.com', expect.any(String), 55, undefined);
+            expect(mockSendApprovalRequest.mock.calls).toEqual([[55, 42]]);
         });
 
         test('should return error when original draft not found', async () => {
@@ -3459,8 +3656,8 @@ describe('createEmailMCPServer', () => {
             });
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
@@ -3476,42 +3673,42 @@ describe('createEmailMCPServer', () => {
 
         test('should use formal from address when identity is formal', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42', senderProfile: 'formal' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect((payload.from as { address: string }).address).toBe('formal@example.com');
             expect((payload.from as { name: string }).name).toBe('Izzy Formal');
         });
 
         test('should use informal from address when identity is informal', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42', senderProfile: 'informal' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect((payload.from as { address: string }).address).toBe('informal@example.com');
             expect((payload.from as { name: string }).name).toBe('Izzy Informal');
         });
 
         test('should upload with draft flag set to true and no explicit flags field', async () => {
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
             await handler({ message: 'Drafts:42' });
 
-            const [_folder, payload] = mockUploadMessageAmend.mock.calls[0] as [string, Record<string, unknown>];
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.draft).toBe(true);
             // flags field removed — draft: true is sufficient for WildDuck
             expect(payload.flags).toBeUndefined();
@@ -3538,8 +3735,8 @@ describe('createEmailMCPServer', () => {
             mockWildDuckAmend.getMessage = mockGetMessageAmend;
 
             const server = createEmailMCPServer({
-                wildDuckClient:      mockWildDuckAmend,
-                sendApprovalRequest: mockSendApprovalRequest,
+                wildDuckClient: mockWildDuckAmend,
+                approvalCards:  cardPort(mockSendApprovalRequest),
             });
             const handler = getToolHandler(server, 'amendAndResubmitDraft');
 
@@ -3547,8 +3744,8 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             expect(mockUploadMessageAmend).toHaveBeenCalledWith(
-                'Drafts',
-                expect.objectContaining({ subject: '', text: '' })
+                expect.objectContaining({ subject: '', text: '' }),
+                42
             );
         });
     });

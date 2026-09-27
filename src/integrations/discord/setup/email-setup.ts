@@ -1,17 +1,19 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { logger } from '@hughescr/logger';
-import { type Client, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import { BLUE } from '../colors';
+import type { Client, Message } from 'discord.js';
 import { createEmailMCPServer, generateTextWithSystemPrompt, type ActivityLogger, type NotifyFn } from '@/agent';
 import type { EmailConfig } from '@/config';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
+import { approvalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
 import { EmailApprovalInteractionAdapter } from '@/integrations/discord/approvals/email-adapter';
+import type { EmailApprovalCard } from '@/integrations/discord/approvals/email-approval-card';
+import { EmailApprovalCardPresenter, type ApprovalCardChannel, type EmailApprovalCardPresenterDeps } from '@/integrations/discord/approvals/email-approval-cards';
 import { buildReviewEmbed, buildUnsafeAlert, buildRestrictedAccessEmbed } from '@/integrations/discord/approvals/email-embeds';
 import { EmailReviewHandler } from '@/integrations/discord/approvals/email-review-handler';
-import type { ChannelContent, DiscordCapability } from '@/integrations/discord/capability';
-import type { ChannelId } from '@/integrations/discord/types';
+import type { ChannelContent, DiscordCapability, SendResult } from '@/integrations/discord/capability';
+import { createChannelId, type ChannelId } from '@/integrations/discord/types';
 import {
     EmailClassifier,
     EmailProcessor,
@@ -22,9 +24,9 @@ import {
     EmailOutboundApprovals,
     type ProcessEmailCallbacks
 } from '@/integrations/email';
-import { TokenBucketRateLimiter, type ApprovedOutboundActionWriter, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
+import { TokenBucketRateLimiter, type ApprovedOutboundActionBackend, type ApprovedOutboundActionWriter, type ReconnectionLoop, type ServiceHealthRegistry } from '@/services';
 import type { DynamoDBClientHolder, PersonAllowlist } from '@/storage';
-import { encodeCustomId, retryAsync } from '@/utils';
+import { retryAsync } from '@/utils';
 
 /** Type guard: check if a Discord channel supports sending messages (has send method). */
 function isSendableChannel(channel: unknown): channel is { send: (options: unknown) => Promise<unknown> } {
@@ -79,6 +81,8 @@ export interface EmailSetupOptions {
     discordCapability?:          DiscordCapability
     /** Records admin-approved outbound actions for the services executor (and wakes it) */
     approvedActions:             ApprovedOutboundActionWriter
+    /** Reads an approved action (strongly consistent), to tell a complete approval from one whose row was never written */
+    approvedActionReader:        Pick<ApprovedOutboundActionBackend, 'get'>
     /** Pre-loaded PersonAllowlist for gating outbound email recipients */
     personAllowlist:             PersonAllowlist
     /** Allowlist interaction handler for the saga-based allowlist flow */
@@ -99,11 +103,11 @@ export interface EmailSetupResult {
     wildDuckClient:               WildDuckClient
     /** The person allowlist — exposed so the caller can wire it into AllowlistCommandHandler */
     allowlist:                    PersonAllowlist
-    /** sendApprovalRequest callback — exposed for testing the isSendableChannel type guard */
-    sendApprovalRequest:          (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
+    /** The approval card presenter the email tools drive (#158) */
+    approvalCards:                EmailApprovalCardPresenter
     /**
      * Builds a fresh email MCP server instance, closing over this setup's shared
-     * dependencies (wildDuckClient, rateLimiter, allowlist, sendApprovalRequest).
+     * dependencies (wildDuckClient, rateLimiter, allowlist, approvalCards).
      * Each call returns a brand-new `McpServerConfig` — an underlying SDK MCP server
      * instance can only be connected to one session at a time, so a second session
      * (e.g. the perch session) needing an email MCP server calls this again rather
@@ -287,74 +291,34 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // Create rate limiter for outbound email
     const rateLimiter = new TokenBucketRateLimiter({ capacity: emailConfig.sendReservoirCapacity, refillRatePerHour: emailConfig.sendReservoirRefillRatePerHour });
 
-    // Build sendApprovalRequest callback (posts approval embed to #admin channel)
-    // Retries up to 3 times on transient failures. Propagates error to caller after exhaustion.
-    const sendApprovalRequest = async (to: string, subject: string, draftUid: number, cc?: string[]): Promise<void> => {
-        const embed = new EmbedBuilder()
-            .setTitle('Outbound Email Approval Required')
-            .setColor(BLUE)
-            .addFields(
-                { name: 'To',      value: to,      inline: true  },
-                { name: 'Subject', value: subject, inline: true  },
-                // Stryker disable next-line llm: draftUid is typed number from the WildDuck draft UID, so String(n) and n.toString() are identical
-                { name: 'UID',     value: String(draftUid), inline: true }
-            );
-
-        if(cc && cc.length > 0) {
-            embed.addFields({ name: 'CC', value: cc.join(', '), inline: true });
-        }
-
-        const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder()
-                .setCustomId(encodeCustomId({ prefix: 'email-send-approve', id: String(draftUid) }))
-                .setLabel('Approve')
-                .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-                .setCustomId(encodeCustomId({ prefix: 'email-send-approveallowlist', id: String(draftUid) }))
-                .setLabel('Approve + Allowlist...')
-                .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-                .setCustomId(encodeCustomId({ prefix: 'email-send-reject', id: String(draftUid) }))
-                .setLabel('Reject')
-                .setStyle(ButtonStyle.Danger)
-        );
-
-        // When capability is available, use it for outbox fallback; otherwise retry channel.send() up to 3 times.
-        // Production always wires the capability; the direct fallback serves callers that omit it.
-        await (options.discordCapability
-            ? options.discordCapability.sendToChannel(
-                adminDiscordChannelId,
-                { embeds: [embed], components: [actionRow] },
-                { priority: 'high', type: 'email_approval' }
-            )
-            : retryAsync(async () => {
-                const channel = await client.channels.fetch(adminDiscordChannelId);
-                if(isSendableChannel(channel)) {
-                    await channel.send({ embeds: [embed], components: [actionRow] });
-                } else {
-                    throw new ChannelNotAccessibleError(adminDiscordChannelId);
-                }
-            }, retryDeps));
-    };
-
     // Create listener (not started yet — started in clientReady handler)
-    // Must be created after sendApprovalRequest and wildDuckClient are defined.
     const listener = new WildDuckListener(wildDuckClient, processor, {
         pollFallbackMs:      emailConfig.pollFallbackMs,
         sseReconnectDelayMs: emailConfig.sseReconnectDelayMs,
         healthRegistry:      options.healthRegistry,
     });
 
-    // Create the outbound approval operations and their Discord adapter (handles email-send-*
-    // button/modal and email-allowlist-select interactions)
+    // The outbound approval operations — the only writer of an existing draft's metaData, under
+    // `email-draft:<uid>` keys on the process-wide card gate — and their Discord adapter (handles
+    // email-send-* button/modal and email-allowlist-select interactions, on the same gate).
+    const outboundApprovals = new EmailOutboundApprovals({
+        wildDuckClient,
+        actionWriter:   options.approvedActions,
+        actionReader:   options.approvedActionReader,
+        draftLocks:     approvalCardEditGate,
+        activityLogger: options.activityLogger,
+        notify:         options.notify,
+    });
     const outboundApprovalHandler = new EmailApprovalInteractionAdapter({
-        approvals: new EmailOutboundApprovals({
-            wildDuckClient,
-            actionWriter:   options.approvedActions,
-            activityLogger: options.activityLogger,
-            notify:         options.notify,
-        }),
+        approvals: outboundApprovals,
         allowlist: options.allowlistInteractionHandler,
+    });
+
+    // The approval cards the email tools present, edit in place and mark deleted (#158).
+    const approvalCards = new EmailApprovalCardPresenter({
+        wildDuckClient,
+        draftMeta: outboundApprovals,
+        ...buildEmailApprovalCardTransport({ client, adminDiscordChannelId, discordCapability: options.discordCapability, retryDeps }),
     });
 
     // Create email MCP server for Claude agent. Wrapped in a factory (rather than a bare
@@ -375,7 +339,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         wildDuckClient,
         rateLimiter,
         allowlist,
-        sendApprovalRequest,
+        approvalCards,
         healthRegistry:   options.healthRegistry,
         reconnectionLoop: options.reconnectionLoop,
     });
@@ -391,8 +355,55 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         outboundApprovalHandler,
         wildDuckClient,
         allowlist,
-        sendApprovalRequest,
+        approvalCards,
         createEmailMcpServerInstance,
+    };
+}
+
+/** Dependencies for {@link buildEmailApprovalCardTransport}. */
+export interface EmailApprovalCardTransportDeps {
+    client:                Client
+    adminDiscordChannelId: ChannelId
+    /** Production always passes it; without it cards go straight to the channel, retried. */
+    discordCapability?:    DiscordCapability
+    retryDeps:             { deps?: { sleep: (ms: number) => Promise<void> } }
+}
+
+/**
+ * How the approval card presenter reaches Discord: post a card to the admin channel (through
+ * the capability, whose outbox queues it while Discord is offline; otherwise straight to the
+ * channel, retried up to 3 times, rejecting with ChannelNotAccessibleError when it cannot take
+ * messages), read a card's channel (null when unreachable or not a text channel), and reply
+ * under a card. Exported so the transport is unit-tested directly.
+ */
+export function buildEmailApprovalCardTransport(deps: EmailApprovalCardTransportDeps): Pick<EmailApprovalCardPresenterDeps, 'postCard' | 'fetchChannel' | 'reply'> {
+    const { client, adminDiscordChannelId, discordCapability, retryDeps } = deps;
+    return {
+        postCard: async (card: EmailApprovalCard): Promise<SendResult> => (discordCapability
+            ? discordCapability.sendToChannel(adminDiscordChannelId, card, { priority: 'high', type: 'email_approval' })
+            : retryAsync(async (): Promise<SendResult> => {
+                const channel = await client.channels.fetch(adminDiscordChannelId);
+                if(!isSendableChannel(channel)) {
+                    throw new ChannelNotAccessibleError(adminDiscordChannelId);
+                }
+                return { status: 'sent', message: await channel.send(card) as Message };
+            }, retryDeps)),
+        fetchChannel: async (channelId: string): Promise<ApprovalCardChannel | null> => {
+            const channel = discordCapability
+                ? await discordCapability.fetchChannel(createChannelId(channelId))
+                : await client.channels.fetch(channelId);
+            return channel?.isTextBased() === true ? channel : null;
+        },
+        reply: async (card, text): Promise<void> => {
+            if(discordCapability) {
+                await discordCapability.sendText(createChannelId(card.channelId), text, { replyToMessageId: card.messageId, priority: 'high', type: 'email_notification' });
+                return;
+            }
+            const channel = await client.channels.fetch(card.channelId);
+            if(isSendableChannel(channel)) {
+                await channel.send({ content: text, reply: { messageReference: card.messageId } });
+            }
+        },
     };
 }
 

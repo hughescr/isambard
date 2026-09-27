@@ -137,7 +137,7 @@ export interface WildDuckAttachment {
     content:     string
 }
 
-interface WildDuckUploadPayload {
+export interface WildDuckUploadPayload {
     from:             { name?: string, address: string }
     to?:              { name?: string, address: string }[]
     cc?:              { name?: string, address: string }[]
@@ -151,24 +151,40 @@ interface WildDuckUploadPayload {
     replacePrevious?: { mailbox: string, id: number }
 }
 
-interface WildDuckMessage {
-    id:         number
-    subject?:   string
-    from?:      { address: string, name?: string }
-    to?:        { address: string, name?: string }[]
-    cc?:        { address: string, name?: string }[]
+/** An attachment as WildDuck's message GET lists it. */
+export interface WildDuckMessageAttachment {
+    id:          string
+    filename:    string
+    contentType: string
+    sizeKb:      number
+    /** Decoded size in bytes, when WildDuck reports it. */
+    size?:       number
+    related?:    boolean
+}
+
+/** A message as WildDuck's `GET .../messages/:message` returns it (the fields this code reads). */
+export interface WildDuckMessage {
+    id:           number
+    subject?:     string
+    from?:        { address: string, name?: string }
+    to?:          { address: string, name?: string }[]
+    cc?:          { address: string, name?: string }[]
+    /** Returned for drafts only. */
+    bcc?:         { address: string, name?: string }[]
     /** Pre-parsed Reply-To address from WildDuck API */
-    replyTo?:   { address: string, name?: string }
-    text?:      string
-    html?:      string
-    metaData?:  Record<string, unknown>
-    flags?:     string[]
+    replyTo?:     { address: string, name?: string }
+    text?:        string
+    /** WildDuck returns the HTML body as an array of parts. */
+    html?:        string[]
+    attachments?: WildDuckMessageAttachment[]
+    metaData?:    Record<string, unknown>
+    flags?:       string[]
     /** The Message-ID header, angle brackets included. */
-    messageId?: string
+    messageId?:   string
     /** The Date header, as an ISO timestamp. WildDuck rewrites a draft's Date when it is submitted. */
-    date?:      string | null
+    date?:        string | null
     /** Whether the message is still a draft. */
-    draft?:     boolean
+    draft?:       boolean
 }
 
 export interface WildDuckMessageSummary {
@@ -207,9 +223,10 @@ interface AddressListResponse {
 }
 
 interface UploadMessageResponse {
-    success:         boolean
-    message:         { id: number, mailbox: string, size: number }
-    previousDeleted: boolean
+    success:          boolean
+    message:          { id: number, mailbox: string, size: number }
+    /** Present only for a replacePrevious upload; WildDuck may omit it. */
+    previousDeleted?: unknown
 }
 
 interface SearchResultEntry {
@@ -400,7 +417,22 @@ export class WildDuckClient {
      * Upload a message to a mailbox.
      */
     async uploadMessage(mailboxPath: string, payload: WildDuckUploadPayload): Promise<number> {
-        return this.withAuthRetry(() => this.doUploadMessage(mailboxPath, payload));
+        const response = await this.withAuthRetry(() => this.doUploadMessage(mailboxPath, payload));
+        return response.message.id;
+    }
+
+    /**
+     * Upload a new version of a draft to Drafts, asking WildDuck to delete `previousUid` once the
+     * new one is stored (`replacePrevious`). That delete is not atomic with the upload: WildDuck
+     * stores the new message first, and a failed delete still reports success. So the result
+     * carries `previousDeleted`, false unless WildDuck says the old UID is gone.
+     */
+    async uploadReplacingDraft(payload: Omit<WildDuckUploadPayload, 'replacePrevious'>, previousUid: number): Promise<{ id: number, previousDeleted: boolean }> {
+        const response = await this.withAuthRetry(() => this.doUploadMessage(EmailFolder.Drafts, {
+            ...payload,
+            replacePrevious: { mailbox: EmailFolder.Drafts, id: previousUid },
+        }));
+        return { id: response.message.id, previousDeleted: response.previousDeleted === true };
     }
 
     /**
@@ -690,12 +722,12 @@ export class WildDuckClient {
         return mailboxId;
     }
 
-    private async doUploadMessage(mailboxPath: string, payload: WildDuckUploadPayload): Promise<number> {
+    private async doUploadMessage(mailboxPath: string, payload: WildDuckUploadPayload): Promise<UploadMessageResponse> {
         const mailboxId      = this.resolveMailboxId(mailboxPath);
         const resolvedPayload = payload.replacePrevious
             ? { ...payload, replacePrevious: { mailbox: this.resolveMailboxId(payload.replacePrevious.mailbox), id: payload.replacePrevious.id } }
             : payload;
-        const response = await this.makeRequest<UploadMessageResponse>(
+        return this.makeRequest<UploadMessageResponse>(
             `/users/me/mailboxes/${mailboxId}/messages`,
             {
                 method:  'POST',
@@ -703,7 +735,6 @@ export class WildDuckClient {
                 body:    JSON.stringify(resolvedPayload),
             }
         );
-        return response.message.id;
     }
 
     private async doSubmitMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<void> {

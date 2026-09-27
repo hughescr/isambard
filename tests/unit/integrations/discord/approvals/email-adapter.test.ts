@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, mock, spyOn } from 'bun:test';
-import type { ButtonInteraction, ModalSubmitInteraction, StringSelectMenuInteraction } from 'discord.js';
+import { MessageFlags, type ButtonInteraction, type ModalSubmitInteraction, type StringSelectMenuInteraction } from 'discord.js';
 import { mockLogger } from '../../../../setup';
 import type { NotifyFn, NotifyParams } from '@/agent';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
@@ -24,6 +24,15 @@ interface EmailOutboundApprovalHandlerDeps {
     notify:                      NotifyFn
 }
 
+/** A card as Discord returns it: live controls acting on `uid`, or none. */
+function liveCard(uid: number | undefined): { components: unknown[] } {
+    return {
+        components: uid === undefined
+            ? []
+            : [{ components: [{ customId: `email-send-approve:${uid}` }, { customId: `email-send-approveallowlist:${uid}` }, { customId: `email-send-reject:${uid}` }] }],
+    };
+}
+
 async function drainMicrotasks(ticks = 10): Promise<void> {
     for(let i = 0; i < ticks; i++) {
         // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
@@ -31,11 +40,13 @@ async function drainMicrotasks(ticks = 10): Promise<void> {
     }
 }
 
-function makeAdapter(deps: EmailOutboundApprovalHandlerDeps, cardEdits?: ApprovalCardEditGate): EmailApprovalInteractionAdapter {
+function makeAdapter(deps: EmailOutboundApprovalHandlerDeps, cardEdits: ApprovalCardEditGate = new ApprovalCardEditGate()): EmailApprovalInteractionAdapter {
     return new EmailApprovalInteractionAdapter({
         approvals: new EmailOutboundApprovals({
             wildDuckClient: deps.wildDuckClient,
             actionWriter:   deps.sagaBackend,
+            actionReader:   deps.sagaBackend,
+            draftLocks:     cardEdits,
             activityLogger: deps.activityLogger,
             notify:         deps.notify,
         }),
@@ -49,10 +60,32 @@ const CARD_CHANNEL_ID = 'admin-review-channel';
 const CARD_MESSAGE_ID = 'approval-card-message';
 /** The pending card every approve path shows before recording the approval. */
 const PENDING_EMBED = { title: 'Approved ✓ — sending…', color: 0x58_65_F2 };
+const STALE_CARD = 'This button belongs to an earlier version of this draft, or the card was already decided — nothing was approved or rejected. Use the current card.';
+const CARD_UNREADABLE = 'Couldn\'t read this approval card from Discord — nothing was approved or rejected; try again.';
+
+/** The draft WildDuck stores for uid 42 unless a test says otherwise. */
+function storedDraft(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+        id:        42,
+        draft:     true,
+        messageId: '<draft-42@example.com>',
+        date:      '2026-09-23T11:59:00.000Z',
+        to:        [{ address: 'recipient@example.com' }],
+        metaData:  { approvalCard: { channelId: CARD_CHANNEL_ID, messageId: CARD_MESSAGE_ID, edits: 0 } },
+        ...overrides,
+    };
+}
 
 // ---------------------------------------------------------------------------
 // Mock factories
 // ---------------------------------------------------------------------------
+
+type CardFetch = ReturnType<typeof mock<(force: boolean) => Promise<{ components: unknown[] }>>>;
+
+/** The clicked card: Discord's fresh read shows controls acting on uid 42 unless a test says otherwise. */
+function makeCardMessage(uid: number | undefined = 42): { id: string, channelId: string, fetch: CardFetch } {
+    return { id: CARD_MESSAGE_ID, channelId: CARD_CHANNEL_ID, fetch: mock(async (_force: boolean) => liveCard(uid)) };
+}
 
 function makeButtonInteraction(customId: string, userId: string = ADMIN_USER_ID): {
     interaction: ButtonInteraction
@@ -60,21 +93,26 @@ function makeButtonInteraction(customId: string, userId: string = ADMIN_USER_ID)
     editReply:   ReturnType<typeof mock>
     reply:       ReturnType<typeof mock>
     showModal:   ReturnType<typeof mock>
+    followUp:    ReturnType<typeof mock>
+    cardFetch:   CardFetch
 } {
     const deferUpdate = mock(async () => ({}));
     const editReply   = mock(async () => ({}));
     const reply       = mock(async () => ({}));
     const showModal   = mock(async () => ({}));
+    const followUp    = mock(async () => ({}));
+    const message     = makeCardMessage();
     const interaction = {
         customId,
-        user:    { id: userId },
-        message: { id: CARD_MESSAGE_ID, channelId: CARD_CHANNEL_ID },
+        user: { id: userId },
+        message,
         deferUpdate,
         editReply,
         reply,
         showModal,
+        followUp,
     } as unknown as ButtonInteraction;
-    return { interaction, deferUpdate, editReply, reply, showModal };
+    return { interaction, deferUpdate, editReply, reply, showModal, followUp, cardFetch: message.fetch };
 }
 
 function makeModalInteraction(customId: string, reason = 'Not appropriate', messageData?: {
@@ -84,39 +122,51 @@ function makeModalInteraction(customId: string, reason = 'Not appropriate', mess
     interaction: ModalSubmitInteraction
     deferUpdate: ReturnType<typeof mock>
     editReply:   ReturnType<typeof mock>
+    followUp:    ReturnType<typeof mock>
+    cardFetch:   CardFetch
 } {
     const deferUpdate = mock(async () => ({}));
     const editReply   = mock(async () => ({}));
+    const followUp    = mock(async () => ({}));
+    const message     = {
+        ...makeCardMessage(),
+        embeds:     messageData?.embeds ?? [],
+        components: messageData?.components ?? [{ type: 1, components: [] }],
+    };
     const interaction = {
         customId,
-        user:    { id: ADMIN_USER_ID },
-        message: messageData
-            ? { embeds: messageData.embeds ?? [], components: messageData.components ?? [{ type: 1, components: [] }] }
-            : undefined,
+        user:   { id: ADMIN_USER_ID },
+        message,
         fields: {
             getTextInputValue: mock((_fieldId: string) => reason),
         },
         deferUpdate,
         editReply,
+        followUp,
     } as unknown as ModalSubmitInteraction;
-    return { interaction, deferUpdate, editReply };
+    return { interaction, deferUpdate, editReply, followUp, cardFetch: message.fetch };
 }
 
 function makeSelectMenuInteraction(customId: string, selectedValues: string[] = []): {
     interaction: StringSelectMenuInteraction
     deferUpdate: ReturnType<typeof mock>
     editReply:   ReturnType<typeof mock>
+    followUp:    ReturnType<typeof mock>
+    cardFetch:   CardFetch
 } {
     const deferUpdate = mock(async () => ({}));
     const editReply   = mock(async () => ({}));
+    const followUp    = mock(async () => ({}));
+    const message     = makeCardMessage();
     const interaction = {
         customId,
-        values:  selectedValues,
-        message: { id: CARD_MESSAGE_ID, channelId: CARD_CHANNEL_ID },
+        values: selectedValues,
+        message,
         deferUpdate,
         editReply,
+        followUp,
     } as unknown as StringSelectMenuInteraction;
-    return { interaction, deferUpdate, editReply };
+    return { interaction, deferUpdate, editReply, followUp, cardFetch: message.fetch };
 }
 
 function makeDeps(overrides: Partial<EmailOutboundApprovalHandlerDeps> = {}): EmailOutboundApprovalHandlerDeps {
@@ -124,11 +174,12 @@ function makeDeps(overrides: Partial<EmailOutboundApprovalHandlerDeps> = {}): Em
         submitMessage:         mock(async () => { /* intentionally empty */ }),
         updateMessageMetadata: mock(async () => { /* intentionally empty */ }),
         updateMessageFlags:    mock(async () => { /* intentionally empty */ }),
-        getMessage:            mock(async () => ({ id: 42, to: [{ address: 'recipient@example.com' }] })),
+        getMessage:            mock(async () => storedDraft()),
     } as unknown as WildDuckClient;
 
     const mockSagaBackend: ApprovedOutboundActionBackend = {
         create: mock(async () => { /* intentionally empty */ }),
+        get:    mock(async () => undefined),
     } as unknown as ApprovedOutboundActionBackend;
 
     const mockAllowlistInteractionHandler = {
@@ -283,22 +334,15 @@ describe('EmailApprovalInteractionAdapter', () => {
             expect(notify).toHaveBeenCalledTimes(1);
         });
 
-        test.each([
-            ['draft lookup fails',   'reject' as const],
-            ['draft has no address', 'empty' as const],
-        ])('waits for fallback approval persistence when %s', async (_name, outcome) => {
+        test('waits for fallback approval persistence when the draft has no address', async () => {
             const gate = makeDeferred();
             const started = makeDeferred();
             const create = mock(async () => {
                 started.resolve();
                 await gate.promise;
             });
-            const deps = makeDeps({ sagaBackend: { create } as unknown as ApprovedOutboundActionBackend });
-            if(outcome === 'reject') {
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('lookup unavailable'));
-            } else {
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({ id: 42, to: [], cc: [] });
-            }
+            const deps = makeDeps({ sagaBackend: { create, get: mock(async () => undefined) } as unknown as ApprovedOutboundActionBackend });
+            (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({ to: [], cc: [] }));
             const handler = makeAdapter(deps);
             const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
             const operation = handler.handleButton(interaction);
@@ -401,7 +445,8 @@ describe('EmailApprovalInteractionAdapter', () => {
         test('should read the customId uid as decimal, never as a 0x-prefixed hexadecimal number', async () => {
             const deps    = makeDeps();
             const handler = makeAdapter(deps);
-            const { interaction } = makeButtonInteraction('email-send-approve:0x2a');
+            const { interaction, cardFetch } = makeButtonInteraction('email-send-approve:0x2a');
+            cardFetch.mockImplementation(async () => liveCard(0));
 
             await handler.handleButton(interaction);
 
@@ -452,7 +497,8 @@ describe('EmailApprovalInteractionAdapter', () => {
             test('should create saga with correct type and uid param', async () => {
                 const deps    = makeDeps();
                 const handler = makeAdapter(deps);
-                const { interaction } = makeButtonInteraction('email-send-approve:99');
+                const { interaction, cardFetch } = makeButtonInteraction('email-send-approve:99');
+                cardFetch.mockImplementation(async () => liveCard(99));
 
                 await handler.handleButton(interaction);
 
@@ -463,7 +509,7 @@ describe('EmailApprovalInteractionAdapter', () => {
                 };
                 expect(createArg.type).toBe('email_send');
                 expect(createArg.state).toBe('approved');
-                expect(createArg.params.uid).toBe(99);
+                expect(createArg.params).toEqual({ uid: 99, messageId: '<draft-42@example.com>', draftDate: '2026-09-23T11:59:00.000Z' });
             });
 
             test('should NOT call allowlist interaction handler on plain approve', async () => {
@@ -603,11 +649,10 @@ describe('EmailApprovalInteractionAdapter', () => {
         describe('approve+allowlist (email-send-approveallowlist) — shows select menu', () => {
             test('should show select menu with all recipients when draft has to and cc message fields', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
-                    id: 42,
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({
                     to: [{ address: 'target@example.com' }],
                     cc: [{ address: 'cc1@example.com' }, { address: 'cc2@example.com' }],
-                });
+                }));
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
@@ -628,56 +673,57 @@ describe('EmailApprovalInteractionAdapter', () => {
 
                 await handler.handleButton(interaction);
 
-                expect(deps.wildDuckClient.getMessage).toHaveBeenCalledWith('Drafts', 42);
+                expect(deps.wildDuckClient.getMessage).toHaveBeenCalledWith('Drafts', 42, expect.any(AbortSignal));
             });
 
-            test('should fall back to simple approve when getMessage returns null (no recipients)', async () => {
+            test('marks the card of a vanished draft and approves nothing', async () => {
                 const deps = makeDeps();
                 (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(null);
                 const handler = makeAdapter(deps);
-                const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
+                const { interaction, editReply, followUp } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
-                // Falls back to simple approve — saga is created
-                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
-                expect(editReply).toHaveBeenCalledTimes(1);
+
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(followUp).not.toHaveBeenCalled();
+                const replyArg = editReply.mock.calls[0]?.[0] as { content: null, embeds: { toJSON: () => unknown }[], components: unknown[] };
+                expect(replyArg.content).toBeNull();
+                expect(replyArg.embeds.map(embed => embed.toJSON())).toEqual([{ title: 'Draft no longer exists — nothing was sent', color: 0x99_AA_B5 }]);
+                expect(replyArg.components).toEqual([]);
             });
 
-            test('should fall back to simple approve when getMessage throws', async () => {
+            test('an unreadable draft is refused privately — no fallback approve', async () => {
                 const deps = makeDeps();
                 (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockRejectedValue(new Error('fetch failed'));
                 const handler = makeAdapter(deps);
-                const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
+                const { interaction, editReply, followUp } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
-                // Falls back to simple approve — saga is created
-                expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
-                expect(mockLogger.warn).toHaveBeenCalled();
+
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(editReply).not.toHaveBeenCalled();
+                expect(followUp.mock.calls).toEqual([[{ content: 'Couldn\'t read the draft from WildDuck (fetch failed) — nothing was changed; try again.', flags: MessageFlags.Ephemeral }]]);
             });
 
             test('should fall back to simple approve when draft has no to and no cc message fields', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
-                    id: 42,
-                    to: [],
-                    cc: [],
-                });
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({ to: [], cc: [] }));
                 const handler = makeAdapter(deps);
-                const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
+                const { interaction, cardFetch } = makeButtonInteraction('email-send-approveallowlist:42');
 
                 await expect(handler.handleButton(interaction)).resolves.toBeUndefined();
-                // Falls back to simple approve — saga is created
+                // Falls back to simple approve — saga is created, after a second fresh card check
                 expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+                expect(cardFetch).toHaveBeenCalledTimes(2);
             });
 
             test('should deduplicate recipients when to appears in cc — only one Select Menu option created', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
-                    id: 42,
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({
                     // 'duplicate@example.com' appears in both to and cc
                     to: [{ address: 'duplicate@example.com' }],
                     cc: [{ address: 'duplicate@example.com' }, { address: 'other@example.com' }],
-                });
+                }));
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
@@ -703,10 +749,9 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             test('should omit missing recipient fields instead of presenting a synthetic recipient', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
-                    id: 42,
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({
                     to: [{ address: 'recipient@example.com' }],
-                });
+                }));
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
@@ -719,11 +764,10 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             test('should preserve recipient addresses and allowlist prompt text in the select menu', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
-                    id: 42,
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({
                     to: [{ address: 'recipient@example.com' }],
                     cc: [],
-                });
+                }));
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
@@ -741,13 +785,12 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             test('should omit to/cc entries that carry no address instead of offering them as recipients', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
-                    id: 42,
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({
                     // Address-less entries are what a draft with a malformed recipient looks like —
                     // they must not become selectable allowlist options.
                     to: [{ address: 'to@example.com' }, { name: 'To Without Address' }],
                     cc: [{ address: 'cc@example.com' }, { name: 'Cc Without Address' }],
-                });
+                }));
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
@@ -760,11 +803,10 @@ describe('EmailApprovalInteractionAdapter', () => {
 
             test('should offer to-recipients before cc-recipients in the select menu', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue({
-                    id: 42,
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({
                     to: [{ address: 'to1@example.com' }, { address: 'to2@example.com' }],
                     cc: [{ address: 'cc1@example.com' }],
-                });
+                }));
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
 
@@ -775,20 +817,47 @@ describe('EmailApprovalInteractionAdapter', () => {
                 expect(options.map(option => option.data.value)).toEqual(['to1@example.com', 'to2@example.com', 'cc1@example.com']);
             });
 
-            test('should log the failed draft lookup before falling back to plain approval', async () => {
-                const error = new Error('fetch failed');
+            test('refuses privately, reading nothing, when the card no longer acts on the uid', async () => {
                 const deps = makeDeps();
-                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockRejectedValue(error);
                 const handler = makeAdapter(deps);
-                const { interaction } = makeButtonInteraction('email-send-approveallowlist:42');
+                const { interaction, editReply, followUp, cardFetch } = makeButtonInteraction('email-send-approveallowlist:42');
+                cardFetch.mockImplementation(async () => liveCard(55));
 
                 await handler.handleButton(interaction);
 
-                expect(mockLogger.warn).toHaveBeenCalledWith({
-                    err: error,
-                    uid: 42,
-                    msg: 'Failed to fetch draft message before allowlist select — falling back to simple approve',
+                expect(cardFetch.mock.calls).toEqual([[true]]);
+                expect(deps.wildDuckClient.getMessage).not.toHaveBeenCalled();
+                expect(editReply).not.toHaveBeenCalled();
+                expect(followUp.mock.calls).toEqual([[{ content: STALE_CARD, flags: MessageFlags.Ephemeral }]]);
+            });
+
+            test('refuses privately when the draft was already decided', async () => {
+                const deps = makeDeps();
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({ metaData: { rejectedAt: 'earlier' } }));
+                const handler = makeAdapter(deps);
+                const { interaction, editReply, followUp } = makeButtonInteraction('email-send-approveallowlist:42');
+
+                await handler.handleButton(interaction);
+
+                expect(editReply).not.toHaveBeenCalled();
+                expect(followUp.mock.calls).toEqual([[{ content: 'This draft was already approved or rejected.', flags: MessageFlags.Ephemeral }]]);
+            });
+
+            test('holds the card while reading the recipients and showing the menu, then releases it', async () => {
+                const cardEdits = new ApprovalCardEditGate();
+                const deps = makeDeps();
+                const heldDuring: string[] = [];
+                const handler = makeAdapter(deps, cardEdits);
+                const { interaction, editReply } = makeButtonInteraction('email-send-approveallowlist:42');
+                editReply.mockImplementation(async () => {
+                    heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'free' : 'held');
+                    return {};
                 });
+
+                await handler.handleButton(interaction);
+
+                expect(heldDuring).toEqual(['held']);
+                expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
             });
         });
 
@@ -839,25 +908,28 @@ describe('EmailApprovalInteractionAdapter', () => {
         });
 
         describe('error handling', () => {
-            test('shows only the retry error, never the pending card, when sagaBackend.create fails', async () => {
+            test('a failed row write is explained privately, never shows the pending card, and leaves the card for a retry', async () => {
                 const deps = makeDeps();
                 (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB write failed'));
-                const handler = makeAdapter(deps);
-                const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
+                const cardEdits = new ApprovalCardEditGate();
+                const handler = makeAdapter(deps, cardEdits);
+                const { interaction, editReply, followUp } = makeButtonInteraction('email-send-approve:42');
 
                 await handler.handleButton(interaction);
 
-                expect(editReply).toHaveBeenCalledTimes(1);
-                expect((editReply.mock.calls[0]?.[0] as { content: string }).content).toBe('An error occurred processing your request. Please try again.');
-                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
-                    prefix: 'email-send-approve',
-                    msg:    'Outbound approval button handler failed',
-                }));
+                expect(editReply).not.toHaveBeenCalled();
+                expect(followUp.mock.calls).toEqual([[{
+                    content: 'Couldn\'t record the approval (DynamoDB write failed) — nothing will be sent until it is; try again.',
+                    flags:   MessageFlags.Ephemeral,
+                }]]);
+                expect(deps.notify).not.toHaveBeenCalled();
+                expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
             });
 
-            test('should call editReply with embeds and components cleared on error', async () => {
-                const deps = makeDeps();
-                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
+            test('should call editReply with embeds and components cleared on an unexpected error', async () => {
+                const deps = makeDeps({ activityLogger: { log: () => {
+                    throw new Error('activity logger broken');
+                } } });
                 const handler = makeAdapter(deps);
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
 
@@ -866,12 +938,17 @@ describe('EmailApprovalInteractionAdapter', () => {
                 const editReplyArg = editReply.mock.calls[0]?.[0];
                 expect(editReplyArg.embeds).toEqual([]);
                 expect(editReplyArg.components).toEqual([]);
-                expect(editReplyArg.content).toContain('error occurred');
+                expect(editReplyArg.content).toBe('An error occurred processing your request. Please try again.');
+                expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+                    prefix: 'email-send-approve',
+                    msg:    'Outbound approval button handler failed',
+                }));
             });
 
             test('should log error if editReply fails after error', async () => {
-                const deps = makeDeps();
-                (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
+                const deps = makeDeps({ activityLogger: { log: () => {
+                    throw new Error('activity logger broken');
+                } } });
                 const { interaction, editReply } = makeButtonInteraction('email-send-approve:42');
                 editReply.mockRejectedValue(new Error('Discord error'));
                 const handler = makeAdapter(deps);
@@ -1004,14 +1081,111 @@ describe('EmailApprovalInteractionAdapter', () => {
             expect((updateArgs[2] as Record<string, unknown>).subject).toBeUndefined();
         });
 
-        test('should NOT call getMessage during rejection (no metadata preservation needed)', async () => {
+        test('merges the rejection into the draft\'s metaData, keeping its card link', async () => {
             const deps    = makeDeps();
             const handler = makeAdapter(deps);
             const { interaction } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
 
             await handler.handleModalSubmit(interaction);
 
+            expect(deps.wildDuckClient.getMessage).toHaveBeenCalledWith('Drafts', 42, expect.any(AbortSignal));
+            const written = (deps.wildDuckClient.updateMessageMetadata as ReturnType<typeof mock>).mock.calls[0][2] as Record<string, unknown>;
+            expect(written.approvalCard).toEqual({ channelId: CARD_CHANNEL_ID, messageId: CARD_MESSAGE_ID, edits: 0 });
+            expect(written.reason).toBe('Bad content');
+        });
+
+        test('reads the card fresh inside the card\'s exclusive hold before rejecting, then releases it', async () => {
+            const cardEdits = new ApprovalCardEditGate();
+            const deps    = makeDeps();
+            const handler = makeAdapter(deps, cardEdits);
+            const heldDuring: string[] = [];
+            const { interaction, cardFetch } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
+            cardFetch.mockImplementation(async () => {
+                heldDuring.push(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined ? 'fetch:free' : 'fetch:held');
+                return liveCard(42);
+            });
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(heldDuring).toEqual(['fetch:held']);
+            expect(cardFetch.mock.calls).toEqual([[true]]);
+            expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
+        });
+
+        test.each([
+            ['acts on another uid', async () => liveCard(55), STALE_CARD],
+            ['has no live controls', async () => liveCard(undefined), STALE_CARD],
+            ['cannot be read', async () => {
+                throw new Error('Unknown Message');
+            }, CARD_UNREADABLE],
+        ])('refuses privately, rejecting nothing and leaving the card, when the card %s', async (_label, fetchCard, expected) => {
+            const deps    = makeDeps();
+            const handler = makeAdapter(deps);
+            const { interaction, editReply, followUp, cardFetch } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
+            cardFetch.mockImplementation(fetchCard);
+
+            await handler.handleModalSubmit(interaction);
+
             expect(deps.wildDuckClient.getMessage).not.toHaveBeenCalled();
+            expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
+            expect(editReply).not.toHaveBeenCalled();
+            expect(deps.notify).not.toHaveBeenCalled();
+            expect(followUp.mock.calls).toEqual([[{ content: expected, flags: MessageFlags.Ephemeral }]]);
+        });
+
+        test('refuses privately when the modal has no message to check', async () => {
+            const deps    = makeDeps();
+            const handler = makeAdapter(deps);
+            const { interaction, followUp } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
+            (interaction as unknown as { message: null }).message = null;
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
+            expect(followUp.mock.calls).toEqual([[{ content: CARD_UNREADABLE, flags: MessageFlags.Ephemeral }]]);
+        });
+
+        test('refuses privately when the draft was already approved (its row exists)', async () => {
+            const deps    = makeDeps();
+            (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({ metaData: { approval: { actionId: 'act-1', at: 'x' } } }));
+            (deps.sagaBackend.get as ReturnType<typeof mock>).mockResolvedValue({ id: 'act-1' });
+            const handler = makeAdapter(deps);
+            const { interaction, editReply, followUp } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
+            expect(editReply).not.toHaveBeenCalled();
+            expect(deps.notify).not.toHaveBeenCalled();
+            expect(followUp.mock.calls).toEqual([[{ content: 'This draft was already approved or rejected.', flags: MessageFlags.Ephemeral }]]);
+        });
+
+        test('marks the card of a vanished draft instead of rejecting', async () => {
+            const deps    = makeDeps();
+            (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(null);
+            const handler = makeAdapter(deps);
+            const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
+
+            await handler.handleModalSubmit(interaction);
+
+            expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
+            expect(deps.notify).not.toHaveBeenCalled();
+            const replyArg = editReply.mock.calls[0]?.[0] as { embeds: { toJSON: () => unknown }[], components: unknown[] };
+            expect(replyArg.embeds.map(embed => embed.toJSON())).toEqual([{ title: 'Draft no longer exists — nothing was sent', color: 0x99_AA_B5 }]);
+            expect(replyArg.components).toEqual([]);
+        });
+
+        test('a failure to mark a vanished draft\'s card is only logged', async () => {
+            const deps    = makeDeps();
+            (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(null);
+            const handler = makeAdapter(deps);
+            const { interaction, editReply } = makeModalInteraction('email-send-reject-reason:42', 'Bad content');
+            const failure = new Error('edit refused');
+            editReply.mockRejectedValueOnce(failure);
+
+            await expect(handler.handleModalSubmit(interaction)).resolves.toBeUndefined();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, uid: 42, msg: 'Failed to mark the approval card of a vanished draft' });
         });
 
         test('should show "Rejected" title with reason in description after reject', async () => {
@@ -1251,7 +1425,8 @@ describe('EmailApprovalInteractionAdapter', () => {
         test('should create saga with correct type and uid param', async () => {
             const deps    = makeDeps();
             const handler = makeAdapter(deps);
-            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:99', ['a@example.com']);
+            const { interaction, cardFetch } = makeSelectMenuInteraction('email-allowlist-select:99', ['a@example.com']);
+            cardFetch.mockImplementation(async () => liveCard(99));
 
             await handler.handleSelectMenu(interaction);
 
@@ -1268,7 +1443,8 @@ describe('EmailApprovalInteractionAdapter', () => {
         test('should read the customId uid as decimal, never as a 0x-prefixed hexadecimal number', async () => {
             const deps    = makeDeps();
             const handler = makeAdapter(deps);
-            const { interaction } = makeSelectMenuInteraction('email-allowlist-select:0x2a', []);
+            const { interaction, cardFetch } = makeSelectMenuInteraction('email-allowlist-select:0x2a', []);
+            cardFetch.mockImplementation(async () => liveCard(0));
 
             await handler.handleSelectMenu(interaction);
 
@@ -1325,9 +1501,41 @@ describe('EmailApprovalInteractionAdapter', () => {
             expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
         });
 
-        test('should show error editReply when sagaBackend.create throws', async () => {
+        test('a failed row write is explained privately, and nothing is allowlisted or announced', async () => {
             const deps = makeDeps();
             (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
+            const handler = makeAdapter(deps);
+            const { interaction, editReply, followUp } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com']);
+
+            await expect(handler.handleSelectMenu(interaction)).resolves.toBeUndefined();
+
+            expect(editReply).not.toHaveBeenCalled();
+            expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
+            expect(deps.notify).not.toHaveBeenCalled();
+            expect(followUp.mock.calls).toEqual([[{
+                content: 'Couldn\'t record the approval (DynamoDB failed) — nothing will be sent until it is; try again.',
+                flags:   MessageFlags.Ephemeral,
+            }]]);
+        });
+
+        test('a select from a card that no longer acts on the uid is refused privately, approving and allowlisting nothing', async () => {
+            const deps = makeDeps();
+            const handler = makeAdapter(deps);
+            const { interaction, followUp, cardFetch } = makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com']);
+            cardFetch.mockImplementation(async () => liveCard(55));
+
+            await handler.handleSelectMenu(interaction);
+
+            expect(deps.wildDuckClient.getMessage).not.toHaveBeenCalled();
+            expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+            expect(deps.allowlistInteractionHandler.startFromApproval).not.toHaveBeenCalled();
+            expect(followUp.mock.calls).toEqual([[{ content: STALE_CARD, flags: MessageFlags.Ephemeral }]]);
+        });
+
+        test('should show error editReply on an unexpected error', async () => {
+            const deps = makeDeps({ activityLogger: { log: () => {
+                throw new Error('activity logger broken');
+            } } });
             const handler = makeAdapter(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
 
@@ -1388,9 +1596,10 @@ describe('EmailApprovalInteractionAdapter', () => {
             expect(createArg.approvalCard).toEqual({ channelId: CARD_CHANNEL_ID, messageId: CARD_MESSAGE_ID });
         });
 
-        test('should log error when editReply fails after sagaBackend.create error', async () => {
-            const deps = makeDeps();
-            (deps.sagaBackend.create as ReturnType<typeof mock>).mockRejectedValue(new Error('DynamoDB failed'));
+        test('should log error when editReply fails after an unexpected error', async () => {
+            const deps = makeDeps({ activityLogger: { log: () => {
+                throw new Error('activity logger broken');
+            } } });
             const handler = makeAdapter(deps);
             const { interaction, editReply } = makeSelectMenuInteraction('email-allowlist-select:42', []);
             editReply.mockRejectedValue(new Error('Discord error'));
@@ -1472,7 +1681,7 @@ describe('EmailApprovalInteractionAdapter', () => {
 });
 
 describe('EmailApprovalInteractionAdapter over mocked operations', () => {
-    function makeOpsAdapter(recipients: string[] | undefined): {
+    function makeOpsAdapter(recipients: string[] | undefined, cardEdits?: ApprovalCardEditGate): {
         adapter: EmailApprovalInteractionAdapter
         events:  string[]
     } {
@@ -1480,13 +1689,17 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
         const approvals = {
             approveSend: mock(async (uid: number, via: string) => {
                 events.push(`approveSend:${uid}:${via}`);
+                return { status: 'recorded' };
             }),
             rejectSend: mock(async (uid: number, reason: string) => {
                 events.push(`rejectSend:${uid}:${reason}`);
+                return { status: 'rejected' };
             }),
-            draftRecipients: mock(async (uid: number) => {
-                events.push(`draftRecipients:${uid}`);
-                return recipients;
+            allowlistCandidates: mock(async (uid: number) => {
+                events.push(`allowlistCandidates:${uid}`);
+                return recipients === undefined
+                    ? { status: 'refused', reason: 'unreadable', detail: 'Couldn\'t read the draft from WildDuck (down)' }
+                    : { status: 'ok', recipients };
             }),
             announceApproved: mock((uid: number) => {
                 events.push(`announceApproved:${uid}`);
@@ -1501,10 +1714,10 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
                 return { allowlistSuffix: '' };
             }),
         };
-        return { adapter: new EmailApprovalInteractionAdapter({ approvals, allowlist }), events };
+        return { adapter: new EmailApprovalInteractionAdapter({ approvals, allowlist, cardEdits }), events };
     }
 
-    function trackInteraction<T extends { deferUpdate: ReturnType<typeof mock>, editReply: ReturnType<typeof mock> }>(parts: T, events: string[]): T {
+    function trackInteraction<T extends { deferUpdate: ReturnType<typeof mock>, editReply: ReturnType<typeof mock>, followUp: ReturnType<typeof mock>, cardFetch: CardFetch }>(parts: T, events: string[]): T {
         parts.deferUpdate.mockImplementation(async () => {
             events.push('deferUpdate');
             return {};
@@ -1512,6 +1725,14 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
         parts.editReply.mockImplementation(async () => {
             events.push('editReply');
             return {};
+        });
+        parts.followUp.mockImplementation(async () => {
+            events.push('followUp');
+            return {};
+        });
+        parts.cardFetch.mockImplementation(async () => {
+            events.push('cardFetch');
+            return liveCard(42);
         });
         return parts;
     }
@@ -1522,7 +1743,125 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
 
         await adapter.handleButton(interaction);
 
-        expect(events).toEqual(['deferUpdate', 'approveSend:42:direct', 'editReply', 'announceApproved:42']);
+        expect(events).toEqual(['deferUpdate', 'cardFetch', 'approveSend:42:direct', 'editReply', 'announceApproved:42']);
+    });
+
+    test.each([
+        ['gone', 'edits the card', ['deferUpdate', 'cardFetch', 'approveSend:42:direct', 'editReply']],
+        ['decided', 'replies privately', ['deferUpdate', 'cardFetch', 'approveSend:42:direct', 'followUp']],
+        ['unreadable', 'replies privately', ['deferUpdate', 'cardFetch', 'approveSend:42:direct', 'followUp']],
+        ['unrecorded', 'replies privately', ['deferUpdate', 'cardFetch', 'approveSend:42:direct', 'followUp']],
+    ] as const)('a %s refusal %s, never shows the pending card and never announces', async (reason, _does, expected) => {
+        mockLogger.info.mockClear();
+        const { adapter, events } = makeOpsAdapter(['a@example.com']);
+        const approvals = (adapter as unknown as { approvals: { approveSend: ReturnType<typeof mock> } }).approvals;
+        approvals.approveSend.mockImplementation(async (uid: number, via: string) => {
+            events.push(`approveSend:${uid}:${via}`);
+            return { status: 'refused', reason, detail: `detail for ${reason}` };
+        });
+        const parts = trackInteraction(makeButtonInteraction('email-send-approve:42'), events);
+
+        await adapter.handleButton(parts.interaction);
+
+        expect(events).toEqual([...expected]);
+        const content = (parts.followUp.mock.calls[0]?.[0] as { content?: string } | undefined)?.content;
+        const expectedContent = {
+            gone:       undefined,
+            decided:    'This draft was already approved or rejected.',
+            unreadable: 'detail for unreadable — nothing was changed; try again.',
+            unrecorded: 'detail for unrecorded',
+        }[reason];
+        expect(content).toBe(expectedContent);
+        expect(mockLogger.info.mock.calls).toEqual([[{ uid: 42, reason, detail: `detail for ${reason}`, msg: 'Email approval decision refused' }]]);
+    });
+
+    test('a private reply is cut to Discord\'s 2000-character limit, and a failed one is only logged', async () => {
+        const { adapter, events } = makeOpsAdapter(['a@example.com']);
+        const approvals = (adapter as unknown as { approvals: { approveSend: ReturnType<typeof mock> } }).approvals;
+        approvals.approveSend.mockImplementation(async () => ({ status: 'refused', reason: 'unrecorded', detail: 'x'.repeat(2500) }));
+        const parts = trackInteraction(makeButtonInteraction('email-send-approve:42'), events);
+        const failure = new Error('followUp failed');
+        parts.followUp.mockRejectedValueOnce(failure);
+
+        await expect(adapter.handleButton(parts.interaction)).resolves.toBeUndefined();
+
+        const content = (parts.followUp.mock.calls[0]?.[0] as { content: string }).content;
+        expect(content).toBe(`${'x'.repeat(1997)}...`);
+        expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, msg: 'Failed to send a private reply to an email approval click' });
+    });
+
+    test('takes the card key before the draft key, and holds it across the decision', async () => {
+        const acquired: string[] = [];
+        class RecordingGate extends ApprovalCardEditGate {
+            override async acquire(key: string): Promise<() => void> {
+                acquired.push(key);
+                return super.acquire(key);
+            }
+        }
+        const gate = new RecordingGate();
+        const deps = makeDeps();
+        const handler = makeAdapter(deps, gate);
+        const { interaction } = makeButtonInteraction('email-send-approve:42');
+
+        await handler.handleButton(interaction);
+
+        expect(acquired).toEqual([CARD_MESSAGE_ID, 'email-draft:42']);
+        expect(deps.sagaBackend.create).toHaveBeenCalledTimes(1);
+    });
+
+    test('a click waiting behind a repaint of its card reads the repainted card and refuses the stale uid', async () => {
+        const gate = new ApprovalCardEditGate();
+        const deps = makeDeps();
+        const handler = makeAdapter(deps, gate);
+        const { interaction, cardFetch, followUp } = makeButtonInteraction('email-send-approve:42');
+        const releaseRepaint = gate.hold(CARD_MESSAGE_ID);
+
+        const clicking = handler.handleButton(interaction);
+        await drainMicrotasks();
+        expect(cardFetch).not.toHaveBeenCalled();
+
+        cardFetch.mockImplementation(async () => liveCard(55));
+        releaseRepaint();
+        await clicking;
+
+        expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+        expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
+        expect(followUp.mock.calls).toEqual([[{ content: STALE_CARD, flags: MessageFlags.Ephemeral }]]);
+    });
+
+    test.each([
+        ['acts on another uid', async () => liveCard(55), STALE_CARD, 'stale'],
+        ['has no live controls', async () => liveCard(undefined), STALE_CARD, 'stale'],
+        ['cannot be read', async () => {
+            throw new Error('Unknown Message');
+        }, CARD_UNREADABLE, 'unreadable'],
+    ])('an approve on a card that %s is refused privately and records nothing', async (_label, fetchCard, expected, check) => {
+        mockLogger.info.mockClear();
+        const deps = makeDeps();
+        const handler = makeAdapter(deps);
+        const { interaction, cardFetch, followUp, editReply } = makeButtonInteraction('email-send-approve:42');
+        cardFetch.mockImplementation(fetchCard);
+
+        await handler.handleButton(interaction);
+
+        expect(deps.wildDuckClient.getMessage).not.toHaveBeenCalled();
+        expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+        expect(editReply).not.toHaveBeenCalled();
+        expect(deps.notify).not.toHaveBeenCalled();
+        expect(followUp.mock.calls).toEqual([[{ content: expected, flags: MessageFlags.Ephemeral }]]);
+        expect(mockLogger.info.mock.calls).toEqual([[{ uid: 42, check, msg: 'Email approval click refused: the card does not act on this draft now' }]]);
+    });
+
+    test('a card read failure is logged', async () => {
+        const deps = makeDeps();
+        const handler = makeAdapter(deps);
+        const { interaction, cardFetch } = makeButtonInteraction('email-send-approve:42');
+        const failure = new Error('Unknown Message');
+        cardFetch.mockRejectedValue(failure);
+
+        await handler.handleButton(interaction);
+
+        expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, uid: 42, msg: 'Could not read the approval card before acting on a click' });
     });
 
     test('the reject button shows the modal without acknowledging or calling an operation', async () => {
@@ -1541,7 +1880,7 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
 
         await adapter.handleModalSubmit(interaction);
 
-        expect(events).toEqual(['deferUpdate', 'rejectSend:42:Too blunt', 'editReply', 'announceRejected:42:Too blunt']);
+        expect(events).toEqual(['deferUpdate', 'cardFetch', 'rejectSend:42:Too blunt', 'editReply', 'announceRejected:42:Too blunt']);
     });
 
     test('an empty reject reason is sent as No reason given', async () => {
@@ -1561,6 +1900,7 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
 
         expect(events).toEqual([
             'deferUpdate',
+            'cardFetch',
             'approveSend:42:allowlist',
             'editReply',
             'startFromApproval:email:a@example.com',
@@ -1569,22 +1909,39 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
         ]);
     });
 
-    test('approve+allowlist with unreadable recipients falls back to a plain approve', async () => {
-        const { adapter, events } = makeOpsAdapter(undefined);
-        const { interaction } = trackInteraction(makeButtonInteraction('email-send-approveallowlist:42'), events);
+    test('a refused allowlist select allowlists nothing and announces nothing', async () => {
+        const { adapter, events } = makeOpsAdapter(['a@example.com']);
+        const approvals = (adapter as unknown as { approvals: { approveSend: ReturnType<typeof mock> } }).approvals;
+        approvals.approveSend.mockImplementation(async (uid: number, via: string) => {
+            events.push(`approveSend:${uid}:${via}`);
+            return { status: 'refused', reason: 'decided', detail: 'x' };
+        });
+        const { interaction } = trackInteraction(makeSelectMenuInteraction('email-allowlist-select:42', ['a@example.com']), events);
 
-        await adapter.handleButton(interaction);
+        await adapter.handleSelectMenu(interaction);
 
-        expect(events).toEqual(['deferUpdate', 'draftRecipients:42', 'approveSend:42:direct', 'editReply', 'announceApproved:42']);
+        expect(events).toEqual(['deferUpdate', 'cardFetch', 'approveSend:42:allowlist', 'followUp']);
     });
 
-    test('approve+allowlist with no recipients falls back to a plain approve', async () => {
-        const { adapter, events } = makeOpsAdapter([]);
+    test('approve+allowlist with an unreadable draft refuses privately — no fallback approve', async () => {
+        const { adapter, events } = makeOpsAdapter(undefined);
+        const parts = trackInteraction(makeButtonInteraction('email-send-approveallowlist:42'), events);
+
+        await adapter.handleButton(parts.interaction);
+
+        expect(events).toEqual(['deferUpdate', 'cardFetch', 'allowlistCandidates:42', 'followUp']);
+        expect(parts.followUp.mock.calls).toEqual([[{ content: 'Couldn\'t read the draft from WildDuck (down) — nothing was changed; try again.', flags: MessageFlags.Ephemeral }]]);
+    });
+
+    test('approve+allowlist with no recipients releases the card and falls back to a plain approve, checking the card again', async () => {
+        const gate = new ApprovalCardEditGate();
+        const { adapter, events } = makeOpsAdapter([], gate);
         const { interaction } = trackInteraction(makeButtonInteraction('email-send-approveallowlist:42'), events);
 
         await adapter.handleButton(interaction);
 
-        expect(events).toEqual(['deferUpdate', 'draftRecipients:42', 'approveSend:42:direct', 'editReply', 'announceApproved:42']);
+        expect(events).toEqual(['deferUpdate', 'cardFetch', 'allowlistCandidates:42', 'cardFetch', 'approveSend:42:direct', 'editReply', 'announceApproved:42']);
+        expect(gate.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
     });
 
     test('approve+allowlist with recipients shows the select menu and approves nothing yet', async () => {
@@ -1593,7 +1950,20 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
 
         await adapter.handleButton(interaction);
 
-        expect(events).toEqual(['deferUpdate', 'draftRecipients:42', 'editReply']);
+        expect(events).toEqual(['deferUpdate', 'cardFetch', 'allowlistCandidates:42', 'editReply']);
+    });
+
+    test('approve+allowlist on a stale card refuses privately and reads no recipients', async () => {
+        const { adapter, events } = makeOpsAdapter(['a@example.com']);
+        const parts = trackInteraction(makeButtonInteraction('email-send-approveallowlist:42'), events);
+        parts.cardFetch.mockImplementation(async () => {
+            events.push('cardFetch');
+            return liveCard(55);
+        });
+
+        await adapter.handleButton(parts.interaction);
+
+        expect(events).toEqual(['deferUpdate', 'cardFetch', 'followUp']);
     });
 
     test('a NaN uid calls no operation and does not acknowledge', async () => {

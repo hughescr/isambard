@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { EmbedBuilder, type ButtonInteraction, type ModalSubmitInteraction } from 'discord.js';
 import { mockLogger } from '../../../../setup';
+import { ApprovalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
 import {
     APPROVAL_AMBER,
     APPROVAL_GREEN,
@@ -82,10 +83,14 @@ class TestOutboundApprovalHandler extends DiscordOutboundApprovalInteractionHand
     async exposedReplyWithApprovalError(interaction: ButtonInteraction, title: string): Promise<void> {
         await this.replyWithApprovalError(interaction, title);
     }
+
+    async exposedRecordApprovalThenShowPending(interaction: ButtonInteraction, record: (card: { channelId: string, messageId: string }) => Promise<boolean>): Promise<boolean> {
+        return this.recordApprovalThenShowPending(interaction, 'Pending…', record);
+    }
 }
 
-function makeHandler(): TestOutboundApprovalHandler {
-    return new TestOutboundApprovalHandler();
+function makeHandler(cardEdits?: ApprovalCardEditGate): TestOutboundApprovalHandler {
+    return new TestOutboundApprovalHandler(cardEdits);
 }
 
 function makeButtonInteraction(customId: string): {
@@ -171,6 +176,54 @@ describe('DiscordOutboundApprovalInteractionHandler', () => {
             const interaction = { message: { channelId: 'ch-1', id: 'msg-1' } } as unknown as ButtonInteraction;
 
             expect(makeHandler().exposedApprovalCardRef(interaction)).toEqual({ channelId: 'ch-1', messageId: 'msg-1' });
+        });
+    });
+
+    describe('recordApprovalThenShowPending()', () => {
+        function cardInteraction(): { interaction: ButtonInteraction, editReply: ReturnType<typeof mock> } {
+            const editReply = mock(async () => ({}));
+            return { interaction: { message: { channelId: 'ch-1', id: 'msg-1' }, editReply } as unknown as ButtonInteraction, editReply };
+        }
+
+        test('records under the card\'s exclusive hold, then shows the pending card, and resolves true', async () => {
+            const cardEdits = new ApprovalCardEditGate();
+            const { interaction, editReply } = cardInteraction();
+            const seen: string[] = [];
+
+            const recorded = await makeHandler(cardEdits).exposedRecordApprovalThenShowPending(interaction, async (card) => {
+                seen.push(`${card.channelId}/${card.messageId}:${cardEdits.pendingEdit('msg-1') === undefined ? 'free' : 'held'}`);
+                return true;
+            });
+
+            expect(recorded).toBe(true);
+            expect(seen).toEqual(['ch-1/msg-1:held']);
+            expect(editReply.mock.calls).toEqual([[{ content: null, embeds: [expect.any(EmbedBuilder)], components: [] }]]);
+            expect(cardEdits.pendingEdit('msg-1')).toBeUndefined();
+        });
+
+        test('a refused record shows no pending card, resolves false and releases the card', async () => {
+            const cardEdits = new ApprovalCardEditGate();
+            const { interaction, editReply } = cardInteraction();
+
+            expect(await makeHandler(cardEdits).exposedRecordApprovalThenShowPending(interaction, async () => false)).toBe(false);
+            expect(editReply).not.toHaveBeenCalled();
+            expect(cardEdits.pendingEdit('msg-1')).toBeUndefined();
+        });
+
+        test('waits for another exclusive holder of the card before recording', async () => {
+            const cardEdits = new ApprovalCardEditGate();
+            const { interaction } = cardInteraction();
+            const releaseOther = cardEdits.hold('msg-1');
+            const record = mock(async () => true);
+
+            const recording = makeHandler(cardEdits).exposedRecordApprovalThenShowPending(interaction, record);
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(record).not.toHaveBeenCalled();
+
+            releaseOther();
+            expect(await recording).toBe(true);
+            expect(record).toHaveBeenCalledTimes(1);
         });
     });
 

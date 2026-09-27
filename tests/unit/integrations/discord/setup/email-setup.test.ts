@@ -10,14 +10,17 @@
  */
 import { describe, it, expect, mock, beforeEach, spyOn } from 'bun:test';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { ButtonStyle, type Client } from 'discord.js';
+import type { ButtonInteraction, Client } from 'discord.js';
 import { mockLogger } from '../../../../setup';
 import type { NotifyParams } from '@/agent';
 import { createChannelId } from '@/agent/types';
 import { ChannelNotAccessibleError } from '@/errors';
 import type { AllowlistInteractionHandler } from '@/integrations/discord/allowlist-interaction-handler';
+import { approvalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
+import type { EmailApprovalCard } from '@/integrations/discord/approvals/email-approval-card';
+import { EmailApprovalCardPresenter } from '@/integrations/discord/approvals/email-approval-cards';
 import { buildReviewEmbed, buildUnsafeAlert } from '@/integrations/discord/approvals/email-embeds';
-import { setupEmail, buildEmailProcessorCallbacks, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
+import { setupEmail, buildEmailApprovalCardTransport, buildEmailProcessorCallbacks, type EmailSetupOptions } from '@/integrations/discord/setup/email-setup';
 import { type EmailMetadata, type ClassifierVerdict, WildDuckClient, ClassifierVerdictType, EmailFolder  } from '@/integrations/email';
 import type { ApprovedOutboundActionBackend } from '@/services';
 import type { PersonAllowlist } from '@/storage';
@@ -129,8 +132,9 @@ describe('setupEmail — isSendableChannel type guard', () => {
                 updateMessageFlags: mock(async () => undefined),
                 getMessage:         mock(async () => null),
             } as unknown as WildDuckClient,
-            approvedActions: {} as unknown as ApprovedOutboundActionBackend,
-            personAllowlist: {
+            approvedActions:      {} as unknown as ApprovedOutboundActionBackend,
+            approvedActionReader: { get: mock(async () => undefined) },
+            personAllowlist:      {
                 isAllowed:       mock((_platform: string, _value: string) => false),
                 isPersonAllowed: mock(() => false),
                 addPerson:       mock(async () => {}),
@@ -149,143 +153,108 @@ describe('setupEmail — isSendableChannel type guard', () => {
         };
     });
 
-    it('throws ChannelNotAccessibleError when channel.fetch returns a non-object (string)', async () => {
-        options.client = {
-            channels: {
-                fetch: mock(async () => 'not-a-channel'),
-            },
-        } as unknown as Client;
-
+    it('exposes the approval card presenter, wired to the email tools', async () => {
+        const getMessage = mock(async () => null);
+        options.wildDuckClient = { ...options.wildDuckClient, getMessage } as unknown as WildDuckClient;
         const result = await setupEmail(options);
 
-        // Call sendApprovalRequest — isSendableChannel('not-a-channel') → false → throws
-        await expect(
-            result.sendApprovalRequest('to@example.com', 'Test Subject', 123)
-        ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
+        expect(result.approvalCards).toBeInstanceOf(EmailApprovalCardPresenter);
+        expect(await result.approvalCards.present(9)).toBe('missing');
+        expect(getMessage).toHaveBeenCalledWith('Drafts', 9);
     });
 
-    it('throws ChannelNotAccessibleError when channel.fetch returns null', async () => {
-        options.client = {
-            channels: {
-                fetch: mock(async () => null),
-            },
-        } as unknown as Client;
+    it('decides clicks under the process-wide card gate, on the draft\'s key after the card\'s', async () => {
+        const getMessage = mock(async () => ({ id: 5, draft: true, messageId: '<m@x>', date: '2026-09-27T00:00:00.000Z', metaData: {} }));
+        const create = mock(async () => undefined);
+        options.wildDuckClient = { ...options.wildDuckClient, getMessage, updateMessageMetadata: mock(async () => undefined) } as unknown as WildDuckClient;
+        options.approvedActions = { create };
+        const result = await setupEmail(options);
+        const interaction = {
+            customId:    'email-send-approve:5',
+            message:     { id: 'card-5', channelId: 'admin', fetch: mock(async () => ({ components: [{ components: [{ customId: 'email-send-approve:5' }] }] })) },
+            deferUpdate: mock(async () => ({})),
+            editReply:   mock(async () => ({})),
+            followUp:    mock(async () => ({})),
+        } as unknown as ButtonInteraction;
+        const releaseDraft = approvalCardEditGate.hold('email-draft:5');
 
+        const clicking = result.outboundApprovalHandler.handleButton(interaction);
+        await drainMicrotasks();
+        expect(approvalCardEditGate.pendingEdit('card-5')).toBeDefined();
+        expect(getMessage).not.toHaveBeenCalled();
+
+        releaseDraft();
+        await clicking;
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(approvalCardEditGate.pendingEdit('card-5')).toBeUndefined();
+    });
+
+    it('reads the approved-action row through the configured reader, refusing a click on a completed approval', async () => {
+        const getMessage = mock(async () => ({ id: 6, draft: true, messageId: '<m@x>', date: '2026-09-27T00:00:00.000Z', metaData: { approval: { actionId: 'act-6', at: 'x' } } }));
+        const get = mock(async (_id: string) => ({ id: 'act-6' }));
+        const create = mock(async () => undefined);
+        options.wildDuckClient = { ...options.wildDuckClient, getMessage } as unknown as WildDuckClient;
+        options.approvedActions = { create };
+        options.approvedActionReader = { get } as unknown as EmailSetupOptions['approvedActionReader'];
+        const result = await setupEmail(options);
+        const followUp = mock(async () => ({}));
+        const interaction = {
+            customId:    'email-send-approve:6',
+            message:     { id: 'card-6', channelId: 'admin', fetch: mock(async () => ({ components: [{ components: [{ customId: 'email-send-approve:6' }] }] })) },
+            deferUpdate: mock(async () => ({})),
+            editReply:   mock(async () => ({})),
+            followUp,
+        } as unknown as ButtonInteraction;
+
+        await result.outboundApprovalHandler.handleButton(interaction);
+
+        expect(get.mock.calls).toEqual([['act-6']]);
+        expect(create).not.toHaveBeenCalled();
+        expect(followUp).toHaveBeenCalledWith({ content: 'This draft was already approved or rejected.', flags: 64 });
+    });
+
+    it('marks an amended draft superseded through the approvals when neither delete worked', async () => {
+        const getMessage = mock(async () => ({ id: 42, draft: true, to: [{ address: 'a@example.com' }], metaData: {} }));
+        const updateMessageMetadata = mock(async () => undefined);
+        options.wildDuckClient = {
+            ...options.wildDuckClient,
+            getUserAddresses:     mock(async () => [{ address: 'formal@example.com', tags: ['formal'] }]),
+            getMessage,
+            updateMessageMetadata,
+            uploadReplacingDraft: mock(async () => ({ id: 55, previousDeleted: false })),
+            deleteMessage:        mock(async () => {
+                throw new Error('delete failed');
+            }),
+        } as unknown as WildDuckClient;
+        options.discordCapability = { sendToChannel: mock(async () => ({ status: 'queued', outboxId: 'o' })) } as never;
         const result = await setupEmail(options);
 
-        // null: isSendableChannel → false → throws
-        await expect(
-            result.sendApprovalRequest('to@example.com', 'Test Subject', 123)
-        ).rejects.toBeInstanceOf(ChannelNotAccessibleError);
+        const response = await getToolHandler(result, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+        expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', 42, { supersededBy: 55 });
+        expect((response.content[0] as { text: string }).text).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
     });
 
-    it('sends message when channel.fetch returns a sendable channel (object with send method)', async () => {
-        const mockSend = mock(async (_payload: unknown) => undefined);
-        options.client = {
-            channels: {
-                fetch: mock(async () => ({ send: mockSend })),
-            },
-        } as unknown as Client;
-
-        const result = await setupEmail(options);
-
-        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123, ['copy@example.com']);
-
-        expect(mockSend).toHaveBeenCalledTimes(1);
-        const payload = mockSend.mock.calls[0]?.[0] as { embeds: { toJSON: () => { fields?: { name: string, value: string }[] } }[], components: unknown[] };
-        expect(payload.embeds[0]?.toJSON().fields).toContainEqual(expect.objectContaining({
-            name: 'CC', value: 'copy@example.com',
-        }));
-        expect(payload.embeds[0]?.toJSON().fields).toEqual(expect.arrayContaining([
-            expect.objectContaining({ name: 'To', value: 'to@example.com', inline: true }),
-            expect.objectContaining({ name: 'Subject', value: 'Test Subject', inline: true }),
-            expect.objectContaining({ name: 'UID', value: '123', inline: true }),
-        ]));
-        expect(payload.components).toHaveLength(1);
-    });
-
-    it('omits the CC field when no copies are supplied', async () => {
-        const mockSend = mock(async (_payload: unknown) => undefined);
-        options.client = { channels: { fetch: mock(async () => ({ send: mockSend })) } } as unknown as Client;
-        const result = await setupEmail(options);
-        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123);
-        const payload = mockSend.mock.calls[0]?.[0] as { embeds: { toJSON: () => { fields?: { name: string }[] } }[] };
-        expect(payload.embeds[0]?.toJSON().fields?.some(field => field.name === 'CC')).toBe(false);
-    });
-
-    it('omits CC for an empty recipient list and preserves the comma separator and inline layout when recipients exist', async () => {
-        const mockSend = mock(async (_payload: unknown) => undefined);
-        options.client = { channels: { fetch: mock(async () => ({ send: mockSend })) } } as unknown as Client;
-        const result = await setupEmail(options);
-
-        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123, []);
-        let fields = (mockSend.mock.calls[0]?.[0] as { embeds: { toJSON: () => { fields?: { name: string, value: string, inline: boolean }[] } }[] }).embeds[0]?.toJSON().fields ?? [];
-        expect(fields.some(field => field.name === 'CC')).toBe(false);
-
-        await result.sendApprovalRequest('to@example.com', 'Test Subject', 124, ['one@example.com', 'two@example.com']);
-        fields = (mockSend.mock.calls[1]?.[0] as { embeds: { toJSON: () => { fields?: { name: string, value: string, inline: boolean }[] } }[] }).embeds[0]?.toJSON().fields ?? [];
-        expect(fields).toContainEqual(expect.objectContaining({ name: 'CC', value: 'one@example.com, two@example.com', inline: true }));
-    });
-
-    it('uses the configured retry policy and injected sleep when direct Discord delivery repeatedly fails', async () => {
+    it('posts approval cards directly with the injected retry sleep when there is no Discord capability', async () => {
         const sleep = mock(async (_ms: number) => undefined);
         const fetch = mock(async () => {
             throw new Error('Discord temporarily unavailable');
         });
         options.client = { channels: { fetch } } as unknown as Client;
         options._deps = { sleep };
+        options.wildDuckClient = { ...options.wildDuckClient, getMessage: mock(async () => ({ id: 3, draft: true, metaData: {} })) } as unknown as WildDuckClient;
         const result = await setupEmail(options);
 
-        await expect(result.sendApprovalRequest('to@example.com', 'Test Subject', 123)).rejects.toThrow('Discord temporarily unavailable');
+        expect(await result.approvalCards.present(3)).toBe('failed');
 
         expect(fetch).toHaveBeenCalledTimes(3);
         expect(sleep).toHaveBeenCalledTimes(2);
-    });
-
-    it('direct Discord delivery fetches the admin review channel passed as its own setup option', async () => {
-        const fetch = mock(async (_channelId: string) => ({ send: mock(async () => undefined) }));
-        options.client = { channels: { fetch } } as unknown as Client;
-        const result = await setupEmail(options);
-
-        await result.sendApprovalRequest('to@example.com', 'Test Subject', 123);
-
-        expect(fetch).toHaveBeenCalledWith(ADMIN_REVIEW_CHANNEL_ID);
     });
 
     it('does not expose the admin review channel on the email setup result', async () => {
         const result = await setupEmail(options);
 
         expect(result).not.toHaveProperty('adminChannelId');
-    });
-
-    it('passes the complete approval payload and high-priority outbox metadata to Discord capability', async () => {
-        const sendToChannel = mock<(channelId: string, payload: unknown, metadata: unknown) => Promise<{ status: 'sent' }>>(async () => ({ status: 'sent' as const }));
-        options.discordCapability = { sendToChannel } as never;
-        const result = await setupEmail(options);
-
-        await result.sendApprovalRequest('to@example.com', 'Capability subject', 321);
-
-        expect(sendToChannel).toHaveBeenCalledTimes(1);
-        const [channelId, payload, metadata] = sendToChannel.mock.calls[0];
-        expect(channelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
-        expect((payload as { embeds: unknown[], components: unknown[] }).embeds).toHaveLength(1);
-        expect((payload as { embeds: unknown[], components: unknown[] }).components).toHaveLength(1);
-        expect(metadata).toEqual({ priority: 'high', type: 'email_approval' });
-    });
-
-    it('creates distinct, correctly styled approval actions that target the requested draft', async () => {
-        const mockSend = mock(async (_payload: unknown) => undefined);
-        options.client = { channels: { fetch: mock(async () => ({ send: mockSend })) } } as unknown as Client;
-        const result = await setupEmail(options);
-
-        await result.sendApprovalRequest('to@example.com', 'Test Subject', 321);
-
-        const payload = mockSend.mock.calls[0]?.[0] as { components: { toJSON: () => { components: { type: number, custom_id: string, label: string, style: ButtonStyle }[] } }[] };
-        expect(payload.components[0]?.toJSON().components).toEqual([
-            { type: 2, custom_id: 'email-send-approve:321', label: 'Approve', style: ButtonStyle.Success },
-            { type: 2, custom_id: 'email-send-approveallowlist:321', label: 'Approve + Allowlist...', style: ButtonStyle.Primary },
-            { type: 2, custom_id: 'email-send-reject:321', label: 'Reject', style: ButtonStyle.Danger },
-        ]);
     });
 
     it('creates and initializes WildDuck when no client is provided, and logs the lifecycle', async () => {
@@ -334,37 +303,107 @@ describe('setupEmail — isSendableChannel type guard', () => {
             }
         }
     });
+});
 
-    it('does not finish an approval request until direct Discord delivery completes', async () => {
+describe('buildEmailApprovalCardTransport', () => {
+    const CARD: EmailApprovalCard = { embeds: [], components: [] };
+    const REF = { channelId: 'admin-ch', messageId: 'card-1' };
+
+    function transport(client: unknown, discordCapability?: unknown, sleep = noopSleep): ReturnType<typeof buildEmailApprovalCardTransport> {
+        return buildEmailApprovalCardTransport({
+            client:                client as Client,
+            adminDiscordChannelId: ADMIN_REVIEW_CHANNEL_ID,
+            discordCapability:     discordCapability as never,
+            retryDeps:             { deps: { sleep } },
+        });
+    }
+
+    it('posts a card through the capability with high-priority approval outbox metadata', async () => {
+        const sendToChannel = mock(async (_channelId: string, _payload: unknown, _metadata: unknown) => ({ status: 'queued' as const, outboxId: 'o1' }));
+
+        expect(await transport({}, { sendToChannel }).postCard(CARD)).toEqual({ status: 'queued', outboxId: 'o1' });
+        expect(sendToChannel.mock.calls).toEqual([[ADMIN_REVIEW_CHANNEL_ID, CARD, { priority: 'high', type: 'email_approval' }]]);
+    });
+
+    it('posts a card straight to the admin review channel without a capability, returning the sent message', async () => {
+        const message = { id: 'card-9', channelId: ADMIN_REVIEW_CHANNEL_ID };
+        const send = mock(async (_payload: unknown) => message);
+        const fetch = mock(async (_channelId: string) => ({ send }));
+
+        expect(await transport({ channels: { fetch } }).postCard(CARD)).toEqual({ status: 'sent', message: message as never });
+        expect(fetch.mock.calls).toEqual([[ADMIN_REVIEW_CHANNEL_ID]]);
+        expect(send.mock.calls).toEqual([[CARD]]);
+    });
+
+    it.each([
+        ['a non-object', 'not-a-channel'],
+        ['null', null],
+    ])('rejects with ChannelNotAccessibleError when the admin channel is %s, after retrying', async (_label, channel) => {
+        const sleep = mock(async (_ms: number) => undefined);
+        const fetch = mock(async () => channel);
+
+        await expect(transport({ channels: { fetch } }, undefined, sleep).postCard(CARD)).rejects.toBeInstanceOf(ChannelNotAccessibleError);
+        expect(fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not finish a direct post until Discord has taken it', async () => {
         const gate = makeDeferred();
         const started = makeDeferred();
-        const deliveryFinished = makeDeferred();
-        const order: string[] = [];
         const send = mock(async () => {
             started.resolve();
             await gate.promise;
-            order.push('delivery');
-            deliveryFinished.resolve();
+            return { id: 'm' };
         });
-        options.client = { channels: { fetch: mock(async () => ({ send })) } } as unknown as Client;
-        const result = await setupEmail(options);
-        const operation = result.sendApprovalRequest('to@example.com', 'Deferred delivery', 456);
-        void operation.then(() => {
-            order.push('operation');
-            return undefined;
-        });
+        const operation = transport({ channels: { fetch: mock(async () => ({ send })) } }).postCard(CARD);
 
-        try {
-            await started.promise;
-            await drainMicrotasks();
-            expect(Bun.peek.status(operation)).toBe('pending');
-        } finally {
-            gate.resolve();
-            await operation;
-            await deliveryFinished.promise;
-        }
+        await started.promise;
+        await drainMicrotasks();
+        expect(Bun.peek.status(operation)).toBe('pending');
+        gate.resolve();
+        expect(await operation).toEqual({ status: 'sent', message: { id: 'm' } as never });
+    });
 
-        expect(order).toEqual(['delivery', 'operation']);
+    it('reads a card\'s channel through the capability, keeping only a text channel', async () => {
+        const textChannel = { isTextBased: () => true };
+        const fetchChannel = mock(async (_channelId: string) => textChannel);
+
+        expect(await transport({}, { fetchChannel }).fetchChannel('admin-ch')).toBe(textChannel as never);
+        expect(fetchChannel.mock.calls).toEqual([['admin-ch']]);
+
+        fetchChannel.mockImplementation(async () => ({ isTextBased: () => false }));
+        expect(await transport({}, { fetchChannel }).fetchChannel('admin-ch')).toBeNull();
+
+        fetchChannel.mockImplementation(async () => null as never);
+        expect(await transport({}, { fetchChannel }).fetchChannel('admin-ch')).toBeNull();
+    });
+
+    it('reads a card\'s channel straight from the client without a capability', async () => {
+        const textChannel = { isTextBased: () => true };
+        const fetch = mock(async (_channelId: string) => textChannel);
+
+        expect(await transport({ channels: { fetch } }).fetchChannel('admin-ch')).toBe(textChannel as never);
+        expect(fetch.mock.calls).toEqual([['admin-ch']]);
+    });
+
+    it('replies under a card through the capability, as a high-priority notification', async () => {
+        const sendText = mock(async (_channelId: string, _text: string, _options: unknown) => ({ status: 'sent' }));
+
+        await transport({}, { sendText }).reply(REF, 'Edited');
+
+        expect(sendText.mock.calls).toEqual([['admin-ch', 'Edited', { replyToMessageId: 'card-1', priority: 'high', type: 'email_notification' }]]);
+    });
+
+    it('replies under a card straight to its channel without a capability, and skips a channel that cannot take messages', async () => {
+        const send = mock(async (_payload: unknown) => ({}));
+        const fetch = mock(async (_channelId: string) => ({ send }));
+
+        await transport({ channels: { fetch } }).reply(REF, 'Edited');
+
+        expect(fetch.mock.calls).toEqual([['admin-ch']]);
+        expect(send.mock.calls).toEqual([[{ content: 'Edited', reply: { messageReference: 'card-1' } }]]);
+
+        fetch.mockImplementation(async () => null as never);
+        await expect(transport({ channels: { fetch } }).reply(REF, 'Edited')).resolves.toBeUndefined();
     });
 });
 
@@ -387,8 +426,9 @@ describe('setupEmail — createEmailMcpServerInstance', () => {
                 updateMessageFlags: mock(async () => undefined),
                 getMessage:         mock(async () => null),
             } as unknown as WildDuckClient,
-            approvedActions: {} as unknown as ApprovedOutboundActionBackend,
-            personAllowlist: {
+            approvedActions:      {} as unknown as ApprovedOutboundActionBackend,
+            approvedActionReader: { get: mock(async () => undefined) },
+            personAllowlist:      {
                 isAllowed:       mock((_platform: string, _value: string) => false),
                 isPersonAllowed: mock(() => false),
                 addPerson:       mock(async () => {}),

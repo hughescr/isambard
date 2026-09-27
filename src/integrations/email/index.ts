@@ -32,10 +32,22 @@ export type { ProcessEmailCallbacks } from './email-processor';
 export { WildDuckListener } from './wildduck-listener';
 export type { WildDuckListenerConfig } from './wildduck-listener';
 export { WildDuckClient } from './wildduck-client';
-export type { WildDuckAttachment, WildDuckAttachmentMeta } from './wildduck-client';
+export type { WildDuckAttachment, WildDuckAttachmentMeta, WildDuckMessage, WildDuckMessageAttachment, WildDuckUploadPayload } from './wildduck-client';
+export { amendedDraftMeta, draftLockKey, hasDecisionMarker, mergeDraftMeta, readDraftApprovalMeta } from './draft-approval-meta';
+export type { DraftApprovalCardLink, DraftApprovalMarker, DraftApprovalMeta, DraftLocks } from './draft-approval-meta';
+export { buildDraftSummary, DRAFT_SNIPPET_MAX_CODE_POINTS } from './draft-summary';
+export type { DraftSummary } from './draft-summary';
 export { EmailOutboundApprovals, emailSendParamsSchema } from './outbound-approvals';
 export { checkEmailSendDelivery } from './delivery-check';
-export type { EmailOutboundApprovalsDeps, EmailApprovalRoute } from './outbound-approvals';
+export type {
+    EmailOutboundApprovalsDeps,
+    EmailApprovalRoute,
+    EmailDecisionRefusal,
+    EmailDecisionRefusalReason,
+    ApproveSendResult,
+    RejectSendResult,
+    AllowlistCandidatesResult
+} from './outbound-approvals';
 export { EmailHistoryProvider } from './history-provider';
 export { DRAFT_STATE_FLAG, searchDraftsByReviewState, markDraftReviewState } from './draft-review-state';
 export type { DraftReviewState } from './draft-review-state';

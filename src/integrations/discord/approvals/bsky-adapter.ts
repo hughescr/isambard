@@ -267,6 +267,7 @@ export class BskyApprovalInteractionAdapter extends DiscordOutboundApprovalInter
         // base handler, which shows the retry error.
         await this.recordApprovalThenShowPending(interaction, 'Approved ✓ — posting…', async (card) => {
             await this.approvals.approveReply({ text, parentUri, parentCid, rootUri, rootCid }, card);
+            return true;
         });
     }
 
@@ -316,6 +317,7 @@ export class BskyApprovalInteractionAdapter extends DiscordOutboundApprovalInter
         // Record the approval, then show the pending card (see handleApprove).
         await this.recordApprovalThenShowPending(interaction, 'DM approved ✓ — sending…', async (card) => {
             await this.approvals.approveDm({ text, convoId }, card);
+            return true;
         });
     }
 

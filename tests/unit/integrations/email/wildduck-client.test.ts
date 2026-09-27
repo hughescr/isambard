@@ -1134,6 +1134,54 @@ describe('WildDuckClient', () => {
     });
 
     // -----------------------------------------------------------------------
+    // uploadReplacingDraft() (#158)
+    // -----------------------------------------------------------------------
+    describe('uploadReplacingDraft()', () => {
+        const DRAFT_PAYLOAD = {
+            from:     { name: 'Isambard', address: 'isambard@rungie.com' },
+            to:       [{ address: 'recipient@example.com' }],
+            subject:  'Hello',
+            text:     'Body text',
+            draft:    true,
+            metaData: { approvalCard: { channelId: 'c', messageId: 'm', edits: 1 } },
+        };
+
+        test('POSTs the payload to Drafts with replacePrevious naming the old uid in Drafts, and returns the new id and previousDeleted', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, message: { id: 55, mailbox: 'mbx-drafts', size: 1 }, previousDeleted: true }));
+
+            const result = await client.uploadReplacingDraft(DRAFT_PAYLOAD, 42);
+
+            expect(result).toEqual({ id: 55, previousDeleted: true });
+            const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-drafts/messages');
+            expect(options.method).toBe('POST');
+            expect(JSON.parse(options.body as string)).toEqual({ ...DRAFT_PAYLOAD, replacePrevious: { mailbox: 'mbx-drafts', id: 42 } });
+        });
+
+        test.each([
+            ['false', { previousDeleted: false }],
+            ['missing', {}],
+            ['not a boolean', { previousDeleted: 'yes' }],
+        ])('reports previousDeleted false when WildDuck reports it %s', async (_label, extra) => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, message: { id: 56, mailbox: 'mbx-drafts', size: 1 }, ...extra }));
+
+            expect(await client.uploadReplacingDraft(DRAFT_PAYLOAD, 42)).toEqual({ id: 56, previousDeleted: false });
+        });
+
+        test('retries once on 401 by re-authenticating', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, message: { id: 57, mailbox: 'mbx-drafts', size: 1 }, previousDeleted: true }));
+
+            expect(await client.uploadReplacingDraft(DRAFT_PAYLOAD, 42)).toEqual({ id: 57, previousDeleted: true });
+            expect(mockFetch).toHaveBeenCalledTimes(3);
+        });
+    });
+
+    // -----------------------------------------------------------------------
     // submitMessage()
     // -----------------------------------------------------------------------
     describe('submitMessage()', () => {

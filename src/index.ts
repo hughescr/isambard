@@ -523,6 +523,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     reconnectionLoop:      emailReconnectionLoop,
                     discordCapability,
                     approvedActions:       approvedActionWriter,
+                    approvedActionReader:  approvedOutboundActionBackend,
                     personAllowlist,
                     allowlistInteractionHandler,
                     notify:                notificationBridge.notify,

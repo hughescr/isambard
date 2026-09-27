@@ -4,15 +4,14 @@ import path from 'node:path';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { chain } from 'lodash-es';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { buildAdminRejectedSubsection } from './context-builder';
 import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthGuard } from './mcp-helpers';
 import { EmailFolder } from '@/config';
-import { EmailProcessingError } from '@/errors';
+import { EmailProcessingError, WildDuckError } from '@/errors';
 // eslint-disable-next-line boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, mailboxMessageRefSchema, searchDraftsByReviewState, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta } from '@/integrations/email';
+import { amendedDraftMeta, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
@@ -42,21 +41,50 @@ function hasReadableMailbox(folder: string): boolean {
     return isEmailFolder(folder) && READABLE_MAILBOXES.has(folder);
 }
 
-/** Reply-all always goes through admin review, including its Cc recipients. */
-function replyApprovalOptions(
-    mode: 'reply' | 'replyAll',
-    cc?: { address: string }[]
-): { isAllowedOverride: boolean | undefined, ccAddresses: string[] | undefined } {
-    if(mode !== 'replyAll') {
-        return { isAllowedOverride: undefined, ccAddresses: undefined };
+/** Why a draft cannot be amended: the admin approved it, or an earlier amend already replaced it. */
+function amendRefusal(draftRef: string, meta: DraftApprovalMeta): string | undefined {
+    if(meta.approval !== undefined) {
+        return `Draft ${draftRef} has an admin approval recorded; it can't be amended.`;
     }
-    return {
-        isAllowedOverride: false,
-        ccAddresses:       chain(cc).map('address').compact().value(),
-    };
+    if(meta.supersededBy !== undefined) {
+        return `Draft ${draftRef} was already replaced by ${EmailFolder.Drafts}:${meta.supersededBy}.`;
+    }
+    return undefined;
+}
+
+/**
+ * What an amended draft's upload carries — the card link with one more edit, and nothing else of
+ * the old metaData; nothing at all without a link — and the edit number its card will show.
+ */
+function amendCarry(metaData: unknown, meta: DraftApprovalMeta): { upload: { metaData?: Record<string, unknown> }, edits: number } {
+    return meta.card === undefined
+        ? { upload: {}, edits: 1 }
+        : { upload: { metaData: amendedDraftMeta(metaData) }, edits: meta.card.edits + 1 };
+}
+
+/** Whether a WildDuck call failed because the message does not exist. */
+function isNotFound(err: unknown): boolean {
+    return err instanceof WildDuckError && err.context?.status === 404;
 }
 
 export type RestrictedMailboxNotification = MailboxMessageRef;
+
+/**
+ * How a draft was shown to the admin: a new card (`posted`, or `queued` in the outbox while
+ * Discord is offline), the amended draft's existing card edited in place (`updated`), the draft
+ * not found (`missing`), or no card at all (`failed`).
+ */
+export type ApprovalCardPresentation = 'posted' | 'updated' | 'queued' | 'missing' | 'failed';
+
+/** The admin approval cards the email tools drive (#158); implemented by the Discord presenter. */
+export interface EmailApprovalCardPort {
+    /** Show draft `uid` to the admin; `previousUid` is the draft it replaces (amend only). */
+    present(uid: number, previousUid?: number): Promise<ApprovalCardPresentation>
+    /** Mark a just-deleted draft's card deleted (read before the delete); never throws. */
+    markDeleted(draft: WildDuckMessage, uid: number): Promise<void>
+    /** Mark `oldUid` replaced by `newUid` when an amend could not delete it; false when that failed too. */
+    markSuperseded(oldUid: number, newUid: number): Promise<boolean>
+}
 
 interface EmailMCPServerOptions {
     /** Optional callback to send an admin notification (e.g., Discord channel message) */
@@ -67,8 +95,10 @@ interface EmailMCPServerOptions {
     rateLimiter?:           TokenBucketRateLimiter
     /** Optional email allowlist for outbound recipient gating */
     allowlist?:             PersonAllowlist
-    /** Optional callback to send outbound approval request to admin */
-    sendApprovalRequest?:   (to: string, subject: string, draftUid: number, cc?: string[]) => Promise<void>
+    /** Optional admin approval cards for non-allowlisted outbound email (the Discord presenter) */
+    approvalCards?:         EmailApprovalCardPort
+    /** Marks an amended draft's old UID superseded when no approval cards are configured (EmailOutboundApprovals.markSuperseded) */
+    markSuperseded?:        (oldUid: number, newUid: number) => Promise<boolean>
     /** Optional service health registry for fast-fail guards */
     healthRegistry?:        ServiceHealthRegistry
     /** Optional reconnection loop to trigger on health check failure */
@@ -249,7 +279,7 @@ const emailAddressSchema = z.union([
 ]);
 
 export function createEmailMCPServer(options: EmailMCPServerOptions) {
-    const { sendAdminNotification, wildDuckClient, rateLimiter, allowlist, sendApprovalRequest } = options;
+    const { sendAdminNotification, wildDuckClient, rateLimiter, allowlist, approvalCards } = options;
 
     // Cache for formal/informal addresses loaded lazily from WildDuck.
     let formalAddress:         { name?: string, address: string } | undefined;
@@ -319,43 +349,76 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
     }
 
     /**
-     * Check allowlist, submit draft immediately if allowed, or request admin approval.
-     * When cc is provided (replyAll mode), always routes to approval regardless of allowlist.
-     * The optional isAllowedOverride parameter allows callers to pre-compute allowlist status
-     * (e.g., for multi-to sends where all recipients must be checked).
-     * Returns the text content string for the tool result.
+     * Submit the draft immediately when every recipient is allowed (the caller decides: all To
+     * addresses allowlisted for a send, the replied-to address for a plain reply, never for a
+     * reply-all or an amend), or else show it to the admin for approval. An amend passes the
+     * draft it replaced and the new edit count, so the admin's existing card can be edited in place.
      */
     async function submitOrRequestApproval(
         draftUid: number,
-        toAddress: string,
-        subject: string,
+        isAllowed: boolean,
         rateLimitWarning: string,
         successMessage: string,
-        cc?: string[],
-        isAllowedOverride?: boolean
-    ): Promise<string> {
-        // Stryker disable next-line llm: this branch runs only when the outer coalescing already proved isAllowedOverride nullish.
-        const isAllowed = isAllowedOverride ?? (allowlist?.isAllowed('email', toAddress) ?? false);
-
+        previous?: { uid: number, edits: number }
+    ): Promise<CallToolResult> {
         if(isAllowed) {
             await wildDuckClient.submitMessage(EmailFolder.Drafts, draftUid);
             rateLimiter?.increment();
-            return `${successMessage}${rateLimitWarning}`;
+            return mcpTextResult(`${successMessage}${rateLimitWarning}`);
         }
 
-        // Not on allowlist (or replyAll) — request admin approval
-        // sendApprovalRequest uses the Discord outbox for fallback when Discord is offline,
-        // so failures here are exceptional (e.g. outbox backend unavailable).
-        if(sendApprovalRequest) {
+        // Not on allowlist (or replyAll) — request admin approval. The card is posted through the
+        // Discord outbox when Discord is offline, so a failure here is exceptional.
+        let presentation: ApprovalCardPresentation = 'posted';
+        if(approvalCards) {
             try {
-                await sendApprovalRequest(toAddress, subject, draftUid, cc);
+                presentation = await approvalCards.present(draftUid, previous?.uid);
             } catch (error) {
                 logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send outbound approval request' });
-                return `Draft saved as ${EmailFolder.Drafts}:${draftUid} but failed to notify admin. Please check pending drafts manually.${rateLimitWarning}`;
+                presentation = 'failed';
             }
         }
 
-        return `Message saved to Drafts, pending admin approval (draft UID: ${draftUid}).${rateLimitWarning}`;
+        const draftRef = `${EmailFolder.Drafts}:${draftUid}`;
+        switch(presentation) {
+            case 'updated': {
+                return mcpTextResult(`Draft saved as ${draftRef}; the admin's approval card was updated in place (edit ${previous?.edits}).${rateLimitWarning}`);
+            }
+            case 'missing': {
+                return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found after upload.` }], isError: true };
+            }
+            case 'failed': {
+                return mcpTextResult(`Draft saved as ${draftRef} but failed to notify admin. Please check pending drafts manually.${rateLimitWarning}`);
+            }
+            case 'posted':
+            case 'queued': {
+                return mcpTextResult(`Message saved to Drafts, pending admin approval (draft UID: ${draftUid}).${rateLimitWarning}`);
+            }
+        }
+    }
+
+    /** Whether a reply goes out without approval: never for replyAll (its Cc included), else when the replied-to address is allowlisted. */
+    function isReplyAllowed(mode: 'reply' | 'replyAll', primaryTo: string): boolean {
+        return mode !== 'replyAll' && (allowlist?.isAllowed('email', primaryTo) ?? false);
+    }
+
+    /**
+     * Remove an amended draft's old UID that WildDuck's replace left behind: delete it (already
+     * gone counts), or failing that mark it superseded. Returns a warning for the tool text when
+     * both failed, else ''.
+     */
+    async function removeReplacedDraft(oldUid: number, newUid: number): Promise<string> {
+        try {
+            await wildDuckClient.deleteMessage(EmailFolder.Drafts, oldUid);
+            return '';
+        } catch (err) {
+            if(isNotFound(err)) {
+                return '';
+            }
+            logger.warn({ err, oldUid, newUid, msg: 'Could not delete the amended draft’s previous version — marking it superseded' });
+        }
+        const marked = await (approvalCards ? approvalCards.markSuperseded(oldUid, newUid) : options.markSuperseded?.(oldUid, newUid)) ?? false;
+        return marked ? '' : ` Warning: the previous version ${EmailFolder.Drafts}:${oldUid} could not be removed; delete it with deleteDraft.`;
     }
 
     return createSdkMcpServer({
@@ -586,9 +649,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
                         // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
                         const isAllAllowed = toAddresses.every(addr => allowlist?.isAllowed('email', addr.address) ?? false);
-                        const toStr        = toAddresses.map(addr => addr.address).join(', ');
-                        const text         = await submitOrRequestApproval(uid, toStr, args.subject, rateLimitWarning, 'Sent successfully.', undefined, isAllAllowed);
-                        return mcpTextResult(text);
+                        return submitOrRequestApproval(uid, isAllAllowed, rateLimitWarning, 'Sent successfully.');
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -668,9 +729,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                 draft: true,
                             });
 
-                            const { isAllowedOverride, ccAddresses } = replyApprovalOptions(args.mode, original.cc);
-                            const text = await submitOrRequestApproval(uid, primaryTo, `Re: ${original.subject ?? ''}`, rateLimitWarning, `Reply sent to ${primaryTo}.`, ccAddresses, isAllowedOverride);
-                            return mcpTextResult(text);
+                            return submitOrRequestApproval(uid, isReplyAllowed(args.mode, primaryTo), rateLimitWarning, `Reply sent to ${primaryTo}.`);
                         })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -684,17 +743,29 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
                     withToolErrorHandling('deleteDraft', async (args): Promise<CallToolResult> => {
                         const { uid } = args.message;
+                        const draftRef = formatMailboxMessageRef(args.message);
+                        // Read first: the card is marked from this read, and an approved draft is left alone.
+                        const draft = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
+                        if(!draft) {
+                            return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found.` }], isError: true };
+                        }
+                        const meta = readDraftApprovalMeta(draft.metaData);
+                        if(meta.approval !== undefined) {
+                            return { content: [{ type: 'text' as const, text: `Draft ${draftRef} has an admin approval recorded; it can't be deleted.` }], isError: true };
+                        }
                         await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid);
-                        return mcpTextResult(`Draft ${formatMailboxMessageRef(args.message)} deleted.`);
+                        await approvalCards?.markDeleted(draft, uid);
+                        const cardNote = approvalCards && meta.card && !hasDecisionMarker(meta) ? ' The admin\'s approval card was marked deleted.' : '';
+                        return mcpTextResult(`Draft ${draftRef} deleted.${cardNote}`);
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false } }
             ),
 
             tool(
                 'amendAndResubmitDraft',
-                'Amend a rejected draft email and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it (replacing the old draft atomically). A new approval request will be posted to the admin channel.',
+                'Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. A pending draft\'s approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.',
                 {
-                    message:       draftsMailboxMessageRefSchema.describe('The rejected draft to amend, in Drafts:UID format'),
+                    message:       draftsMailboxMessageRefSchema.describe('The pending or rejected draft to amend, in Drafts:UID format'),
                     subject:       z.string().optional().describe('New subject line (leave blank to keep original)'),
                     body:          z.string().optional().describe('New plain text body (leave blank to keep original)'),
                     to:            z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (leave blank to keep original)'),
@@ -713,12 +784,18 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const { uid } = args.message;
 
                         // Fetch original draft
+                        const draftRef = formatMailboxMessageRef(args.message);
                         const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
                         if(!original) {
                             return {
-                                content: [{ type: 'text' as const, text: `Draft ${formatMailboxMessageRef(args.message)} not found.` }],
+                                content: [{ type: 'text' as const, text: `Draft ${draftRef} not found.` }],
                                 isError: true,
                             };
+                        }
+                        const meta = readDraftApprovalMeta(original.metaData);
+                        const refusal = amendRefusal(draftRef, meta);
+                        if(refusal !== undefined) {
+                            return { content: [{ type: 'text' as const, text: refusal }], isError: true };
                         }
 
                         // Apply amendments
@@ -737,28 +814,31 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             : undefined;
                         const toAddresses    = argToAddresses ?? (original.to ?? []);
 
-                        // Re-upload with replacePrevious to atomically replace the old draft
-                        const newUid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
+                        // Re-upload as a new UID replacing the old one, carrying the card link (one more
+                        // edit) and nothing else of the old metaData — never a decision or a reason.
+                        const carry = amendCarry(original.metaData, meta);
+                        const { id: newUid, previousDeleted } = await wildDuckClient.uploadReplacingDraft({
                             from,
-                            to:              toAddresses,
+                            to:    toAddresses,
                             subject,
-                            text:            body,
-                            replacePrevious: { mailbox: EmailFolder.Drafts, id: uid },
-                            draft:           true,
-                        });
+                            text:  body,
+                            draft: true,
+                            ...carry.upload,
+                        }, uid);
 
-                        // Always route through approval (isAllowedOverride=false) — amended drafts require human review.
-                        const amendResult = await submitOrRequestApproval(
+                        // WildDuck's replace is not atomic: if it did not delete the old UID, delete it
+                        // now, or failing that mark it superseded so no click, amend or preview uses it.
+                        const warning = previousDeleted ? '' : await removeReplacedDraft(uid, newUid);
+
+                        // Always route through approval — amended drafts require human review.
+                        return submitOrRequestApproval(
                             newUid,
-                            toAddresses.map(addr => addr.address).join(', '),
-                            subject,
+                            false,
+                            warning,
+                            // Stryker disable next-line StringLiteral: empty string — successMessage is unreachable when isAllowed=false always routes to approval
                             '',
-                            // Stryker disable next-line StringLiteral: empty string — successMessage is unreachable when isAllowedOverride=false always routes to approval
-                            '',
-                            undefined, // cc not available for amend-resubmit
-                            false      // isAllowedOverride=false → always approval path
+                            { uid, edits: carry.edits }
                         );
-                        return mcpTextResult(amendResult);
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),

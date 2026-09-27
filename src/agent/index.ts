@@ -47,6 +47,7 @@ export { generateText, generateTextWithSystemPrompt } from './text-generator';
 
 // Email MCP Server
 export { createEmailMCPServer } from './email-mcp-server';
+export type { ApprovalCardPresentation, EmailApprovalCardPort } from './email-mcp-server';
 
 // Discord Inbox MCP Server
 export { createDiscordInboxMCPServer } from './discord-inbox-mcp-server';
