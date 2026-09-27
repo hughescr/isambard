@@ -1682,6 +1682,17 @@ describe('repair-tag-index pacing', () => {
         expect(sleeps).toStrictEqual([1000]);
     });
 
+    test('createPacing converts an overrun into its resource time at that resource rate', async () => {
+        const { pacing, sleeps } = pacingAt({ ...ONE_PER_SECOND, baseRcu: 4 });
+
+        await pacing.reserve({ baseRcu: 1 });
+        pacing.trueUp({ baseRcu: 1 }, { baseRcu: 3 });
+        await pacing.reserve({ baseRcu: 1 });
+
+        // Booked 250 ms, then 2 more units at 4/s is 500 ms more.
+        expect(sleeps).toStrictEqual([750]);
+    });
+
     test('createPacing paces units a request reported without booking them', async () => {
         const { pacing, sleeps } = pacingAt(ONE_PER_SECOND);
 
@@ -1900,6 +1911,18 @@ describe('repair-tag-index progress', () => {
 
         expect(logs).toStrictEqual(['Starting: 0/0 in 10 s, gsi2Rcu 1.0 (0.1/s)', 'Walk namespaces: 1/5 in 10 s, ETA 40 s']);
     });
+
+    test('createProgress measures rates and the ETA in whole seconds of 1000 ms', () => {
+        const { progress, logs, clock, consumed } = progressAt();
+
+        progress.phase('Scan', 10_000);
+        progress.done();
+        consumed.baseRcu += 1000;
+        clock.now += 10_000;
+        progress.poke();
+
+        expect(logs).toStrictEqual(['Scan: 1/10000 in 10 s, baseRcu 1000.0 (100.0/s), ETA 99990 s']);
+    });
 });
 
 /**
@@ -2048,6 +2071,11 @@ describe('repair-tag-index concurrency', () => {
         expect(defaultConcurrency({ ...ONE_PER_SECOND, gsi2Rcu: 55 })).toBe(32);
         expect(defaultConcurrency({ ...ONE_PER_SECOND, gsi2Rcu: 50 })).toBe(30);
     });
+
+    test('defaultConcurrency assumes a 300 ms round trip, so a rate just over 5/s needs a fourth worker', () => {
+        // 5.001/s x 2 requests per unit x 0.3 s = 3.0006 workers.
+        expect(defaultConcurrency({ ...ONE_PER_SECOND, baseWcu: 5.001 })).toBe(4);
+    });
 });
 
 /** Real pacing on a {@link FakeTime} clock, logging `name@time` as each request is let through. */
@@ -2134,6 +2162,19 @@ describe('repair-tag-index pacing of requests already waiting', () => {
         ]));
 
         expect(sent).toStrictEqual(['G@0', 'L@0', 'M@3000', 'R1@4000', 'R2@5000', 'R3@6000', 'R4@7000']);
+    });
+
+    test('requests let through at the same moment go in the order they queued', async () => {
+        const { time, sent, send } = queuedPacing();
+
+        await time.run(Promise.all([
+            send('R0', { baseRcu: 1 }),
+            send('W0', { baseWcu: 1 }),
+            send('R1', { baseRcu: 1 }),
+            send('W1', { baseWcu: 1 }),
+        ]));
+
+        expect(sent).toStrictEqual(['R0@0', 'W0@0', 'R1@1000', 'W1@1000']);
     });
 
     test('a throttled retry waits out a longer hold a peer puts on its resource meanwhile', async () => {

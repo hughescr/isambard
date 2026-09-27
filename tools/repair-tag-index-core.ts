@@ -332,10 +332,13 @@ export async function runPool<T>(ctx: RepairContext, label: string, items: reado
             } catch (error) {
                 failure ??= { error };
                 ctx.pacing.cancel(error);
+                throw error;
             }
         }
     };
-    await Promise.all(Array.from({ length: ctx.concurrency }, worker));
+    // A worker ends by rejecting with its item's failure; allSettled, not all, so the pool still
+    // waits for its siblings' items in flight before rethrowing the first failure.
+    await Promise.allSettled(Array.from({ length: ctx.concurrency }, worker));
     if(failure !== undefined) {
         throw failure.error as Error;
     }
@@ -699,10 +702,19 @@ export async function executeRepair(ctx: RepairContext, plan: Plan, settleMs: nu
     return result;
 }
 
-/** A request waiting in the pacing queue: the milliseconds it occupies each resource it names. */
+/** The units `units` names on `key`, none when it names none. */
+function unitsOn(units: Units, key: RateKey): number {
+    return units[key] ?? 0;
+}
+
+/**
+ * A request waiting in the pacing queue: the resources it waits on and the units it books on
+ * them once let through (a throttled retry books none, having been booked when first sent).
+ */
 interface Waiter {
-    costs: [RateKey, number][]
-    turn:  PromiseWithResolvers<void>
+    keys:    readonly RateKey[]
+    booking: Units
+    turn:    PromiseWithResolvers<void>
 }
 
 /**
@@ -727,6 +739,8 @@ export function createPacing(rates: Rates, sleep: (ms: number) => Promise<void>,
     const queue: Waiter[] = [];
     /** The times of the wake-ups already scheduled. */
     const wakes = new Set<number>();
+    /** How long `units` occupy `key` at its rate. */
+    const msOf = (units: number, key: RateKey): number => units * 1000 / rates[key];
     const halt = new AbortController();
     const stopped = AbortSignal.any([signal, halt.signal]);
     stopped.addEventListener('abort', () => {
@@ -754,13 +768,13 @@ export function createPacing(rates: Rates, sleep: (ms: number) => Promise<void>,
         let next = Number.POSITIVE_INFINITY;
         const due: Waiter[] = [];
         for(const waiter of queue) {
-            const keys = waiter.costs.map(([key]) => key);
+            const { keys } = waiter;
             const first = !keys.some(key => blocked.has(key));
             const start = Math.max(...keys.flatMap(key => [freeAt[key], heldUntil[key]]));
             if(first && start <= at) {
                 due.push(waiter);
-                for(const [key, ms] of waiter.costs) {
-                    freeAt[key] = at + ms;
+                for(const key of keys) {
+                    freeAt[key] = at + msOf(unitsOn(waiter.booking, key), key);
                 }
             } else {
                 if(first) {
@@ -784,12 +798,12 @@ export function createPacing(rates: Rates, sleep: (ms: number) => Promise<void>,
         }
     }
 
-    const enqueue = async (costs: Waiter['costs']): Promise<void> => {
+    const enqueue = async (keys: Waiter['keys'], booking: Units): Promise<void> => {
         const turn = Promise.withResolvers<void>();
         if(stopped.aborted) {
             turn.reject(stopped.reason);
         } else {
-            queue.push({ costs, turn });
+            queue.push({ keys, booking, turn });
             pump();
         }
         return turn.promise;
@@ -798,13 +812,12 @@ export function createPacing(rates: Rates, sleep: (ms: number) => Promise<void>,
     return {
         consumed,
         async reserve(estimate) {
-            const keys = RATE_KEYS.filter(key => (estimate[key] ?? 0) > 0);
-            return enqueue(keys.map(key => [key, (estimate[key] ?? 0) * 1000 / rates[key]]));
+            return enqueue(RATE_KEYS.filter(key => unitsOn(estimate, key) > 0), estimate);
         },
         trueUp(estimate, actual) {
             for(const key of RATE_KEYS) {
-                const amount = actual[key] ?? 0;
-                freeAt[key] = Math.max(now(), freeAt[key]) + ((amount - (estimate[key] ?? 0)) * 1000 / rates[key]);
+                const amount = unitsOn(actual, key);
+                freeAt[key] = Math.max(now(), freeAt[key]) + msOf(amount - unitsOn(estimate, key), key);
                 consumed[key] += amount;
             }
             pump();
@@ -813,7 +826,7 @@ export function createPacing(rates: Rates, sleep: (ms: number) => Promise<void>,
             for(const key of keys) {
                 heldUntil[key] = Math.max(heldUntil[key], now() + ms);
             }
-            return enqueue(keys.map(key => [key, 0]));
+            return enqueue(keys, {});
         },
         cancel(reason) {
             halt.abort(reason);
