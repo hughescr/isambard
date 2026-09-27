@@ -51,18 +51,23 @@ function named(name: string, message = name): Error {
     return Object.assign(new Error(message), { name });
 }
 
-function adapterDeps(): AdapterDeps & { sleeps: number[], abort: AbortController } {
-    const sleeps: number[] = [];
-    const abort = new AbortController();
+/** Deps whose shared backoff records each hold and settles like the pacing's queued wait. */
+function adapterDeps(): AdapterDeps & { throttles: string[] } {
+    const throttles: string[] = [];
     return {
-        sleeps,
-        abort,
-        signal: abort.signal,
-        sleep:  async (ms) => {
-            sleeps.push(ms);
+        throttles,
+        onThrottle: async (keys, ms) => {
+            throttles.push(`${keys.join('+')} ${ms}`);
             await settle();
         },
     };
+}
+
+/** A store over a client that throttles once, then answers `response`. */
+function throttledOnce(response: unknown): { store: ReturnType<typeof createRepairStore>, deps: ReturnType<typeof adapterDeps> } {
+    const { client } = fakeClient([named('ProvisionedThroughputExceededException'), response]);
+    const deps = adapterDeps();
+    return { store: createRepairStore(client, 'T', deps), deps };
 }
 
 const ROW: TagRow = {
@@ -89,10 +94,31 @@ describe('repair-tag-index aws helpers', () => {
                 throw named(error);
             }
             return 'done';
-        }, deps);
+        }, ['baseRcu'], deps);
 
         expect(result).toBe('done');
-        expect(deps.sleeps).toStrictEqual([1000, 2000, 4000, 8000, 16_000, 30_000, 30_000]);
+        expect(deps.throttles).toStrictEqual(['baseRcu 1000', 'baseRcu 2000', 'baseRcu 4000', 'baseRcu 8000', 'baseRcu 16000', 'baseRcu 30000', 'baseRcu 30000']);
+    });
+
+    test('retryThrottled sends each retry only once the shared backoff of its resources has ended', async () => {
+        const deps = adapterDeps();
+        const events: string[] = [];
+        let calls = 0;
+        deps.onThrottle = async (keys, ms) => {
+            events.push(`hold ${keys.join('+')} ${ms}`);
+            await settle();
+            events.push('hold ended');
+        };
+
+        await retryThrottled(async () => {
+            events.push('send');
+            if(calls++ < 2) {
+                throw named('ThrottlingException');
+            }
+            return 'done';
+        }, ['baseWcu', 'gsi2Wcu'], deps);
+
+        expect(events).toStrictEqual(['send', 'hold baseWcu+gsi2Wcu 1000', 'hold ended', 'send', 'hold baseWcu+gsi2Wcu 2000', 'hold ended', 'send']);
     });
 
     test('retryThrottled rethrows any other error without retrying', async () => {
@@ -100,21 +126,48 @@ describe('repair-tag-index aws helpers', () => {
 
         await expect(retryThrottled(async () => {
             throw named('ValidationException', 'bad request');
-        }, deps)).rejects.toThrow('bad request');
+        }, ['baseRcu'], deps)).rejects.toThrow('bad request');
         await expect(retryThrottled(async () => {
             throw 'plain failure';
-        }, deps)).rejects.toBe('plain failure');
-        expect(deps.sleeps).toStrictEqual([]);
+        }, ['baseRcu'], deps)).rejects.toBe('plain failure');
+        expect(deps.throttles).toStrictEqual([]);
     });
 
-    test('retryThrottled stops retrying once the run is aborted', async () => {
+    test('retryThrottled stops retrying once the pacing refuses the wait (abort or a fatal error)', async () => {
         const deps = adapterDeps();
-        deps.abort.abort();
+        let calls = 0;
+        deps.onThrottle = async () => {
+            throw new Error('fatal elsewhere');
+        };
 
         await expect(retryThrottled(async () => {
+            calls++;
             throw named('ThrottlingException');
-        }, deps)).rejects.toThrow('The operation was aborted.');
-        expect(deps.sleeps).toStrictEqual([]);
+        }, ['baseRcu'], deps)).rejects.toThrow('fatal elsewhere');
+        expect(calls).toBe(1);
+    });
+
+    test('every request holds the resources it uses when throttled', async () => {
+        const page = { Items: [], ConsumedCapacity: { CapacityUnits: 1 } };
+        const write = { ConsumedCapacity: { Table: { CapacityUnits: 1 } } };
+        const calls: [string, (store: ReturnType<typeof createRepairStore>) => Promise<unknown>, unknown][] = [
+            ['gsi2Rcu 1000', async store => store.listMetaCounts(undefined), page],
+            ['baseRcu 1000', async store => store.readTagPartition('x', undefined, true), page],
+            ['gsi1Rcu 1000', async store => store.walkNamespace('identity', undefined), page],
+            ['baseRcu 1000', async store => store.getMemory('/identity/a'), { ConsumedCapacity: { CapacityUnits: 1 } }],
+            ['baseRcu 1000', async store => store.getRows('/identity/a', ['x']), { ConsumedCapacity: [{ CapacityUnits: 1 }] }],
+            ['baseWcu 1000', async store => store.putRow(ROW, 'absent'), write],
+            ['baseWcu 1000', async store => store.deleteRow(ROW), write],
+            ['baseWcu+gsi2Wcu 1000', async store => store.setMeta('x', 1, undefined), write],
+            ['baseWcu+gsi2Wcu 1000', async store => store.deleteMeta('x', 1), write],
+        ];
+
+        for(const [expected, call, response] of calls) {
+            const { store, deps } = throttledOnce(response);
+            // eslint-disable-next-line no-await-in-loop -- sequential: one fake client per call
+            await call(store);
+            expect(deps.throttles).toStrictEqual([expected]);
+        }
     });
 
     test('requireUnits returns reported units and refuses a missing report', () => {
@@ -297,7 +350,7 @@ describe('repair-tag-index aws repair store reads', () => {
                 ReturnConsumedCapacity: 'TOTAL',
             },
         }]);
-        expect(deps.sleeps).toStrictEqual([]);
+        expect(deps.throttles).toStrictEqual([]);
     });
 
     test('getRows reports no rows and no unprocessed tags when the response has neither', async () => {
@@ -328,7 +381,7 @@ describe('repair-tag-index aws repair store reads', () => {
 
         expect(read.item).toBeUndefined();
         expect(sent).toHaveLength(2);
-        expect(deps.sleeps).toStrictEqual([1000]);
+        expect(deps.throttles).toStrictEqual(['baseRcu 1000']);
     });
 });
 

@@ -5,7 +5,7 @@
  * running/, or Izzy will keep writing the drift it repairs.
  *
  * Usage:
- *   sst shell -- bun tools/repair-tag-index.ts [--execute] [--boost 50] [--settle-seconds 600] [--out report.json]
+ *   sst shell -- bun tools/repair-tag-index.ts [--execute] [--boost 50] [--concurrency 30] [--settle-seconds 600] [--out report.json]
  *   sst shell -- bun tools/repair-tag-index.ts --restore-capacity
  *
  * A dry run is the default: it scans, prints bucket counts with up to 25 examples each, the
@@ -28,12 +28,33 @@
  * do not appear in listTags. Orphan rows under a tag with neither META nor a live memory carrying
  * it cannot be found without a Scan.
  *
- * Pacing: every request is charged with the units DynamoDB reports, per resource. Flags
- * --base-rcu 1, --base-wcu 0.5, --gsi1-rcu 1, --gsi2-rcu 0.5, --gsi2-wcu 0.5 (units/s) are the
- * free-tier-safe defaults, capped at half of provisioned. Throttling backs off 1 s..30 s and never
- * fails the run. At the defaults: the scan is ~3.8k base RCU + ~1.7k GSI1 RCU (~1.5 h); repair and
- * recount reads ~10-18k RCU (~3-5 h); writes ~10-15k WCU (~6-8 h); ~8-10 h in total. The dry run
- * prints exact estimates.
+ * Concurrency: independent items run in a bounded worker pool (--concurrency, 1..64): the scan's
+ * tag partitions, the memories of the repair (each memory touches only its own rows and stays
+ * sequential inside: read, conditioned writes, re-read), and each recount cycle's read1s and
+ * read2s/writes (with ONE settle wait per cycle, after the last read1). The few GSI1 namespace
+ * walks stay sequential: they are chains of full pages, bound by the GSI1 rate, not the round
+ * trip, and in parallel could only burst GSI1 before the true-ups catch up. The default is
+ * 2 x the fastest rate x 0.3 s (a request costs at least 0.5 units; ~0.25 s round trip measured),
+ * capped at 32: 1 at the free-tier defaults, 30 at --boost 50. Sequential, a run was bound by the
+ * round trip to ~4 requests/s whatever the boost; the pool keeps enough requests in flight to
+ * reach the paced rates. Extra workers only wait on pacing.
+ *
+ * Pacing: per resource, requests wait in one shared FIFO queue and each is charged its estimated
+ * units BEFORE it is sent (so N requests in flight cannot all pass on the same free budget), then
+ * trued up to the units DynamoDB reports. A request's send time is decided when it leaves the
+ * queue, so an underestimate (a partition's first page is booked at the minimum, later pages at
+ * their predecessor's cost) delays the requests already waiting by the difference and an
+ * overestimate is refunded to them; over any window a resource stays within its rate plus the
+ * units in flight. Flags --base-rcu 1, --base-wcu 0.5, --gsi1-rcu 1, --gsi2-rcu 0.5,
+ * --gsi2-wcu 0.5 (units/s) are the free-tier-safe defaults, capped at half of provisioned.
+ * Throttling backs off 1 s..30 s and holds that resource for the whole pool, queued requests
+ * included; the throttled request retries only through the same queue once the hold (however far
+ * a peer extended it) is over. It never fails the run. The first fatal error cancels every queued
+ * request and retry, lets the requests already sent settle, and then capacity is restored.
+ * At the defaults (effectively one request in flight): the scan is ~3.8k base RCU + ~1.7k GSI1 RCU
+ * (~1.5 h); repair and recount reads ~10-18k RCU (~3-5 h); writes ~10-15k WCU (~6-8 h); ~8-10 h
+ * in total. Every ~10 s of a long phase logs items done/total, units and rate per resource, and
+ * an ETA. The dry run prints exact estimates.
  *
  * Capacity boost (--boost N, only with --execute, N from 6 to 50): DescribeTable and refuse unless
  * the table and GSIs are ACTIVE, billing is provisioned, capacity is exactly base 5/2, GSI1 2/2,
@@ -41,10 +62,14 @@
  * today. Then save the originals to --restore-file (default reports/tag-index-repair-capacity.json)
  * BEFORE any change, raise base RCU/WCU, GSI1 RCU and GSI2 WCU to N one UpdateTable at a time
  * (waiting for ACTIVE), and run at N minus the original capacity, leaving the original as headroom
- * for Izzy. At --boost 50 the run takes ~45-75 min including the UpdateTable waits and at least 4
- * settle intervals. Capacity is ALWAYS restored in `finally` and on SIGINT/SIGTERM/SIGHUP (the first
- * signal stops the repair; later ones print "restoring capacity, please wait"): wait for ACTIVE,
- * restore each resource that differs, retry LimitExceededException/ResourceInUseException with a
+ * for Izzy. At --boost 50 (45 base RCU/s, 48 base WCU/s, 48 GSI1 RCU/s, 30 workers) the paced
+ * work is ~15 min (scan ~2 min, repair and recount reads ~4-7 min and writes ~4-6 min, overlapping),
+ * so the run is ~40-70 min, dominated by 2-4 settle intervals (20-40 min at 600 s) and the
+ * UpdateTable waits. Capacity is ALWAYS restored in `finally` and on SIGINT/SIGTERM/SIGHUP (the first
+ * signal stops dispatching new work and lets the requests in flight settle, each bounded by the
+ * SDK's timeouts since every pacing wait and throttle retry is refused at the abort; later signals print
+ * "restoring capacity, please wait"): wait for ACTIVE, restore each resource that differs,
+ * retry LimitExceededException/ResourceInUseException with a
  * 30 s..5 min backoff for up to 75 min, verify with DescribeTable, and only then delete the restore
  * file. If that fails, the file is kept, the equivalent `aws dynamodb update-table` commands are
  * printed and the exit is non-zero; `--restore-capacity` restores from the file after a crash.
@@ -75,8 +100,11 @@ import {
 } from './repair-tag-index-capacity';
 import {
     BUCKET_NAMES,
+    MAX_CONCURRENCY,
     RATE_KEYS,
     createPacing,
+    createProgress,
+    defaultConcurrency,
     estimateExecute,
     executeRepair,
     isAbortError,
@@ -94,7 +122,7 @@ import { createDynamoDBClient } from '@/storage';
 import { sleepRespectingSignal } from '@/storage/utils/rcu-pacing';
 
 export const HELP = `Usage:
-  sst shell -- bun tools/repair-tag-index.ts [--execute] [--boost N] [--settle-seconds 600] [--out report.json]
+  sst shell -- bun tools/repair-tag-index.ts [--execute] [--boost N] [--concurrency C] [--settle-seconds 600] [--out report.json]
   sst shell -- bun tools/repair-tag-index.ts --restore-capacity [--restore-file path]
 
 A dry run is the default; --execute writes.
@@ -103,6 +131,8 @@ A dry run is the default; --execute writes.
   --base-rcu R --base-wcu R --gsi1-rcu R --gsi2-rcu R --gsi2-wcu R
                        units/s (defaults 1, 0.5, 1, 0.5, 0.5; capped at half of provisioned,
                        or at N minus the original capacity with --boost)
+  --concurrency C      requests in flight at once, 1..64 (default from the rates: 1 unboosted,
+                       30 at --boost 50); pacing still caps every resource at its rate
   --out path           JSON report (default $TMPDIR/tag-index-repair-<time>.json; never the restore file)
   --restore-file path  capacity restore file (default reports/tag-index-repair-capacity.json)
   --restore-capacity   restore capacity from the restore file after a crash
@@ -115,7 +145,7 @@ export const MIN_SETTLE_SECONDS = 360;
 export const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 const RATE_FLAGS: Record<RateKey, string> = { baseRcu: '--base-rcu', baseWcu: '--base-wcu', gsi1Rcu: '--gsi1-rcu', gsi2Rcu: '--gsi2-rcu', gsi2Wcu: '--gsi2-wcu' };
 const FLAGS = new Set(['--execute', '--restore-capacity', '--help']);
-const VALUED = new Set(['--boost', '--out', '--restore-file', '--settle-seconds', ...Object.values(RATE_FLAGS)]);
+const VALUED = new Set(['--boost', '--concurrency', '--out', '--restore-file', '--settle-seconds', ...Object.values(RATE_FLAGS)]);
 
 export interface RepairOptions {
     help:            boolean
@@ -126,6 +156,18 @@ export interface RepairOptions {
     restoreFile:     string
     settleSeconds:   number
     rates:           Rates
+    concurrency:     number
+}
+
+function parseConcurrency(raw: string | undefined, rates: Rates): number {
+    if(raw === undefined) {
+        return defaultConcurrency(rates);
+    }
+    const concurrency = Number(raw);
+    if(!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) {
+        throw new Error(`--concurrency must be an integer from 1 to ${MAX_CONCURRENCY}, got ${raw}`);
+    }
+    return concurrency;
 }
 
 function parseRate(flag: string, raw: string | undefined, fallback: number, cap: number): number {
@@ -206,6 +248,7 @@ export function parseRepairArgs(argv: string[]): RepairOptions {
         restoreFile,
         settleSeconds:   parseSettle(values.get('--settle-seconds')),
         rates,
+        concurrency:     parseConcurrency(values.get('--concurrency'), rates),
     };
 }
 
@@ -282,7 +325,7 @@ interface RunDeps {
 /** Scan, plan and report; with --execute also repair. */
 async function repair(options: RepairOptions, rates: Rates, deps: RunDeps): Promise<void> {
     const { log, ctx } = deps;
-    log(`${options.execute ? 'EXECUTE' : '[DRY RUN]'}: rates ${JSON.stringify(rates)} units/s`);
+    log(`${options.execute ? 'EXECUTE' : '[DRY RUN]'}: rates ${JSON.stringify(rates)} units/s, concurrency ${ctx.concurrency}`);
     const snapshot = await scan(ctx);
     const scanConsumed = { ...deps.consumed };
     const plan = planRepair(snapshot, toEpochSeconds(deps.now()));
@@ -346,7 +389,7 @@ export async function runRepairCli(argv: string[], deps: RepairCliDeps = {}): Pr
             return;
         }
         abort.abort();
-        log('Stopping after the current request; any capacity boost is restored before exit');
+        log('Stopping: no new requests; waiting for the ones in flight, then any capacity boost is restored before exit');
     };
     const on = deps.onSignal ?? ((signal: NodeJS.Signals, handler: () => void) => {
         process.on(signal, handler);
@@ -397,9 +440,10 @@ async function boostedRun(options: RepairOptions, runtime: RepairRuntime, file: 
             boosted = true;
             await applyBoost(runtime.admin, original, options.boost, capacity);
         }
-        const pacing = createPacing(options.rates, deps.sleep, deps.now);
-        const store = runtime.createStore({ sleep: deps.sleep, signal: deps.signal });
-        const ctx: RepairContext = { store, charge: pacing.charge, sleep: deps.sleep, now: deps.now, log, signal: deps.signal };
+        const pacing = createPacing(options.rates, deps.sleep, deps.now, deps.signal);
+        const store = runtime.createStore({ onThrottle: pacing.backoff });
+        const progress = createProgress(deps.now, log, pacing.consumed);
+        const ctx: RepairContext = { store, pacing, progress, concurrency: options.concurrency, sleep: deps.sleep, now: deps.now, log, signal: deps.signal };
         await repair(options, options.rates, { log, now: deps.now, ctx, consumed: pacing.consumed, saveReport: deps.saveReport });
     } catch (error) {
         if(isAbortError(error)) {

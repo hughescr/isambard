@@ -13,6 +13,7 @@ import {
     type RepairCliDeps,
     type RepairRuntime
 } from '../../../tools/repair-tag-index';
+import type { AdapterDeps } from '../../../tools/repair-tag-index-aws';
 import { EXPECTED, boostedRates, type CapacityAdmin, type CapacityState, type Resource, type RestoreFile } from '../../../tools/repair-tag-index-capacity';
 import type { Memory, Meta, RepairStore, TagRow, WriteResult } from '../../../tools/repair-tag-index-core';
 import { mockFsPromises, resetMockFs } from '../../setup';
@@ -28,20 +29,27 @@ const ARGV0 = ['bun', 'tools/repair-tag-index.ts'];
 
 const MEMORY: Memory = { path: '/identity/a', tags: new Set(['x']), updatedAt: '2026-01-01T00:00:00.000Z', content: 'hello' };
 
-/** Counts fake operations still settling; starting another meanwhile means an await was skipped. */
-const inFlight = { count: 0 };
+/**
+ * Counts fake operations still settling, per plane. Data-plane requests (the store and its
+ * pacing sleeps) may overlap each other, since the repair runs a worker pool; a control-plane
+ * operation (capacity, restore file, capacity polls, report) overlapping anything means an await
+ * was skipped, or capacity was touched while repair requests were still in flight.
+ */
+const inFlight = { data: 0, control: 0 };
+
+type Plane = keyof typeof inFlight;
 
 /** Guards against overlap, then lets `turns` microtasks pass before the caller sees the effect. */
-async function settle(turns: number): Promise<void> {
-    if(inFlight.count > 0) {
-        throw new Error('operation started before the previous one settled');
+async function settle(turns: number, plane: Plane = 'control'): Promise<void> {
+    if(inFlight.control > 0 || (plane === 'control' && inFlight.data > 0)) {
+        throw new Error(`${plane} operation started before the previous one settled`);
     }
-    inFlight.count++;
+    inFlight[plane]++;
     for(let turn = 0; turn < turns; turn++) {
         // eslint-disable-next-line no-await-in-loop -- sequential: each turn is one microtask
         await Promise.resolve();
     }
-    inFlight.count--;
+    inFlight[plane]--;
 }
 
 /** One memory tagged x whose row is missing: the plan puts it and recounts x. */
@@ -51,58 +59,60 @@ class SmallStore implements RepairStore {
     meta:           Meta | undefined;
     onRead:         (() => void) | undefined;
     memory:         Memory = MEMORY;
+    /** Further identity memories the namespace walk returns. */
+    others:         Memory[] = [];
 
     async listMetaCounts(): Promise<{ items: Meta[], next: undefined, units: { gsi2Rcu: number } }> {
-        await settle(1);
+        await settle(1, 'data');
         this.calls.push('list');
         return { items: [], next: undefined, units: { gsi2Rcu: 1 } };
     }
 
     async readTagPartition(tag: string, _start: unknown, strong: boolean): Promise<{ rows: TagRow[], meta: Meta | undefined, next: undefined, units: { baseRcu: number } }> {
-        await settle(1);
+        await settle(1, 'data');
         this.calls.push(`partition ${tag} ${String(strong)}`);
         this.onRead?.();
         return { rows: structuredClone(this.rows), meta: structuredClone(this.meta), next: undefined, units: { baseRcu: 1 } };
     }
 
     async walkNamespace(namespace: string): Promise<{ items: Memory[], next: undefined, units: { gsi1Rcu: number } }> {
-        await settle(1);
-        return { items: namespace === 'identity' ? [this.memory] : [], next: undefined, units: { gsi1Rcu: 1 } };
+        await settle(1, 'data');
+        return { items: namespace === 'identity' ? [this.memory, ...this.others] : [], next: undefined, units: { gsi1Rcu: 1 } };
     }
 
     async getMemory(): Promise<{ item: Memory, units: { baseRcu: number } }> {
-        await settle(1);
+        await settle(1, 'data');
         this.calls.push('getMemory');
         return { item: this.memory, units: { baseRcu: 1 } };
     }
 
     async getRows(): Promise<{ items: TagRow[], unprocessed: string[], units: { baseRcu: number } }> {
-        await settle(1);
+        await settle(1, 'data');
         return { items: structuredClone(this.rows), unprocessed: [], units: { baseRcu: 1 } };
     }
 
     async putRow(row: TagRow): Promise<WriteResult> {
-        await settle(1);
+        await settle(1, 'data');
         this.calls.push('putRow');
         this.rows = [row];
         return { status: 'ok', units: { baseWcu: 1 } };
     }
 
     async deleteRow(): Promise<WriteResult> {
-        await settle(1);
+        await settle(1, 'data');
         this.calls.push('deleteRow');
         return { status: 'ok', units: { baseWcu: 1 } };
     }
 
     async setMeta(tag: string, count: number): Promise<WriteResult> {
-        await settle(1);
+        await settle(1, 'data');
         this.calls.push(`setMeta ${tag} ${count}`);
         this.meta = { PK: `TAG#${tag}`, SK: 'META_COUNT', count, GSI2PK: 'TAG_COUNTS', GSI2SK: `TAG#${tag}` };
         return { status: 'ok', units: { baseWcu: 1, gsi2Wcu: 1 } };
     }
 
     async deleteMeta(): Promise<WriteResult> {
-        await settle(1);
+        await settle(1, 'data');
         this.calls.push('deleteMeta');
         return { status: 'ok', units: { baseWcu: 1 } };
     }
@@ -171,6 +181,8 @@ interface Cli {
     reports:  { file: string, text: string }[]
     handlers: Map<string, () => void>
     removed:  { signal: string, handler: () => void }[]
+    /** The deps the CLI gave the store adapter. */
+    adapter:  { deps: AdapterDeps | undefined }
 }
 
 function cli(saved?: CapacityState): Cli {
@@ -184,7 +196,15 @@ function cli(saved?: CapacityState): Cli {
     const admin = new FakeAdmin(events);
     const file = memoryFile(events, saved);
     let clock = 1_000_000;
-    const runtime: RepairRuntime = { tableName: 'IsambardMemory', admin, createStore: () => store };
+    const adapter: Cli['adapter'] = { deps: undefined };
+    const runtime: RepairRuntime = {
+        tableName:   'IsambardMemory',
+        admin,
+        createStore: (deps) => {
+            adapter.deps = deps;
+            return store;
+        },
+    };
     return {
         store,
         admin,
@@ -195,13 +215,14 @@ function cli(saved?: CapacityState): Cli {
         reports,
         handlers,
         removed,
+        adapter,
         deps: {
             loadRuntime: () => runtime,
             log:         (text) => { logs.push(text); },
             now:         () => clock,
             sleep:       async (ms, signal) => {
                 sleeps.push({ ms, signal });
-                await settle(3);
+                await settle(3, signal === undefined ? 'control' : 'data');
                 clock += ms;
             },
             onSignal:    (signal, handler) => { handlers.set(signal, handler); },
@@ -230,6 +251,7 @@ describe('repair-tag-index CLI arguments', () => {
             restoreFile:     DEFAULT_RESTORE_FILE,
             settleSeconds:   600,
             rates:           { baseRcu: 1, baseWcu: 0.5, gsi1Rcu: 1, gsi2Rcu: 0.5, gsi2Wcu: 0.5 },
+            concurrency:     1,
         });
         expect(DEFAULT_RESTORE_FILE).toBe('reports/tag-index-repair-capacity.json');
     });
@@ -237,7 +259,7 @@ describe('repair-tag-index CLI arguments', () => {
     test('parseRepairArgs reads every option', () => {
         expect(parseRepairArgs([
             '--execute', '--boost', '6', '--out', 'r.json', '--restore-file', 'f.json', '--settle-seconds', '360',
-            '--base-rcu', '0.5', '--base-wcu', '4', '--gsi1-rcu', '4', '--gsi2-rcu', '0.5', '--gsi2-wcu', '5', '--help',
+            '--base-rcu', '0.5', '--base-wcu', '4', '--gsi1-rcu', '4', '--gsi2-rcu', '0.5', '--gsi2-wcu', '5', '--concurrency', '7', '--help',
         ])).toStrictEqual({
             help:            true,
             execute:         true,
@@ -247,11 +269,25 @@ describe('repair-tag-index CLI arguments', () => {
             restoreFile:     'f.json',
             settleSeconds:   360,
             rates:           { baseRcu: 0.5, baseWcu: 4, gsi1Rcu: 4, gsi2Rcu: 0.5, gsi2Wcu: 5 },
+            concurrency:     7,
         });
     });
 
     test('parseRepairArgs defaults boosted rates to the boost minus the original capacity', () => {
         expect(parseRepairArgs(['--execute', '--boost', '50']).rates).toStrictEqual(boostedRates(50));
+    });
+
+    test('parseRepairArgs defaults the concurrency from the chosen rates', () => {
+        expect(parseRepairArgs(['--execute', '--boost', '50']).concurrency).toBe(30);
+        expect(parseRepairArgs(['--execute', '--boost', '50', '--gsi2-wcu', '10', '--base-wcu', '10', '--gsi1-rcu', '10']).concurrency).toBe(27);
+    });
+
+    test('parseRepairArgs accepts a concurrency from 1 to 64 and rejects anything else', () => {
+        expect(parseRepairArgs(['--concurrency', '1']).concurrency).toBe(1);
+        expect(parseRepairArgs(['--concurrency', '64']).concurrency).toBe(64);
+        for(const raw of ['0', '65', '2.5', 'many']) {
+            expect(() => parseRepairArgs(['--concurrency', raw])).toThrow(`--concurrency must be an integer from 1 to 64, got ${raw}`);
+        }
     });
 
     test('parseRepairArgs caps unboosted rates at half of provisioned', () => {
@@ -334,13 +370,14 @@ describe('repair-tag-index CLI runs', () => {
 
         expect(run.store.calls).toStrictEqual(['list', 'partition x false']);
         expect(run.events).toStrictEqual([`restore file ${DEFAULT_RESTORE_FILE}`]);
-        expect(run.logs).toContain('[DRY RUN]: rates {"baseRcu":1,"baseWcu":0.5,"gsi1Rcu":1,"gsi2Rcu":0.5,"gsi2Wcu":0.5} units/s');
+        expect(run.logs).toContain('[DRY RUN]: rates {"baseRcu":1,"baseWcu":0.5,"gsi1Rcu":1,"gsi2Rcu":0.5,"gsi2Wcu":0.5} units/s, concurrency 1');
         expect(run.logs).toContain('missing: 1');
         expect(run.logs).toContain('    x :: /identity/a');
         expect(run.logs).toContain('Planned: 1 row writes on 1 memories; 1 tags to recount');
         expect(run.logs).toContain('Estimated --execute units: baseRcu 7 (~7 s), baseWcu 2 (~4 s), gsi1Rcu 0 (~0 s), gsi2Rcu 0 (~0 s), gsi2Wcu 1 (~2 s), plus at least 2 settle intervals of 600 s');
         expect(run.logs).toContain('[DRY RUN] No writes sent; rerun with --execute to repair.');
-        const reportFile = path.join(tmpdir(), 'tag-index-repair-1007000.json');
+        // Paced before each request: only the 2nd to 4th GSI1 walks wait (1 s each) on the one before.
+        const reportFile = path.join(tmpdir(), 'tag-index-repair-1003000.json');
         expect(run.logs.slice(-2)).toStrictEqual([`saved ${reportFile}`, `Report: ${reportFile}`]);
         expect(run.reports).toHaveLength(1);
         expect(run.reports[0]?.file).toBe(reportFile);
@@ -401,7 +438,7 @@ describe('repair-tag-index CLI runs', () => {
             'scan',
             'file read', 'describe', 'describe', 'update table 5/2', 'describe', 'update GSI1 2/2', 'describe', 'update GSI2 1/1', 'describe', 'file delete',
         ]);
-        expect(run.logs).toContain('EXECUTE: rates {"baseRcu":1,"baseWcu":4,"gsi1Rcu":4,"gsi2Rcu":0.5,"gsi2Wcu":5} units/s');
+        expect(run.logs).toContain('EXECUTE: rates {"baseRcu":1,"baseWcu":4,"gsi1Rcu":4,"gsi2Rcu":0.5,"gsi2Wcu":5} units/s, concurrency 3');
         expect(run.admin.state).toStrictEqual(provisioned());
     });
 
@@ -494,7 +531,7 @@ describe('repair-tag-index CLI runs', () => {
 
         await runRepairCli([...ARGV0, '--execute', '--boost', '6'], run.deps);
 
-        expect(run.logs).toContain('Stopping after the current request; any capacity boost is restored before exit');
+        expect(run.logs).toContain('Stopping: no new requests; waiting for the ones in flight, then any capacity boost is restored before exit');
         expect(run.logs).toContain('restoring capacity, please wait');
         expect(run.logs).toContain('Aborted before the scan finished; nothing was repaired');
         expect(run.logs.filter(line => line.startsWith('Stopping'))).toHaveLength(1);
@@ -518,6 +555,57 @@ describe('repair-tag-index CLI runs', () => {
         expect(run.reports).toHaveLength(1);
     });
 
+    test('an abort with several requests in flight restores the boost only after they all settle', async () => {
+        const run = cli();
+        run.store.others = ['/identity/b', '/identity/c', '/identity/d'].map(memoryPath => ({ ...MEMORY, path: memoryPath }));
+        const gates: PromiseWithResolvers<void>[] = [];
+        const allHeld = Promise.withResolvers<void>();
+        run.store.getMemory = async () => {
+            const gate = Promise.withResolvers<void>();
+            gates.push(gate);
+            run.events.push(`getMemory ${gates.length} sent`);
+            if(gates.length === 3) {
+                allHeld.resolve();
+            }
+            await gate.promise;
+            run.events.push('getMemory settled');
+            return { item: MEMORY, units: { baseRcu: 1 } };
+        };
+
+        const running = runRepairCli([...ARGV0, '--execute', '--boost', '6'], run.deps);
+        await allHeld.promise;
+        run.handlers.get('SIGINT')?.();
+        const heldAt = run.events.length;
+        for(const gate of gates) {
+            gate.resolve();
+            // eslint-disable-next-line no-await-in-loop -- sequential: settle one request in flight at a time
+            await Promise.resolve();
+        }
+        await running;
+
+        expect(run.events.slice(heldAt - 3, heldAt + 4)).toStrictEqual(['getMemory 1 sent', 'getMemory 2 sent', 'getMemory 3 sent', 'getMemory settled', 'getMemory settled', 'getMemory settled', 'file read']);
+        expect(run.events.at(-1)).toBe('file delete');
+        expect(run.logs).toContain('Repaired 0/4 memories: 0 row writes, 0 META writes (ABORTED)');
+    });
+
+    test('a throttled request waits out its hold in the run\'s shared pacing', async () => {
+        const run = cli();
+        const events: string[] = [];
+        run.store.listMetaCounts = async () => {
+            events.push('listed');
+            await run.adapter.deps?.onThrottle(['gsi2Rcu'], 7000);
+            events.push('hold ended');
+            return { items: [], next: undefined, units: { gsi2Rcu: 1 } };
+        };
+
+        await runRepairCli([...ARGV0, '--out', 'o.json'], run.deps);
+
+        // The retry waits the 7 s hold on the run's abortable data sleep; the three GSI1 walks
+        // after the first then wait 1 s each for the one before.
+        expect(events).toStrictEqual(['listed', 'hold ended']);
+        expect(run.sleeps.map(entry => `${entry.ms} ${entry.signal === undefined ? 'control' : 'data'}`)).toStrictEqual(['7000 data', '1000 data', '1000 data', '1000 data']);
+    });
+
     test('--restore-capacity restores from the restore file', async () => {
         const run = cli(provisioned());
         run.admin.state.resources.table = { ...run.admin.state.resources.table, rcu: 50, wcu: 50 };
@@ -538,7 +626,7 @@ describe('repair-tag-index CLI defaults', () => {
 
         expect(runtime.tableName).toBe('IsambardMemory');
         expect(typeof runtime.admin.describe).toBe('function');
-        expect(typeof runtime.createStore({ sleep: async () => undefined, signal: new AbortController().signal }).getRows).toBe('function');
+        expect(typeof runtime.createStore({ onThrottle: async () => undefined }).getRows).toBe('function');
     });
 
     test('the default signal hooks register and remove process handlers', async () => {
@@ -563,10 +651,16 @@ describe('repair-tag-index CLI defaults', () => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date(5_000_000));
         const run = cli();
+        // The pacing checks the default clock once each wait ends, so a sleep must move it.
+        const sleep = async (ms: number): Promise<void> => {
+            await Promise.resolve();
+            jest.setSystemTime(new Date(Date.now() + ms));
+        };
 
-        await runRepairCli(ARGV0, { ...run.deps, now: undefined, saveReport: undefined });
+        await runRepairCli(ARGV0, { ...run.deps, now: undefined, saveReport: undefined, sleep });
 
-        const reportFile = path.join(tmpdir(), 'tag-index-repair-5000000.json');
+        // Three GSI1 walks each wait 1 s for the one before, on the default clock.
+        const reportFile = path.join(tmpdir(), 'tag-index-repair-5003000.json');
         expect(run.logs.at(-1)).toBe(`Report: ${reportFile}`);
         expect(mockFsPromises.writeFile).toHaveBeenCalledTimes(1);
         expect(mockFsPromises.writeFile.mock.calls[0]?.[0]).toBe(reportFile);

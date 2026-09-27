@@ -2,27 +2,35 @@ import { describe, test, expect, afterEach, jest } from 'bun:test';
 import { BatchWriteCommand, DeleteCommand, QueryCommand, UpdateCommand, type BatchWriteCommandInput, type DeleteCommandInput, type DynamoDBDocumentClient, type QueryCommandInput, type UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
 import { MemoryToolBackendTagIndex } from '../../../src/storage/memory-tool/backend-tag-index';
 import { createIndexLayer, type MemoryPath } from '../../../src/storage/memory-tool/types';
+import { retryThrottled } from '../../../tools/repair-tag-index-aws';
 import {
+    RATE_KEYS,
     countAction,
     createPacing,
+    createProgress,
+    defaultConcurrency,
     desiredRow,
     estimateExecute,
     executeRepair,
     isAbortError,
     isLive,
+    mapPool,
     planRepair,
     readCount,
     recount,
     repairMemory,
     rowDiff,
+    runPool,
     sameMemoryState,
     scan,
     type Cursor,
     type Memory,
     type Meta,
+    type Pacing,
     type Page,
     type PartitionPage,
     type Plan,
+    type Rates,
     type RepairContext,
     type RepairStore,
     type Snapshot,
@@ -233,34 +241,72 @@ class FakeStore implements RepairStore {
 }
 
 interface Harness {
-    ctx:     RepairContext
-    store:   FakeStore
-    table:   Table
-    clock:   { now: number }
-    logs:    string[]
-    sleeps:  number[]
-    charges: Units[]
-    abort:   AbortController
+    ctx:      RepairContext
+    store:    FakeStore
+    table:    Table
+    clock:    { now: number }
+    logs:     string[]
+    sleeps:   number[]
+    /** Units booked before each request. */
+    reserves: Units[]
+    /** Units reported by each request, as trued up. */
+    charges:  Units[]
+    /** Pool and pacing calls into the progress reporter. */
+    progress: string[]
+    /** Messages of the errors the pool cancelled the pacing with. */
+    cancels:  string[]
+    abort:    AbortController
 }
 
+/**
+ * A context over the fake store with one worker. Its pacing books without waiting (the real
+ * pacing is tested on its own) but lets microtasks pass, so a request sent before its booking
+ * settled trips the store's guard.
+ */
 function harness(table: Table = newTable(), onSleep: (ms: number) => void = () => undefined): Harness {
     const clock = { now: NOW_MS };
     const store = new FakeStore(table, clock);
     const logs: string[] = [];
     const sleeps: number[] = [];
+    const reserves: Units[] = [];
     const charges: Units[] = [];
+    const progress: string[] = [];
+    const cancels: string[] = [];
     const abort = new AbortController();
     let settling = 0;
     store.busy = () => settling > 0;
     const ctx: RepairContext = {
         store,
-        charge: async (units) => {
-            settling++;
-            await ticks(3);
-            settling--;
-            charges.push(units);
+        pacing: {
+            reserve: async (estimate) => {
+                reserves.push(estimate);
+                settling++;
+                await ticks(3);
+                settling--;
+                abort.signal.throwIfAborted();
+            },
+            trueUp: (_estimate, actual) => {
+                charges.push(actual);
+            },
+            backoff: async () => undefined,
+            cancel:  (reason) => {
+                cancels.push((reason as Error).message);
+            },
+            consumed: { baseRcu: 0, baseWcu: 0, gsi1Rcu: 0, gsi2Rcu: 0, gsi2Wcu: 0 },
         },
-        sleep: async (ms) => {
+        progress: {
+            phase: (label, total) => {
+                progress.push(`phase ${label} ${total}`);
+            },
+            done: () => {
+                progress.push('done');
+            },
+            poke: () => {
+                progress.push('poke');
+            },
+        },
+        concurrency: 1,
+        sleep:       async (ms) => {
             sleeps.push(ms);
             settling++;
             await ticks(3);
@@ -272,7 +318,7 @@ function harness(table: Table = newTable(), onSleep: (ms: number) => void = () =
         log:    (text) => { logs.push(text); },
         signal: abort.signal,
     };
-    return { ctx, store, table, clock, logs, sleeps, charges, abort };
+    return { ctx, store, table, clock, logs, sleeps, reserves, charges, progress, cancels, abort };
 }
 
 function applyBatchWrite(table: Table, input: BatchWriteCommandInput): object {
@@ -485,6 +531,48 @@ describe('repair-tag-index scan', () => {
             { gsi1Rcu: 1 }, { gsi1Rcu: 1 }, { gsi1Rcu: 1 }, { gsi1Rcu: 1 }, { gsi1Rcu: 1 }, { baseRcu: 1 },
         ]);
         expect(h.logs).toStrictEqual(['Scanned 3 tag partitions', 'Walked 2 memories in 5 namespaces', 'Scanned 4 tag partitions in total']);
+        expect(h.reserves).toStrictEqual([
+            { gsi2Rcu: 0.5 }, { gsi2Rcu: 0.5 }, { baseRcu: 0.5 }, { baseRcu: 1 }, { baseRcu: 0.5 }, { baseRcu: 0.5 },
+            { gsi1Rcu: 0.5 }, { gsi1Rcu: 0.5 }, { gsi1Rcu: 0.5 }, { gsi1Rcu: 0.5 }, { gsi1Rcu: 0.5 }, { baseRcu: 0.5 },
+        ]);
+        expect(h.progress.filter(call => call.startsWith('phase'))).toStrictEqual(['phase List TAG_COUNTS 0', 'phase Scan listed tags 3', 'phase Walk namespaces 5', 'phase Scan unlisted tags 1']);
+        expect(h.progress.filter(call => call === 'poke')).toHaveLength(12);
+        expect(h.progress.filter(call => call === 'done')).toHaveLength(9);
+    });
+
+    test('scan reads partitions and namespaces concurrently but keeps the snapshot in scan order', async () => {
+        const table = newTable();
+        putMemory(table, memory('/identity/a', ['a', 'c']));
+        putMemory(table, memory('/custom/x', ['d']));
+        for(const path of ['/identity/a', '/identity/b', '/identity/c']) {
+            putRow(table, { PK: 'TAG#a', SK: `PATH#${path}` });
+        }
+        putRow(table, { PK: 'TAG#b', SK: 'PATH#/custom/x' });
+        putMeta(table, meta('a', 3));
+        putMeta(table, meta('b', 1));
+        const h = harness(table);
+        h.store.busy = () => false;
+        h.ctx.concurrency = 3;
+
+        const snapshot = await scan(h.ctx);
+
+        expect(h.store.calls).toStrictEqual([
+            'list undefined',
+            'partition a eventual undefined',
+            'partition b eventual undefined',
+            'partition a eventual {"offset":2}',
+            'walk identity undefined',
+            'walk state undefined',
+            'walk events undefined',
+            'walk users undefined',
+            'walk custom undefined',
+            'partition c eventual undefined',
+            'partition d eventual undefined',
+        ]);
+        expect([...snapshot.rows.keys()]).toStrictEqual(['a', 'b', 'c', 'd']);
+        expect(snapshot.rows.get('a')?.map(row => row.SK)).toStrictEqual(['PATH#/identity/a', 'PATH#/identity/b', 'PATH#/identity/c']);
+        expect([...snapshot.memories.keys()]).toStrictEqual(['/identity/a', '/custom/x']);
+        expect([...snapshot.metas.keys()]).toStrictEqual(['a', 'b']);
     });
 
     test('scan keeps the listed META when an eventual partition read misses it', async () => {
@@ -749,6 +837,7 @@ describe('repair-tag-index repairMemory', () => {
         expect(rowsOf(table, 'new')).toStrictEqual([desiredRow(item, 'new')]);
         expect(rowsOf(table, 'removed')).toStrictEqual([]);
         expect(h.charges).toStrictEqual([{ baseRcu: 1 }, { baseRcu: 4 }, { baseWcu: 1 }, { baseWcu: 1 }, { baseWcu: 1 }, { baseRcu: 1 }]);
+        expect(h.reserves).toStrictEqual([{ baseRcu: 1 }, { baseRcu: 4 }, { baseWcu: 1 }, { baseWcu: 1 }, { baseWcu: 1 }, { baseRcu: 1 }]);
     });
 
     test('repairMemory deletes every row of a memory that is gone', async () => {
@@ -897,6 +986,7 @@ describe('repair-tag-index repairMemory', () => {
         expect(outcome).toStrictEqual({ settled: true, touched: new Set(), writes: 0 });
         expect(h.store.calls).toStrictEqual(['getMemory /identity/a', `getRows /identity/a ${tags.slice(0, 100).join(',')}`, 'getRows /identity/a t100', 'getMemory /identity/a']);
         expect(h.charges).toStrictEqual([{ baseRcu: 1 }, { baseRcu: 100 }, { baseRcu: 1 }, { baseRcu: 1 }]);
+        expect(h.reserves).toStrictEqual([{ baseRcu: 1 }, { baseRcu: 100 }, { baseRcu: 1 }, { baseRcu: 1 }]);
         expect(h.sleeps).toStrictEqual([]);
     });
 
@@ -987,7 +1077,7 @@ describe('repair-tag-index recount', () => {
         expect(await readCount(h.ctx, 'z')).toStrictEqual({ n: 0, meta: undefined });
     });
 
-    test('recount issues read2 no earlier than the settle interval after read1', async () => {
+    test('recount waits the settle interval once per cycle, after the last read1', async () => {
         const table = newTable();
         putMeta(table, meta('a', 0));
         putMeta(table, meta('b', 0));
@@ -995,46 +1085,64 @@ describe('repair-tag-index recount', () => {
         putRow(table, { PK: 'TAG#b', SK: 'PATH#/1' });
         const h = harness(table);
         h.store.readCost = 999;
+        const events: string[] = [];
+        h.store.onEveryRead = (call) => {
+            events.push(`${call} at ${h.clock.now - NOW_MS}`);
+        };
+        const sleep = h.ctx.sleep;
+        h.ctx.sleep = async (ms) => {
+            events.push(`sleep ${ms}`);
+            await sleep(ms);
+        };
 
-        await recount(h.ctx, new Set(['a', 'b']), 1000);
+        const outcome = await recount(h.ctx, new Set(['a', 'b']), 1000);
 
-        expect(h.sleeps.slice(0, 1)).toStrictEqual([1]);
-        expect(h.store.calls.slice(0, 5)).toStrictEqual([
-            'partition a strong undefined',
-            'partition b strong undefined',
-            'partition a strong undefined',
-            'setMeta a 1 0',
-            'partition b strong undefined',
+        expect(outcome).toStrictEqual({ unsettled: [], writes: 2 });
+        expect(events).toStrictEqual([
+            'partition a strong undefined at 999',
+            'partition b strong undefined at 1998',
+            'sleep 1000',
+            'partition a strong undefined at 3997',
+            'partition b strong undefined at 4996',
+            'partition a strong undefined at 5995',
+            'partition b strong undefined at 6994',
+            'sleep 1000',
+            'partition a strong undefined at 8993',
+            'partition b strong undefined at 9992',
+        ]);
+        expect(h.store.calls.filter(call => call.startsWith('setMeta'))).toStrictEqual(['setMeta a 1 0', 'setMeta b 1 0']);
+        expect(h.progress.filter(call => call.startsWith('phase'))).toStrictEqual([
+            'phase Recount cycle 1 first reads 2', 'phase Recount cycle 1 second reads 2', 'phase Recount cycle 2 first reads 2', 'phase Recount cycle 2 second reads 2',
         ]);
     });
 
-    function settledPair(): Table {
+    test('recount reads a cycle concurrently around one settle wait', async () => {
         const table = newTable();
-        for(const tag of ['a', 'b']) {
+        for(const tag of ['a', 'b', 'c']) {
             putMeta(table, meta(tag, 1));
             putRow(table, { PK: `TAG#${tag}`, SK: 'PATH#/1' });
         }
-        return table;
-    }
+        const h = harness(table);
+        h.store.busy = () => false;
+        h.ctx.concurrency = 3;
+        const events: string[] = [];
+        h.store.onEveryRead = (call) => {
+            events.push(call);
+        };
+        const sleep = h.ctx.sleep;
+        h.ctx.sleep = async (ms) => {
+            events.push(`sleep ${ms}`);
+            await sleep(ms);
+        };
 
-    test('recount does not sleep when the settle interval has already passed', async () => {
-        const h = harness(settledPair());
-        h.store.readCost = 500;
-
-        const outcome = await recount(h.ctx, new Set(['a', 'b']), 500);
+        const outcome = await recount(h.ctx, new Set(['a', 'b', 'c']), 600_000);
 
         expect(outcome).toStrictEqual({ unsettled: [], writes: 0 });
-        expect(h.sleeps).toStrictEqual([]);
-        expect(h.logs).toStrictEqual(['Recount cycle 1: 2 tags']);
-    });
-
-    test('recount sleeps out only the remaining settle interval', async () => {
-        const h = harness(settledPair());
-        h.store.readCost = 500;
-
-        await recount(h.ctx, new Set(['a', 'b']), 501);
-
-        expect(h.sleeps).toStrictEqual([1]);
+        expect(events).toStrictEqual([
+            'partition a strong undefined', 'partition b strong undefined', 'partition c strong undefined',
+            'sleep 600000',
+            'partition a strong undefined', 'partition b strong undefined', 'partition c strong undefined',
+        ]);
     });
 
     test('recount fixes a stable wrong count conditioned on the count read and verifies it', async () => {
@@ -1052,6 +1160,8 @@ describe('repair-tag-index recount', () => {
         expect(h.sleeps).toStrictEqual([600_000, 600_000]);
         expect(h.logs).toStrictEqual(['Recount cycle 1: 1 tags', 'Recount cycle 2: 1 tags']);
         expect(h.charges.filter(units => units.baseRcu === undefined)).toStrictEqual([{ baseWcu: 1, gsi2Wcu: 1 }]);
+        const cycleReads = Array.from({ length: 4 }, () => ({ baseRcu: 1 }));
+        expect(h.reserves).toStrictEqual([...cycleReads, { baseWcu: 1, gsi2Wcu: 1 }, ...cycleReads]);
     });
 
     test('recount writes missing GSI2 keys for a correct count', async () => {
@@ -1319,18 +1429,79 @@ describe('repair-tag-index executeRepair', () => {
         expect(result).toStrictEqual({ repaired: 2, unsettledPaths: ['/identity/a'], unsettledTags: ['y'], rowWrites: 4, metaWrites: 3, aborted: false });
     });
 
-    test('executeRepair logs progress every 100 memories', async () => {
+    test('executeRepair reports each memory and each paced request to progress', async () => {
         const table = newTable();
-        for(let index = 0; index < 101; index++) {
-            putRow(table, { PK: 'TAG#t', SK: `PATH#/events/${index}`, TTL: FUTURE });
+        putRow(table, { PK: 'TAG#t', SK: 'PATH#/events/1', TTL: FUTURE });
+        putRow(table, { PK: 'TAG#t', SK: 'PATH#/events/2', TTL: FUTURE });
+        const h = harness(table);
+        const plan: Plan = { ...planRepair(snapshotOf(table), NOW_S), recount: new Set() };
+
+        const result = await executeRepair(h.ctx, plan, 1);
+
+        expect(result.repaired).toBe(2);
+        const perMemory = ['poke', 'poke', 'poke', 'poke', 'done'];
+        const perCycle = (cycle: number): string[] => [`phase Recount cycle ${cycle} first reads 1`, 'poke', 'done', `phase Recount cycle ${cycle} second reads 1`, 'poke', 'done'];
+        expect(h.progress).toStrictEqual(['phase Repair memories 2', ...perMemory, ...perMemory, ...perCycle(1)]);
+    });
+
+    test('executeRepair keeps several memories in flight and stops dispatching once aborted', async () => {
+        const table = newTable();
+        const paths = ['/identity/a', '/identity/b', '/identity/c', '/identity/d'];
+        for(const path of paths) {
+            putRow(table, { PK: 'TAG#t', SK: `PATH#${path}` });
         }
         const h = harness(table);
+        h.store.busy = () => false;
+        h.ctx.concurrency = 3;
+        const held = new Map<string, PromiseWithResolvers<void>>();
+        const getMemory = h.store.getMemory.bind(h.store);
+        h.store.getMemory = async (path) => {
+            const gate = Promise.withResolvers<void>();
+            held.set(path, gate);
+            await gate.promise;
+            return getMemory(path);
+        };
+        const plan = planRepair(snapshotOf(table), NOW_S);
+
+        const running = executeRepair(h.ctx, plan, 1);
+        await ticks(20);
+        expect([...held.keys()]).toStrictEqual(['/identity/a', '/identity/b', '/identity/c']);
+        h.abort.abort();
+        const state = watch(running);
+        for(const path of ['/identity/b', '/identity/a']) {
+            held.get(path)?.resolve();
+            // eslint-disable-next-line no-await-in-loop -- sequential: settle one in-flight request at a time
+            await ticks(20);
+            expect(state.settled()).toBe(false);
+        }
+        held.get('/identity/c')?.resolve();
+        const result = await running;
+
+        expect([...held.keys()]).toStrictEqual(['/identity/a', '/identity/b', '/identity/c']);
+        expect(h.store.calls).toStrictEqual(['getMemory /identity/b', 'getMemory /identity/a', 'getMemory /identity/c']);
+        expect(result).toStrictEqual({ repaired: 0, unsettledPaths: [], unsettledTags: [], rowWrites: 0, metaWrites: 0, aborted: true });
+        expect(table.rows.size).toBe(4);
+    });
+
+    test('executeRepair counts the memories whose last requests were in flight at the abort and dispatches no more', async () => {
+        const table = newTable();
+        for(const path of ['/identity/a', '/identity/b', '/identity/c']) {
+            putRow(table, { PK: 'TAG#t', SK: `PATH#${path}` });
+        }
+        const h = harness(table);
+        h.store.busy = () => false;
+        h.ctx.concurrency = 2;
+        h.store.onEveryRead = (call) => {
+            if(h.store.calls.filter(sent => sent === call).length === 2 && call === 'getMemory /identity/a') {
+                h.abort.abort();
+            }
+        };
         const plan = planRepair(snapshotOf(table), NOW_S);
 
         const result = await executeRepair(h.ctx, plan, 1);
 
-        expect(result.repaired).toBe(101);
-        expect(h.logs.filter(line => line.startsWith('Repaired'))).toStrictEqual(['Repaired 100/101 memories']);
+        expect(result).toStrictEqual({ repaired: 2, unsettledPaths: [], unsettledTags: [], rowWrites: 2, metaWrites: 0, aborted: true });
+        expect(h.store.calls.filter(call => call.startsWith('getMemory'))).toStrictEqual(['getMemory /identity/a', 'getMemory /identity/b', 'getMemory /identity/a', 'getMemory /identity/b']);
     });
 
     test('executeRepair returns a partial result when aborted', async () => {
@@ -1406,77 +1577,653 @@ describe('repair-tag-index shared tag between an expiring and a permanent memory
     });
 });
 
+const ONE_PER_SECOND: Rates = { baseRcu: 1, baseWcu: 1, gsi1Rcu: 1, gsi2Rcu: 1, gsi2Wcu: 1 };
+
+/** Real pacing over a fake clock that only moves when a sleep ends. */
+function pacingAt(rates: Rates, start = 0): { pacing: Pacing, sleeps: number[], clock: { now: number }, abort: AbortController } {
+    const sleeps: number[] = [];
+    const clock = { now: start };
+    const abort = new AbortController();
+    const pacing = createPacing(rates, async (ms) => {
+        sleeps.push(ms);
+        const wake = clock.now + ms;
+        await ticks(2);
+        clock.now = Math.max(clock.now, wake);
+    }, () => clock.now, abort.signal);
+    return { pacing, sleeps, clock, abort };
+}
+
 describe('repair-tag-index pacing', () => {
-    test('createPacing sleeps units divided by rate and records consumption', async () => {
-        const sleeps: number[] = [];
-        let now = 0;
-        const pacing = createPacing({ baseRcu: 1, baseWcu: 0.5, gsi1Rcu: 1, gsi2Rcu: 0.5, gsi2Wcu: 0.5 }, async (ms) => {
-            sleeps.push(ms);
-            await ticks(2);
-            now += ms;
-        }, () => now);
+    test('createPacing lets the first booking go at once and spaces later ones by units divided by rate', async () => {
+        const { pacing, sleeps } = pacingAt({ baseRcu: 1, baseWcu: 0.5, gsi1Rcu: 1, gsi2Rcu: 0.5, gsi2Wcu: 0.5 });
 
-        await pacing.charge({ baseRcu: 2 });
-        await pacing.charge({ baseWcu: 1, gsi2Wcu: 1 });
-        await pacing.charge({});
-        await pacing.charge({ gsi1Rcu: 3, gsi2Rcu: 1 });
+        await pacing.reserve({ baseRcu: 2 });
+        await pacing.reserve({ baseRcu: 1 });
+        await pacing.reserve({ baseWcu: 1, gsi2Wcu: 1 });
+        await pacing.reserve({ baseWcu: 1 });
+        await pacing.reserve({});
+        await pacing.reserve({ gsi1Rcu: 3, gsi2Rcu: 1 });
+        await pacing.reserve({ gsi2Rcu: 1 });
 
-        expect(sleeps).toStrictEqual([2000, 2000, 3000]);
-        expect(pacing.consumed).toStrictEqual({ baseRcu: 2, baseWcu: 1, gsi1Rcu: 3, gsi2Rcu: 1, gsi2Wcu: 1 });
+        expect(sleeps).toStrictEqual([2000, 2000, 2000]);
     });
 
-    test('createPacing charges from the current time once earlier debt is paid', async () => {
-        const sleeps: number[] = [];
-        let now = 0;
-        const pacing = createPacing({ baseRcu: 1, baseWcu: 1, gsi1Rcu: 1, gsi2Rcu: 1, gsi2Wcu: 1 }, async (ms) => {
-            sleeps.push(ms);
-            now += ms;
-        }, () => now);
+    test('createPacing books a request on all its resources from the latest of their free times', async () => {
+        const { pacing, sleeps } = pacingAt(ONE_PER_SECOND);
 
-        await pacing.charge({ baseRcu: 1 });
-        now = 5000;
-        await pacing.charge({ baseRcu: 1.5 });
+        await pacing.reserve({ baseWcu: 3 });
+        await pacing.reserve({ baseWcu: 1, gsi2Wcu: 1 });
+        await pacing.reserve({ gsi2Wcu: 1 });
 
-        expect(sleeps).toStrictEqual([1000, 1500]);
+        expect(sleeps).toStrictEqual([3000, 1000]);
     });
 
-    test('createPacing carries debt across charges of the same resource', async () => {
-        const sleeps: number[] = [];
-        const pacing = createPacing({ baseRcu: 1, baseWcu: 1, gsi1Rcu: 1, gsi2Rcu: 1, gsi2Wcu: 1 }, async (ms) => {
-            sleeps.push(ms);
-        }, () => 0);
+    test('createPacing books from the current time once earlier bookings have passed', async () => {
+        const { pacing, sleeps, clock } = pacingAt(ONE_PER_SECOND);
 
-        await pacing.charge({ baseRcu: 1 });
-        await pacing.charge({ baseRcu: 1 });
+        await pacing.reserve({ baseRcu: 1 });
+        clock.now = 5000;
+        await pacing.reserve({ baseRcu: 1.5 });
+        await pacing.reserve({ baseRcu: 1 });
 
-        expect(sleeps).toStrictEqual([1000, 2000]);
+        expect(sleeps).toStrictEqual([1500]);
     });
 
-    test('createPacing sleeps a debt of exactly one millisecond', async () => {
-        const sleeps: number[] = [];
-        const pacing = createPacing({ baseRcu: 1000, baseWcu: 1, gsi1Rcu: 1, gsi2Rcu: 1, gsi2Wcu: 1 }, async (ms) => {
-            sleeps.push(ms);
-        }, () => 0);
+    test('createPacing sleeps a wait of exactly one millisecond', async () => {
+        const { pacing, sleeps } = pacingAt({ ...ONE_PER_SECOND, baseRcu: 1000 });
 
-        await pacing.charge({ baseRcu: 1 });
+        await pacing.reserve({ baseRcu: 1 });
+        await pacing.reserve({ baseRcu: 1 });
 
         expect(sleeps).toStrictEqual([1]);
     });
 
-    test('createPacing starts every resource free of debt whatever the clock reads', async () => {
-        const sleeps: number[] = [];
-        let now = -5000;
-        const pacing = createPacing({ baseRcu: 1, baseWcu: 1, gsi1Rcu: 1, gsi2Rcu: 1, gsi2Wcu: 1 }, async (ms) => {
-            sleeps.push(ms);
-            now += ms;
-        }, () => now);
+    test('createPacing starts every resource free whatever the clock reads', async () => {
+        const { pacing, sleeps } = pacingAt(ONE_PER_SECOND, -5000);
 
-        await pacing.charge({ baseRcu: 1 });
-        await pacing.charge({ baseWcu: 1 });
-        await pacing.charge({ gsi1Rcu: 1 });
-        await pacing.charge({ gsi2Rcu: 1 });
-        await pacing.charge({ gsi2Wcu: 1 });
+        for(const key of RATE_KEYS) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: one booking per resource
+            await pacing.reserve({ [key]: 1 });
+        }
 
-        expect(sleeps).toStrictEqual([1000, 1000, 1000, 1000, 1000]);
+        expect(sleeps).toStrictEqual([]);
+    });
+
+    test('createPacing books concurrent requests one after another instead of on the same free budget', async () => {
+        const { pacing, sleeps } = pacingAt({ ...ONE_PER_SECOND, baseRcu: 4 });
+
+        await Promise.all(Array.from({ length: 4 }, async () => pacing.reserve({ baseRcu: 2 })));
+
+        // One wake per queued request, each at the moment the one before it has been paid for.
+        expect(sleeps).toStrictEqual([500, 500, 500]);
+    });
+
+    test('createPacing trues a booking up to the reported units and records them', async () => {
+        const { pacing, sleeps } = pacingAt(ONE_PER_SECOND);
+
+        await pacing.reserve({ baseRcu: 1 });
+        pacing.trueUp({ baseRcu: 1 }, { baseRcu: 3 });
+        await pacing.reserve({ baseRcu: 1 });
+        pacing.trueUp({ baseRcu: 1 }, { baseRcu: 0.5 });
+        pacing.trueUp({ baseWcu: 1, gsi2Wcu: 1 }, { baseWcu: 1 });
+        pacing.trueUp({}, { gsi1Rcu: 2, gsi2Rcu: 0.5 });
+
+        expect(sleeps).toStrictEqual([3000]);
+        expect(pacing.consumed).toStrictEqual({ baseRcu: 3.5, baseWcu: 1, gsi1Rcu: 2, gsi2Rcu: 0.5, gsi2Wcu: 0 });
+    });
+
+    test('createPacing refunds an overestimate to the bookings still queued', async () => {
+        const { pacing, sleeps } = pacingAt(ONE_PER_SECOND);
+
+        await pacing.reserve({ baseRcu: 4 });
+        pacing.trueUp({ baseRcu: 4 }, { baseRcu: 1 });
+        await pacing.reserve({ baseRcu: 1 });
+
+        expect(sleeps).toStrictEqual([1000]);
+    });
+
+    test('createPacing paces units a request reported without booking them', async () => {
+        const { pacing, sleeps } = pacingAt(ONE_PER_SECOND);
+
+        pacing.trueUp({}, { gsi1Rcu: 2 });
+        await pacing.reserve({ gsi1Rcu: 1 });
+
+        expect(sleeps).toStrictEqual([2000]);
+    });
+
+    test('createPacing backoff holds a throttled resource for every later booking', async () => {
+        const { pacing, sleeps } = pacingAt(ONE_PER_SECOND);
+
+        await pacing.reserve({ baseRcu: 1 });
+        const holds = [pacing.backoff(['baseRcu', 'gsi1Rcu'], 5000), pacing.backoff(['baseRcu'], 500)];
+        await pacing.reserve({ baseWcu: 1 });
+        await pacing.reserve({ gsi1Rcu: 1 });
+        holds.push(pacing.backoff(['baseRcu'], 2000));
+        await pacing.reserve({ baseRcu: 1 });
+        await Promise.all(holds);
+
+        expect(sleeps).toStrictEqual([5000, 2000]);
+    });
+
+    test('createPacing refuses a booking once aborted, even without a wait', async () => {
+        const { pacing, abort } = pacingAt(ONE_PER_SECOND);
+        abort.abort();
+
+        await expect(pacing.reserve({ baseRcu: 1 })).rejects.toThrow('The operation was aborted.');
+    });
+
+    test('createPacing refuses a booking aborted during its wait', async () => {
+        const { pacing, abort } = pacingAt(ONE_PER_SECOND);
+        await pacing.reserve({ baseRcu: 1 });
+
+        const waiting = pacing.reserve({ baseRcu: 1 });
+        abort.abort();
+
+        await expect(waiting).rejects.toThrow('The operation was aborted.');
+    });
+});
+
+/** Work whose items each wait on their own deferred, recording starts, ends and in-flight counts. */
+function heldWork(): { work: (item: number) => Promise<void>, gates: Map<number, PromiseWithResolvers<void>>, started: number[], ended: number[] } {
+    const gates = new Map<number, PromiseWithResolvers<void>>();
+    const started: number[] = [];
+    const ended: number[] = [];
+    return {
+        gates,
+        started,
+        ended,
+        work: async (item) => {
+            const gate = Promise.withResolvers<void>();
+            gates.set(item, gate);
+            started.push(item);
+            await gate.promise;
+            ended.push(item);
+        },
+    };
+}
+
+/** Tracks whether a promise has settled, without letting a rejection go unhandled. */
+function watch(promise: Promise<unknown>): { settled: () => boolean } {
+    let settled = false;
+    void (async () => {
+        await Promise.allSettled([promise]);
+        settled = true;
+    })();
+    return { settled: () => settled };
+}
+
+describe('repair-tag-index worker pool', () => {
+    test('runPool keeps at most concurrency items in flight and dispatches them in order', async () => {
+        const h = harness();
+        h.ctx.concurrency = 2;
+        const held = heldWork();
+
+        const pool = runPool(h.ctx, 'Items', [0, 1, 2, 3], held.work);
+        await ticks(5);
+        expect(held.started).toStrictEqual([0, 1]);
+        held.gates.get(1)?.resolve();
+        await ticks(5);
+        expect(held.started).toStrictEqual([0, 1, 2]);
+        held.gates.get(0)?.resolve();
+        await ticks(5);
+        expect(held.started).toStrictEqual([0, 1, 2, 3]);
+        held.gates.get(3)?.resolve();
+        held.gates.get(2)?.resolve();
+        await pool;
+
+        expect(held.ended).toStrictEqual([1, 0, 3, 2]);
+        expect(h.progress).toStrictEqual(['phase Items 4', 'done', 'done', 'done', 'done']);
+    });
+
+    test('runPool passes each item its index and does nothing without items', async () => {
+        const h = harness();
+        h.ctx.concurrency = 3;
+        const seen: string[] = [];
+
+        await runPool(h.ctx, 'Items', ['a', 'b'], async (item, index) => {
+            seen.push(`${item}${index}`);
+        });
+        await runPool(h.ctx, 'None', [], async () => {
+            seen.push('never');
+        });
+
+        expect(seen).toStrictEqual(['a0', 'b1']);
+        expect(h.progress).toStrictEqual(['phase Items 2', 'done', 'done', 'phase None 0']);
+    });
+
+    test('runPool stops dispatching after a failure and rethrows the first failure once the items in flight settle', async () => {
+        const h = harness();
+        h.ctx.concurrency = 2;
+        const held = heldWork();
+
+        const pool = runPool(h.ctx, 'Items', [0, 1, 2, 3], held.work);
+        const state = watch(pool);
+        await ticks(5);
+        held.gates.get(0)?.reject(new Error('first'));
+        await ticks(5);
+        expect(held.started).toStrictEqual([0, 1]);
+        expect(h.cancels).toStrictEqual(['first']);
+        expect(state.settled()).toBe(false);
+        held.gates.get(1)?.reject(new Error('second'));
+
+        await expect(pool).rejects.toThrow('first');
+        expect(held.started).toStrictEqual([0, 1]);
+        expect(h.progress).toStrictEqual(['phase Items 4']);
+        expect(h.cancels).toStrictEqual(['first', 'second']);
+    });
+
+    test('runPool on abort dispatches nothing more, waits for every item in flight, then throws the abort', async () => {
+        const h = harness();
+        h.ctx.concurrency = 3;
+        const held = heldWork();
+
+        const pool = runPool(h.ctx, 'Items', [0, 1, 2, 3, 4], held.work);
+        const state = watch(pool);
+        await ticks(5);
+        expect(held.started).toStrictEqual([0, 1, 2]);
+        h.abort.abort();
+        for(const item of [1, 0]) {
+            held.gates.get(item)?.resolve();
+            // eslint-disable-next-line no-await-in-loop -- sequential: settle one item in flight at a time
+            await ticks(5);
+            expect(state.settled()).toBe(false);
+        }
+        held.gates.get(2)?.resolve();
+
+        await expect(pool).rejects.toThrow('The operation was aborted.');
+        expect(held.started).toStrictEqual([0, 1, 2]);
+        expect(held.ended).toStrictEqual([1, 0, 2]);
+        expect(h.cancels).toStrictEqual([]);
+    });
+
+    test('mapPool returns the results in item order whatever order they finish in', async () => {
+        const h = harness();
+        h.ctx.concurrency = 3;
+        const gates = [Promise.withResolvers<string>(), Promise.withResolvers<string>(), Promise.withResolvers<string>()];
+
+        const pool = mapPool(h.ctx, 'Items', [0, 1, 2], async index => gates[index]?.promise);
+        gates[2]?.resolve('c');
+        gates[0]?.resolve('a');
+        gates[1]?.resolve('b');
+
+        expect(await pool).toStrictEqual(['a', 'b', 'c']);
+    });
+});
+
+describe('repair-tag-index progress', () => {
+    function progressAt(): { progress: ReturnType<typeof createProgress>, logs: string[], clock: { now: number }, consumed: Rates } {
+        const logs: string[] = [];
+        const clock = { now: 50_000 };
+        const consumed: Rates = { baseRcu: 7, baseWcu: 0, gsi1Rcu: 0, gsi2Rcu: 0, gsi2Wcu: 0 };
+        const progress = createProgress(() => clock.now, (text) => {
+            logs.push(text);
+        }, consumed);
+        return { progress, logs, clock, consumed };
+    }
+
+    test('createProgress logs a phase at most every 10 s with its items, units, rates and ETA', () => {
+        const { progress, logs, clock, consumed } = progressAt();
+
+        progress.phase('Repair memories', 40);
+        clock.now += 9999;
+        progress.poke();
+        progress.done();
+        progress.done();
+        progress.done();
+        consumed.baseRcu += 12.25;
+        consumed.baseWcu += 4;
+        clock.now += 1;
+        progress.poke();
+        progress.poke();
+        clock.now += 9999;
+        progress.poke();
+        progress.done();
+        clock.now += 20_001;
+        progress.poke();
+
+        expect(logs).toStrictEqual([
+            'Repair memories: 3/40 in 10 s, baseRcu 12.3 (1.2/s), baseWcu 4.0 (0.4/s), ETA 123 s',
+            'Repair memories: 4/40 in 40 s, baseRcu 12.3 (0.3/s), baseWcu 4.0 (0.1/s), ETA 360 s',
+        ]);
+    });
+
+    test('createProgress omits the ETA before any item is done and resets on each phase', () => {
+        const { progress, logs, clock, consumed } = progressAt();
+
+        clock.now += 10_000;
+        consumed.gsi2Rcu += 1;
+        progress.poke();
+        progress.phase('Walk namespaces', 5);
+        progress.done();
+        clock.now += 10_000;
+        progress.poke();
+
+        expect(logs).toStrictEqual(['Starting: 0/0 in 10 s, gsi2Rcu 1.0 (0.1/s)', 'Walk namespaces: 1/5 in 10 s, ETA 40 s']);
+    });
+});
+
+/**
+ * Microtask turns that settle every chain a woken timer starts (a response through pacing to the
+ * next request or sleep). Measured: 16 already gives the same simulated times as 200.
+ */
+const SETTLE_TICKS = 40;
+
+/** A fake clock whose sleeps are timers it fires in time order once everything else has settled. */
+class FakeTime {
+    now = 0;
+    private readonly timers: { at: number, wake: () => void }[] = [];
+
+    readonly sleep = async (ms: number): Promise<void> => {
+        const timer = Promise.withResolvers<void>();
+        this.timers.push({ at: this.now + ms, wake: timer.resolve });
+        await timer.promise;
+    };
+
+    async run<T>(task: Promise<T>): Promise<T> {
+        const state = watch(task);
+        for(;;) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: the clock moves only once all work has settled
+            await ticks(SETTLE_TICKS);
+            const next = this.timers.toSorted((a, b) => a.at - b.at).at(0);
+            if(state.settled() || next === undefined) {
+                return task;
+            }
+            this.timers.splice(this.timers.indexOf(next), 1);
+            this.now = next.at;
+            next.wake();
+        }
+    }
+}
+
+interface TimedRun {
+    elapsed:  number
+    peak:     number
+    result:   Awaited<ReturnType<typeof executeRepair>>
+    sent:     { at: number, units: Units }[]
+    consumed: Rates
+}
+
+const LATENCY_MS = 250;
+
+/**
+ * executeRepair of 8 memories with a missing row each (then 8 recounts) against the fake store
+ * behind a 250 ms round trip, with the real pacing and progress on a fake clock.
+ */
+async function timedRepair(concurrency: number, rates: Rates): Promise<TimedRun> {
+    const table = newTable();
+    for(let index = 0; index < 8; index++) {
+        putMemory(table, memory(`/identity/m${index}`, [`t${index}`]));
+    }
+    const plan = planRepair(snapshotOf(table), NOW_S);
+    const time = new FakeTime();
+    const abort = new AbortController();
+    const pacing = createPacing(rates, time.sleep, () => time.now, abort.signal);
+    const fake = new FakeStore(table);
+    const sent: TimedRun['sent'] = [];
+    let inFlight = 0;
+    let peak = 0;
+    const store = new Proxy(fake, {
+        get(target, key, receiver) {
+            const value: unknown = Reflect.get(target, key, receiver);
+            if(typeof value !== 'function') {
+                return value;
+            }
+            return async (...args: unknown[]) => {
+                const at = time.now;
+                peak = Math.max(peak, ++inFlight);
+                await time.sleep(LATENCY_MS);
+                inFlight--;
+                const answer = await (value as (...params: unknown[]) => Promise<{ units: Units }>).apply(target, args);
+                sent.push({ at, units: answer.units });
+                return answer;
+            };
+        },
+    });
+    const ctx: RepairContext = {
+        store,
+        pacing,
+        progress: createProgress(() => time.now, () => undefined, pacing.consumed),
+        concurrency,
+        sleep:    time.sleep,
+        now:      () => time.now,
+        log:      () => undefined,
+        signal:   abort.signal,
+    };
+    const result = await time.run(executeRepair(ctx, plan, 1000));
+    return { elapsed: time.now, peak, result, sent, consumed: pacing.consumed };
+}
+
+/** The most units of `key` sent in any window, beyond what its rate allows over that window. */
+function worstExcess(sent: TimedRun['sent'], key: keyof Rates, rate: number): number {
+    const sends = sent.filter(entry => (entry.units[key] ?? 0) > 0).toSorted((a, b) => a.at - b.at);
+    let worst = 0;
+    for(let first = 0; first < sends.length; first++) {
+        let units = 0;
+        for(let last = first; last < sends.length; last++) {
+            units += sends[last]?.units[key] ?? 0;
+            worst = Math.max(worst, units - (rate * ((sends[last]?.at ?? 0) - (sends[first]?.at ?? 0)) / 1000));
+        }
+    }
+    return worst;
+}
+
+describe('repair-tag-index concurrent speed-up', () => {
+    const FAST: Rates = { baseRcu: 1000, baseWcu: 1000, gsi1Rcu: 1000, gsi2Rcu: 1000, gsi2Wcu: 1000 };
+
+    test('N workers keep N requests in flight and cut the run time accordingly', async () => {
+        const one = await timedRepair(1, FAST);
+        const four = await timedRepair(4, FAST);
+
+        expect(one.peak).toBe(1);
+        expect(four.peak).toBe(4);
+        expect(one.result).toStrictEqual({ repaired: 8, unsettledPaths: [], unsettledTags: [], rowWrites: 8, metaWrites: 8, aborted: false });
+        expect(four.result).toStrictEqual(one.result);
+        expect(four.consumed).toStrictEqual(one.consumed);
+        // Sequential: 32 repair requests and 32 recount reads, 8 META writes and two 1 s settle
+        // waits, each request a full round trip. Four workers overlap all but the settle waits.
+        expect([one.elapsed, four.elapsed]).toStrictEqual([20_000, 6515]);
+    });
+
+    test('pacing holds every resource to its rate over any window however many workers wait', async () => {
+        const rates: Rates = { baseRcu: 8, baseWcu: 8, gsi1Rcu: 1, gsi2Rcu: 1, gsi2Wcu: 8 };
+        const run = await timedRepair(8, rates);
+
+        expect(run.result.repaired).toBe(8);
+        expect(run.peak).toBeGreaterThan(1);
+        expect(worstExcess(run.sent, 'baseRcu', rates.baseRcu)).toBeLessThanOrEqual(1);
+        expect(worstExcess(run.sent, 'baseWcu', rates.baseWcu)).toBeLessThanOrEqual(1);
+        expect(worstExcess(run.sent, 'gsi2Wcu', rates.gsi2Wcu)).toBeLessThanOrEqual(1);
+        // 56 read units at 8/s bound the run (after the first free booking) well below the
+        // sequential 20 s, yet above the 6.9 s the read rate alone needs.
+        expect([run.elapsed, run.consumed.baseRcu]).toStrictEqual([9875, 56]);
+        expect(run.elapsed).toBeGreaterThanOrEqual((run.consumed.baseRcu - 1) * 1000 / rates.baseRcu);
+    });
+});
+
+describe('repair-tag-index concurrency', () => {
+    test('defaultConcurrency covers the fastest rate for one round trip, capped at 32', () => {
+        expect(defaultConcurrency({ baseRcu: 1, baseWcu: 0.5, gsi1Rcu: 1, gsi2Rcu: 0.5, gsi2Wcu: 0.5 })).toBe(1);
+        expect(defaultConcurrency({ baseRcu: 1, baseWcu: 4, gsi1Rcu: 4, gsi2Rcu: 0.5, gsi2Wcu: 5 })).toBe(3);
+        expect(defaultConcurrency({ baseRcu: 45, baseWcu: 48, gsi1Rcu: 48, gsi2Rcu: 0.5, gsi2Wcu: 49 })).toBe(30);
+        expect(defaultConcurrency({ ...ONE_PER_SECOND, gsi2Rcu: 55 })).toBe(32);
+        expect(defaultConcurrency({ ...ONE_PER_SECOND, gsi2Rcu: 50 })).toBe(30);
+    });
+});
+
+/** Real pacing on a {@link FakeTime} clock, logging `name@time` as each request is let through. */
+function queuedPacing(): { time: FakeTime, pacing: Pacing, abort: AbortController, sent: string[], send: (name: string, estimate: Units) => Promise<void> } {
+    const time = new FakeTime();
+    const abort = new AbortController();
+    const pacing = createPacing(ONE_PER_SECOND, time.sleep, () => time.now, abort.signal);
+    const sent: string[] = [];
+    return {
+        time,
+        pacing,
+        abort,
+        sent,
+        send: async (name, estimate) => {
+            await pacing.reserve(estimate);
+            sent.push(`${name}@${time.now}`);
+        },
+    };
+}
+
+function throttle(): Error {
+    return Object.assign(new Error('throttled'), { name: 'ThrottlingException' });
+}
+
+describe('repair-tag-index pacing of requests already waiting', () => {
+    test('an underestimate trued up later delays the requests already queued behind it', async () => {
+        const { time, pacing, sent, send } = queuedPacing();
+
+        await time.run(Promise.all([
+            (async () => {
+                await send('A', { baseRcu: 1 });
+                await time.sleep(250);
+                pacing.trueUp({ baseRcu: 1 }, { baseRcu: 10 });
+            })(),
+            send('B', { baseRcu: 1 }),
+        ]));
+
+        expect(sent).toStrictEqual(['A@0', 'B@10000']);
+    });
+
+    test('a refund lets the requests already queued go sooner, one slot each', async () => {
+        const { time, pacing, sent, send } = queuedPacing();
+
+        await time.run(Promise.all([
+            (async () => {
+                await send('A', { baseRcu: 4 });
+                await time.sleep(250);
+                pacing.trueUp({ baseRcu: 4 }, { baseRcu: 1 });
+                // Queued after B has gone at 1 s on the refund alone.
+                await time.sleep(1000);
+                await Promise.all(['C', 'D', 'E'].map(async name => send(name, { baseRcu: 1 })));
+            })(),
+            send('B', { baseRcu: 1 }),
+        ]));
+
+        expect(sent).toStrictEqual(['A@0', 'B@1000', 'C@2000', 'D@3000', 'E@4000']);
+    });
+
+    test('a throttle holds the requests already queued on its resource, and the retry waits its turn behind them', async () => {
+        const { time, pacing, sent, send } = queuedPacing();
+
+        await time.run(Promise.all([
+            (async () => {
+                await send('A', { baseRcu: 1 });
+                await time.sleep(250);
+                await pacing.backoff(['baseRcu'], 5000);
+                sent.push(`retry A@${time.now}`);
+            })(),
+            send('B', { baseRcu: 1 }),
+            send('W', { baseWcu: 1 }),
+        ]));
+
+        expect(sent).toStrictEqual(['A@0', 'W@0', 'B@5250', 'retry A@6250']);
+    });
+
+    test('a request waiting on two resources is not overtaken on the one that is free', async () => {
+        const { time, sent, send } = queuedPacing();
+
+        await time.run(Promise.all([
+            send('G', { gsi2Wcu: 3 }),
+            send('M', { baseWcu: 1, gsi2Wcu: 1 }),
+            ...['R1', 'R2', 'R3', 'R4'].map(async name => send(name, { baseWcu: 1 })),
+            send('L', { gsi1Rcu: 1 }),
+        ]));
+
+        expect(sent).toStrictEqual(['G@0', 'L@0', 'M@3000', 'R1@4000', 'R2@5000', 'R3@6000', 'R4@7000']);
+    });
+
+    test('a throttled retry waits out a longer hold a peer puts on its resource meanwhile', async () => {
+        const { time, pacing } = queuedPacing();
+        const sends: number[] = [];
+
+        await time.run(Promise.all([
+            retryThrottled(async () => {
+                sends.push(time.now);
+                if(sends.length === 1) {
+                    throw throttle();
+                }
+                return 'done';
+            }, ['baseRcu'], { onThrottle: pacing.backoff }),
+            (async () => {
+                await time.sleep(250);
+                await pacing.backoff(['baseRcu'], 5000);
+            })(),
+        ]));
+
+        expect(sends).toStrictEqual([0, 5250]);
+    });
+
+    test('an abort refuses every queued request and retry at once, and every later one', async () => {
+        const { pacing, abort, sent, send } = queuedPacing();
+        await send('A', { baseRcu: 1 });
+
+        const waiting = Promise.allSettled([send('B', { baseRcu: 1 }), send('C', { baseRcu: 1 }), pacing.backoff(['baseRcu'], 1000)]);
+        abort.abort();
+        const outcomes = await waiting;
+
+        expect(outcomes.map(outcome => (outcome.status === 'rejected' ? (outcome.reason as Error).message : 'let through'))).toStrictEqual(Array.from({ length: 3 }, () => 'The operation was aborted.'));
+        await expect(pacing.reserve({})).rejects.toThrow('The operation was aborted.');
+        expect(sent).toStrictEqual(['A@0']);
+    });
+
+    test('cancel refuses every queued request and retry, and every later one, with its first reason', async () => {
+        const { pacing, abort, sent, send } = queuedPacing();
+        const fatal = new Error('fatal');
+        await send('A', { baseRcu: 1 });
+
+        const waiting = Promise.allSettled([send('B', { baseRcu: 1 }), pacing.backoff(['baseWcu'], 1000)]);
+        pacing.cancel(fatal);
+        const outcomes = await waiting;
+        pacing.cancel(new Error('later'));
+        abort.abort();
+
+        expect(outcomes.map(outcome => (outcome.status === 'rejected' ? outcome.reason : 'let through'))).toStrictEqual([fatal, fatal]);
+        await expect(pacing.reserve({ baseWcu: 1 })).rejects.toBe(fatal);
+        await expect(pacing.backoff(['baseRcu'], 1)).rejects.toBe(fatal);
+        expect(sent).toStrictEqual(['A@0']);
+    });
+
+    test('a pacing created after an abort refuses its first request', async () => {
+        const abort = new AbortController();
+        abort.abort();
+        const pacing = createPacing(ONE_PER_SECOND, async () => undefined, () => 0, abort.signal);
+
+        await expect(pacing.reserve({ baseRcu: 1 })).rejects.toThrow('The operation was aborted.');
+    });
+
+    test('the first fatal error cancels a sibling retrying a throttled request, and the pool rethrows it', async () => {
+        const { time, pacing, abort } = queuedPacing();
+        const h = harness();
+        h.ctx.pacing = pacing;
+        h.ctx.signal = abort.signal;
+        h.ctx.concurrency = 2;
+        const sends: number[] = [];
+        const started: number[] = [];
+
+        const pool = runPool(h.ctx, 'Items', [0, 1, 2], async (item) => {
+            started.push(item);
+            if(item === 0) {
+                await time.sleep(250);
+                throw new Error('fatal');
+            }
+            await retryThrottled(async () => {
+                sends.push(time.now);
+                // Bounds a retry loop that ignores the failure: only an abort would end it.
+                if(sends.length === 4) {
+                    abort.abort();
+                }
+                throw throttle();
+            }, ['baseRcu'], { onThrottle: pacing.backoff });
+        });
+
+        await expect(time.run(pool)).rejects.toThrow('fatal');
+        expect(sends).toStrictEqual([0]);
+        expect(started).toStrictEqual([0, 1]);
+        expect(time.now).toBe(250);
+        await expect(pacing.reserve({ baseWcu: 1 })).rejects.toThrow('fatal');
     });
 });

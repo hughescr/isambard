@@ -1,13 +1,15 @@
 /**
  * Thin DynamoDB adapters for the one-off tag-index repair (tools/repair-tag-index.ts): the
  * data-plane {@link RepairStore} over the DocumentClient and the control-plane
- * {@link CapacityAdmin} over the low-level client. Throttling is retried with backoff and never
- * fails the run; a failed write condition is a result, not an error.
+ * {@link CapacityAdmin} over the low-level client. Throttling is retried with backoff through
+ * `onThrottle` (the shared pacing's backoff), which holds the throttled resource for every worker
+ * and lets the retry go only in its turn once the hold is over; it never fails the run. A failed
+ * write condition is a result, not an error.
  */
 import { DescribeTableCommand, UpdateTableCommand, type Capacity, type ConsumedCapacity, type DynamoDBClient, type TableDescription } from '@aws-sdk/client-dynamodb';
 import { BatchGetCommand, DeleteCommand, GetCommand, PutCommand, QueryCommand, UpdateCommand, type DynamoDBDocumentClient, type QueryCommandInput } from '@aws-sdk/lib-dynamodb';
 import type { CapacityAdmin, CapacityState, Resource, Throughput } from './repair-tag-index-capacity';
-import { FIRST_BACKOFF_MS, MAX_BACKOFF_MS, type Memory, type Meta, type RepairStore, type TagRow, type Units, type WriteResult } from './repair-tag-index-core';
+import { FIRST_BACKOFF_MS, MAX_BACKOFF_MS, type Memory, type Meta, type RateKey, type RepairStore, type TagRow, type Units, type WriteResult } from './repair-tag-index-core';
 import { MemoryToolKeyGenerator } from '@/storage/memory-tool/key-generator';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
@@ -15,16 +17,27 @@ const THROTTLE_ERRORS = new Set<string | undefined>(['ProvisionedThroughputExcee
 const ROW_FIELDS = ['updatedAt', 'tags', 'layer', 'contentPreview', 'memoryPath', 'TTL'] as const;
 
 export interface AdapterDeps {
-    sleep:  (ms: number) => Promise<void>
-    signal: AbortSignal
+    /**
+     * Holds the throttled resources for `ms` for every worker and waits for the retry's turn (the
+     * pacing's backoff); rejects once the run is aborted or cancelled by a fatal error.
+     */
+    onThrottle: (keys: readonly RateKey[], ms: number) => Promise<void>
 }
+
+const ROW_WRITE_KEYS: readonly RateKey[] = ['baseWcu'];
+const META_WRITE_KEYS: readonly RateKey[] = ['baseWcu', 'gsi2Wcu'];
 
 function errorName(error: unknown): string | undefined {
     return (new Object(error) as { name?: string }).name;
 }
 
-/** Retries throttled requests from 1 s doubling to 30 s, until the request succeeds or the run is aborted. */
-export async function retryThrottled<T>(operation: () => Promise<T>, deps: AdapterDeps): Promise<T> {
+/**
+ * Retries throttled requests with a backoff from 1 s doubling to 30 s, until the request succeeds
+ * or the pacing refuses the wait (abort, or a fatal error elsewhere in the pool). Each backoff
+ * holds `keys`, the resources the request uses, for the whole pool, and the retry is sent only
+ * once the shared pacing lets it through, however long a peer has extended the hold meanwhile.
+ */
+export async function retryThrottled<T>(operation: () => Promise<T>, keys: readonly RateKey[], deps: AdapterDeps): Promise<T> {
     let delay = FIRST_BACKOFF_MS;
     for(;;) {
         try {
@@ -34,9 +47,8 @@ export async function retryThrottled<T>(operation: () => Promise<T>, deps: Adapt
             if(!THROTTLE_ERRORS.has(errorName(error))) {
                 throw error;
             }
-            deps.signal.throwIfAborted();
             // eslint-disable-next-line no-await-in-loop -- sequential: backoff between retries
-            await deps.sleep(delay);
+            await deps.onThrottle(keys, delay);
             delay = Math.min(delay * 2, MAX_BACKOFF_MS);
         }
     }
@@ -112,13 +124,13 @@ function metaKey(tag: string): { PK: string, SK: string } {
 
 /** The data-plane port over the DocumentClient. */
 export function createRepairStore(client: DynamoDBDocumentClient, tableName: string, deps: AdapterDeps): RepairStore {
-    const query = async (label: string, input: Omit<QueryCommandInput, 'TableName' | 'ReturnConsumedCapacity'>): Promise<{ items: Record<string, unknown>[], next: Record<string, unknown> | undefined, units: number }> => {
-        const output = await retryThrottled(async () => client.send(new QueryCommand({ TableName: tableName, ReturnConsumedCapacity: 'TOTAL', ...input })), deps);
+    const query = async (label: string, key: RateKey, input: Omit<QueryCommandInput, 'TableName' | 'ReturnConsumedCapacity'>): Promise<{ items: Record<string, unknown>[], next: Record<string, unknown> | undefined, units: number }> => {
+        const output = await retryThrottled(async () => client.send(new QueryCommand({ TableName: tableName, ReturnConsumedCapacity: 'TOTAL', ...input })), [key], deps);
         return { items: output.Items ?? [], next: output.LastEvaluatedKey, units: requireUnits(output.ConsumedCapacity?.CapacityUnits, label) };
     };
-    const write = async (label: string, command: PutCommand | DeleteCommand | UpdateCommand): Promise<WriteResult> => {
+    const write = async (label: string, keys: readonly RateKey[], command: PutCommand | DeleteCommand | UpdateCommand): Promise<WriteResult> => {
         try {
-            const output = await retryThrottled(async () => client.send(command as PutCommand), deps);
+            const output = await retryThrottled(async () => client.send(command as PutCommand), keys, deps);
             return { status: 'ok', units: writeUnits(output.ConsumedCapacity, label) };
         } catch (error) {
             if(errorName(error) !== 'ConditionalCheckFailedException') {
@@ -129,7 +141,7 @@ export function createRepairStore(client: DynamoDBDocumentClient, tableName: str
     };
     return {
         async listMetaCounts(start) {
-            const page = await query('GSI2 TAG_COUNTS query', {
+            const page = await query('GSI2 TAG_COUNTS query', 'gsi2Rcu', {
                 IndexName:                 'GSI2',
                 KeyConditionExpression:    'GSI2PK = :pk',
                 ExpressionAttributeValues: { ':pk': 'TAG_COUNTS' },
@@ -138,7 +150,7 @@ export function createRepairStore(client: DynamoDBDocumentClient, tableName: str
             return { items: page.items as unknown as Meta[], next: page.next, units: { gsi2Rcu: page.units } };
         },
         async readTagPartition(tag, start, strong) {
-            const page = await query(`TAG#${tag} query`, {
+            const page = await query(`TAG#${tag} query`, 'baseRcu', {
                 KeyConditionExpression:    'PK = :pk',
                 ExpressionAttributeValues: { ':pk': `TAG#${tag}` },
                 ExclusiveStartKey:         start,
@@ -153,7 +165,7 @@ export function createRepairStore(client: DynamoDBDocumentClient, tableName: str
             };
         },
         async walkNamespace(namespace, start) {
-            const page = await query(`GSI1 LAYER#${namespace} query`, {
+            const page = await query(`GSI1 LAYER#${namespace} query`, 'gsi1Rcu', {
                 IndexName:                 'GSI1',
                 KeyConditionExpression:    'GSI1PK = :pk',
                 ExpressionAttributeValues: { ':pk': `LAYER#${namespace}` },
@@ -163,14 +175,14 @@ export function createRepairStore(client: DynamoDBDocumentClient, tableName: str
         },
         async getMemory(path) {
             const { PK, SK } = MemoryToolKeyGenerator.createKeys(path as MemoryPath);
-            const output = await retryThrottled(async () => client.send(new GetCommand({ TableName: tableName, Key: { PK, SK }, ConsistentRead: true, ReturnConsumedCapacity: 'TOTAL' })), deps);
+            const output = await retryThrottled(async () => client.send(new GetCommand({ TableName: tableName, Key: { PK, SK }, ConsistentRead: true, ReturnConsumedCapacity: 'TOTAL' })), ['baseRcu'], deps);
             return { item: output.Item === undefined ? undefined : toMemory(output.Item), units: { baseRcu: requireUnits(output.ConsumedCapacity?.CapacityUnits, `GetItem ${path}`) } };
         },
         async getRows(path, tags) {
             const output = await retryThrottled(async () => client.send(new BatchGetCommand({
                 RequestItems:           { [tableName]: { Keys: tags.map(tag => tagKey(tag, path)), ConsistentRead: true } },
                 ReturnConsumedCapacity: 'TOTAL',
-            })), deps);
+            })), ['baseRcu'], deps);
             const unprocessed = (output.UnprocessedKeys?.[tableName]?.Keys ?? []) as { PK: string }[];
             return {
                 items:       (output.Responses?.[tableName] ?? []) as unknown as TagRow[],
@@ -179,14 +191,14 @@ export function createRepairStore(client: DynamoDBDocumentClient, tableName: str
             };
         },
         async putRow(row, observed) {
-            return write(`PutItem ${row.PK} ${row.SK}`, new PutCommand({ TableName: tableName, Item: row, ReturnConsumedCapacity: 'INDEXES', ...rowCondition(observed) }));
+            return write(`PutItem ${row.PK} ${row.SK}`, ROW_WRITE_KEYS, new PutCommand({ TableName: tableName, Item: row, ReturnConsumedCapacity: 'INDEXES', ...rowCondition(observed) }));
         },
         async deleteRow(observed) {
-            return write(`DeleteItem ${observed.PK} ${observed.SK}`, new DeleteCommand({ TableName: tableName, Key: { PK: observed.PK, SK: observed.SK }, ReturnConsumedCapacity: 'INDEXES', ...rowCondition(observed) }));
+            return write(`DeleteItem ${observed.PK} ${observed.SK}`, ROW_WRITE_KEYS, new DeleteCommand({ TableName: tableName, Key: { PK: observed.PK, SK: observed.SK }, ReturnConsumedCapacity: 'INDEXES', ...rowCondition(observed) }));
         },
         async setMeta(tag, count, expected) {
             const condition = countCondition(expected);
-            return write(`UpdateItem TAG#${tag} META_COUNT`, new UpdateCommand({
+            return write(`UpdateItem TAG#${tag} META_COUNT`, META_WRITE_KEYS, new UpdateCommand({
                 TableName:                 tableName,
                 Key:                       metaKey(tag),
                 UpdateExpression:          'SET #count = :count, GSI2PK = :gsi2pk, GSI2SK = :gsi2sk',
@@ -197,7 +209,7 @@ export function createRepairStore(client: DynamoDBDocumentClient, tableName: str
             }));
         },
         async deleteMeta(tag, expected) {
-            return write(`DeleteItem TAG#${tag} META_COUNT`, new DeleteCommand({ TableName: tableName, Key: metaKey(tag), ReturnConsumedCapacity: 'INDEXES', ...countCondition(expected) }));
+            return write(`DeleteItem TAG#${tag} META_COUNT`, META_WRITE_KEYS, new DeleteCommand({ TableName: tableName, Key: metaKey(tag), ReturnConsumedCapacity: 'INDEXES', ...countCondition(expected) }));
         },
     };
 }
