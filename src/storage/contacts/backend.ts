@@ -197,11 +197,13 @@ export class ContactBackend extends DynamoTableAccess {
      * Write order (for failure-safety):
      *   1. Write new lookup rows first — so new identifiers are resolvable before the profile is updated.
      *   2. Write the profile — atomically advances the profile to the new state.
-     *   3. Delete removed lookup rows — orphan tolerance is acceptable; stale lookups resolve to a
-     *      now-valid profile, and the reconciler will clean them up eventually.
+     *   3. Delete removed lookup rows — orphan tolerance is acceptable; a stale lookup left by a
+     *      failed delete points at a profile that no longer claims the identifier, and
+     *      resolveIdentifier ignores it.
      *
      * At every intermediate failure point, all identifiers claimed by the profile are resolvable,
-     * and stale lookups at worst point to an older-but-valid contact record.
+     * and stale lookups at worst point to a profile that no longer claims them, which
+     * resolveIdentifier ignores.
      *
      * Atomicity note: writes are not transactional. Race conditions between concurrent
      * updates are not a concern for this use case — partial writes land correct data.
@@ -247,8 +249,8 @@ export class ContactBackend extends DynamoTableAccess {
 
         // ── Step 3: Delete removed lookup rows ────────────────────────────────────
         // Delete only lookup items that were removed (exist in old but not in new).
-        // Orphan tolerance is acceptable here — stale lookups resolve to the still-valid
-        // contact record, and the reconciler will clean them up eventually.
+        // Orphan tolerance is acceptable here — a stale lookup left by a failed delete points
+        // at a profile that no longer claims the identifier, so resolveIdentifier ignores it.
         if(existing) {
             const deleteRequests = this.buildDeleteRequests(existing, newSet);
             await this.batchWriteAll(deleteRequests, deps);
@@ -300,8 +302,16 @@ export class ContactBackend extends DynamoTableAccess {
     /**
      * Resolve a platform+value to matching contacts.
      * Returns an array (may be multiple for common names).
+     *
+     * A lookup row is only trusted when its profile still claims the identifier (compared
+     * with {@link contactIdentifierKey}, so case and whitespace variants match). Two kinds of
+     * leftover row are ignored: orphans whose profile is gone (a failed lookup delete in
+     * deleteContact) and strays whose profile has dropped the identifier (a failed lookup
+     * delete in putContact, including via removeIdentifier). The check reuses the profile
+     * already fetched, so it costs no extra reads.
      */
     async resolveIdentifier(platform: PlatformType, value: string): Promise<Contact[]> {
+        const wanted = contactIdentifierKey(platform, value);
         const lookupItems = await this.query({
             KeyConditionExpression:    '#pk = :pk',
             ExpressionAttributeNames:  { '#pk': 'PK' },
@@ -316,7 +326,8 @@ export class ContactBackend extends DynamoTableAccess {
             const personId = ContactKeyGenerator.parsePersonIdFromLookupSK(SK);
             return limit(async () => this.getContact(personId));
         }));
-        return contacts.filter((contact): contact is Contact => contact !== undefined);
+        return contacts.filter((contact): contact is Contact =>
+            contact?.identifiers.some(id => contactIdentifierKey(id.platform, id.value) === wanted) ?? false);
     }
 
     /**

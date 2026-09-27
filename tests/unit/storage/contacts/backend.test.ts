@@ -1062,15 +1062,24 @@ describe('ContactBackend', () => {
                     { PK: 'CONTACT_LOOKUP#name#alice', SK: 'CONTACT#alice-jones' },
                 ],
             });
-            // Return different contacts for different GetCommand calls
-            const aliceJones: Contact = { ...BOB, personId: 'alice-jones' as PersonId, displayName: 'Alice Jones' };
+            // Return different contacts for different GetCommand calls; both profiles claim the name
+            const aliceSmith: Contact = {
+                ...ALICE,
+                identifiers: [...ALICE.identifiers, { platform: 'name', value: 'Alice' }],
+            };
+            const aliceJones: Contact = {
+                ...BOB,
+                personId:    'alice-jones' as PersonId,
+                displayName: 'Alice Jones',
+                identifiers: [...BOB.identifiers, { platform: 'name', value: 'alice' }],
+            };
             ddbMock.on(GetCommand)
-                .resolvesOnce(contactGetResponse(ALICE))
+                .resolvesOnce(contactGetResponse(aliceSmith))
                 .resolvesOnce(contactGetResponse(aliceJones));
 
             const result = await backend.resolveIdentifier('name', 'alice');
 
-            expect(result).toHaveLength(2);
+            expect(result).toEqual([aliceSmith, aliceJones]);
         });
 
         test('fetches matches concurrently while returning query order', async () => {
@@ -1080,6 +1089,10 @@ describe('ContactBackend', () => {
                     { SK: 'CONTACT#bob-jones' },
                 ],
             });
+            // Both profiles claim the shared name, so both are returned
+            const sharedName: ContactIdentifier = { platform: 'name', value: 'shared' };
+            const alice: Contact = { ...ALICE, identifiers: [...ALICE.identifiers, sharedName] };
+            const bob: Contact = { ...BOB, identifiers: [...BOB.identifiers, sharedName] };
             const first = Promise.withResolvers<{ Item: Record<string, unknown> }>();
             const secondStarted = Promise.withResolvers<void>();
             let calls = 0;
@@ -1089,13 +1102,13 @@ describe('ContactBackend', () => {
                     return first.promise;
                 }
                 secondStarted.resolve();
-                return contactGetResponse(BOB);
+                return contactGetResponse(bob);
             });
 
             const resolved = backend.resolveIdentifier('name', 'shared');
             await secondStarted.promise;
-            first.resolve(contactGetResponse(ALICE));
-            expect(await resolved).toEqual([ALICE, BOB]);
+            first.resolve(contactGetResponse(alice));
+            expect(await resolved).toEqual([alice, bob]);
         });
 
         test('skips missing contacts gracefully', async () => {
@@ -1109,6 +1122,71 @@ describe('ContactBackend', () => {
 
             expect(result).toHaveLength(0);
             expect(result).toEqual([]);
+        });
+
+        test('skips a stray lookup whose profile no longer claims the identifier', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items: [{ PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#bob-jones' }],
+            });
+            ddbMock.on(GetCommand).resolves(contactGetResponse(BOB));
+
+            const result = await backend.resolveIdentifier('email', 'alice@example.com');
+
+            expect(result).toEqual([]);
+            expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+        });
+
+        test('keeps a contact whose profile claims a case and whitespace variant of the identifier', async () => {
+            const mixedCase: Contact = {
+                ...ALICE,
+                identifiers: [{ platform: 'email', value: '  Alice@Example.COM ' }],
+            };
+            ddbMock.on(QueryCommand).resolves({
+                Items: [{ PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith' }],
+            });
+            ddbMock.on(GetCommand).resolves(contactGetResponse(mixedCase));
+
+            const result = await backend.resolveIdentifier('email', 'ALICE@example.com  ');
+
+            expect(result).toEqual([mixedCase]);
+        });
+
+        test('skips a contact whose profile claims the same value on a different platform', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items: [{ PK: 'CONTACT_LOOKUP#discord#alice@example.com', SK: 'CONTACT#alice-smith' }],
+            });
+            ddbMock.on(GetCommand).resolves(contactGetResponse(ALICE));
+
+            const result = await backend.resolveIdentifier('discord', 'alice@example.com');
+
+            expect(result).toEqual([]);
+        });
+
+        test('returns only the valid contact when a stray lookup sits beside a valid one', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items: [
+                    { PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#bob-jones' },
+                    { PK: 'CONTACT_LOOKUP#email#alice@example.com', SK: 'CONTACT#alice-smith' },
+                ],
+            });
+            ddbMock.on(GetCommand)
+                .resolvesOnce(contactGetResponse(BOB))
+                .resolvesOnce(contactGetResponse(ALICE));
+
+            const result = await backend.resolveIdentifier('email', 'alice@example.com');
+
+            expect(result).toEqual([ALICE]);
+        });
+
+        test('keeps a contact whose second identifier matches', async () => {
+            ddbMock.on(QueryCommand).resolves({
+                Items: [{ PK: 'CONTACT_LOOKUP#discord#alice#1234', SK: 'CONTACT#alice-smith' }],
+            });
+            ddbMock.on(GetCommand).resolves(contactGetResponse(ALICE));
+
+            const result = await backend.resolveIdentifier('discord', 'alice#1234');
+
+            expect(result).toEqual([ALICE]);
         });
     });
 
