@@ -423,7 +423,7 @@ async function boostedRun(options: RepairOptions, runtime: RepairRuntime, file: 
     }
 }
 
-// Stryker disable next-line BlockStatement: main-entry block runs only as a CLI subprocess, invisible to in-process coverage
+// Stryker disable next-line BlockStatement,ConditionalExpression: main-entry guard and block run only as a CLI subprocess, invisible to in-process coverage; forcing the condition false is indistinguishable from an untested branch without invoking bun as a subprocess.
 if(import.meta.main) {
     // Stryker disable next-line AwaitDrop: Distinguishing top-level rejection from unhandledRejection requires a main-entry subprocess, exceeding the sub-1ms test budget; not equivalent.
     await runRepairCli(process.argv);

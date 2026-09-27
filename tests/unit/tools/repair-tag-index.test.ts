@@ -298,6 +298,10 @@ describe('repair-tag-index CLI arguments', () => {
         expect(() => parseRepairArgs(['--out'])).toThrow('--out needs a value');
         expect(() => parseRepairArgs(['--out', '--execute'])).toThrow('--out needs a value');
     });
+
+    test('parseRepairArgs accepts a value that contains -- without starting with it', () => {
+        expect(parseRepairArgs(['--out', 'a--b']).out).toBe('a--b');
+    });
 });
 
 describe('repair-tag-index CLI runs', () => {
@@ -621,10 +625,54 @@ describe('repair-tag-index CLI defaults', () => {
         await expect(diskRestoreFile('reports/capacity.json').read()).rejects.toThrow('EACCES: permission denied');
     });
 
+    test('diskRestoreFile write propagates a mkdir failure and never writes the file', async () => {
+        mockFsPromises.mkdir.mockImplementationOnce(async () => {
+            throw new Error('mkdir boom');
+        });
+
+        await expect(diskRestoreFile('reports/capacity.json').write(provisioned())).rejects.toThrow('mkdir boom');
+
+        expect(mockFsPromises.writeFile).not.toHaveBeenCalled();
+    });
+
+    test('diskRestoreFile write propagates a writeFile failure', async () => {
+        mockFsPromises.writeFile.mockImplementationOnce(async () => {
+            throw new Error('write boom');
+        });
+
+        await expect(diskRestoreFile('reports/capacity.json').write(provisioned())).rejects.toThrow('write boom');
+    });
+
+    test('diskRestoreFile delete propagates an unlink failure', async () => {
+        mockFsPromises.unlink.mockImplementationOnce(async () => {
+            throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        });
+
+        await expect(diskRestoreFile('reports/capacity.json').delete()).rejects.toThrow('EACCES: permission denied');
+    });
+
     test('saveReportFile creates the directory and writes the report', async () => {
         await saveReportFile('out/dir/report.json', '{}\n');
 
         expect(mockFsPromises.mkdir).toHaveBeenCalledWith('out/dir', { recursive: true });
         expect(mockFsPromises.writeFile).toHaveBeenCalledWith('out/dir/report.json', '{}\n');
+    });
+
+    test('saveReportFile propagates a mkdir failure and never writes the file', async () => {
+        mockFsPromises.mkdir.mockImplementationOnce(async () => {
+            throw new Error('mkdir boom');
+        });
+
+        await expect(saveReportFile('out/dir/report.json', '{}\n')).rejects.toThrow('mkdir boom');
+
+        expect(mockFsPromises.writeFile).not.toHaveBeenCalled();
+    });
+
+    test('saveReportFile propagates a writeFile failure', async () => {
+        mockFsPromises.writeFile.mockImplementationOnce(async () => {
+            throw new Error('write boom');
+        });
+
+        await expect(saveReportFile('out/dir/report.json', '{}\n')).rejects.toThrow('write boom');
     });
 });
