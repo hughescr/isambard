@@ -131,6 +131,7 @@ Object.assign(MockDynamoDBDocumentClient.prototype.send, {
 void mock.module('@aws-sdk/client-dynamodb', () => ({
     DynamoDBClient:       MockDynamoDBClient,
     DescribeTableCommand: class DescribeTableCommand { constructor(public input: unknown) {} },
+    UpdateTableCommand:   class UpdateTableCommand { constructor(public input: unknown) {} },
 }));
 
 void mock.module('@aws-sdk/lib-dynamodb', () => ({
