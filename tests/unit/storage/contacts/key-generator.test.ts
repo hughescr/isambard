@@ -8,7 +8,6 @@ const PERSON_ID = 'craig-hughes' as PersonId;
 describe.concurrent('ContactKeyGenerator', () => {
     test.each([
         ['profile PK', () => ContactKeyGenerator.parsePersonIdFromPK('OTHER#CONTACT#craig-hughes'), 'ContactKeyGenerator.parsePersonIdFromPK'],
-        ['lookup PK', () => ContactKeyGenerator.parseLookupPK('OTHER#CONTACT_LOOKUP#email#alice@example.com'), 'ContactKeyGenerator.parseLookupPK'],
         ['lookup SK', () => ContactKeyGenerator.parsePersonIdFromLookupSK('OTHER#CONTACT#craig-hughes'), 'ContactKeyGenerator.parsePersonIdFromLookupSK'],
     ])('rejects an expected prefix appearing only inside a %s', (_case, parse, location) => {
         expect(parse).toThrow(expect.objectContaining({ context: expect.objectContaining({ location }) }));
@@ -115,43 +114,6 @@ describe.concurrent('ContactKeyGenerator', () => {
             const keys = ContactKeyGenerator.createProfileKeys(PERSON_ID);
             const parsed = ContactKeyGenerator.parsePersonIdFromPK(keys.PK);
             expect(parsed).toBe(PERSON_ID);
-        });
-    });
-
-    describe('parseLookupPK', () => {
-        test('parses platform and value from lookup PK', () => {
-            const result = ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#email#alice@example.com');
-            expect(result).toEqual({ platform: 'email', value: 'alice@example.com' });
-        });
-
-        test('parses value that contains hash characters', () => {
-            const result = ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#discord#alice#1234');
-            expect(result).toEqual({ platform: 'discord', value: 'alice#1234' });
-        });
-
-        test('throws on invalid prefix', () => {
-            expect(() => ContactKeyGenerator.parseLookupPK('CONTACT#craig-hughes'))
-                .toThrow('Invalid lookup PK format: expected CONTACT_LOOKUP#..., got CONTACT#craig-hughes');
-            expect(() => ContactKeyGenerator.parseLookupPK('CONTACT#craig-hughes'))
-                .toThrow('Invariant violated in ContactKeyGenerator.parseLookupPK:');
-        });
-
-        test('throws when missing platform separator', () => {
-            expect(() => ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#emailonly'))
-                .toThrow('Invalid lookup PK format: missing platform separator');
-            expect(() => ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#emailonly'))
-                .toThrow('Invariant violated in ContactKeyGenerator.parseLookupPK:');
-        });
-
-        test('round-trips with createLookupKeys', () => {
-            const keys = ContactKeyGenerator.createLookupKeys('email', 'alice@example.com', PERSON_ID);
-            const parsed = ContactKeyGenerator.parseLookupPK(keys.PK);
-            expect(parsed).toEqual({ platform: 'email', value: 'alice@example.com' });
-        });
-
-        test('throws on invalid platform string', () => {
-            expect(() => ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#invalid#value'))
-                .toThrow();
         });
     });
 

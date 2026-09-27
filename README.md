@@ -512,11 +512,7 @@ src/
 │   │   ├── find-or-create.ts        # Resolves an identifier to an existing contact or creates one
 │   │   ├── utils.ts                 # Kebab-case PersonId generation from a display name
 │   │   ├── types.ts                 # Contact types, schemas, and identifier-equivalence helpers
-│   │   ├── index.ts                 # Public exports
-│   │   └── reconciliation/          # Two-phase lookup-row reconciliation (orphan cleanup + missing-lookup repair)
-│   │       ├── reconciler.ts        # Phase A/B reconciler implementation (queries GSI2 CONTACT_LOOKUPS/CONTACTS)
-│   │       ├── scheduler.ts         # Interval-based reconciliation scheduler with abort support
-│   │       └── index.ts             # Public exports
+│   │   └── index.ts                 # Public exports
 │   ├── memory-tool/                 # Three-layer memory system (identity/state/events)
 │   │   ├── types.ts                 # Zod schemas, branded types, type guards, factory functions
 │   │   ├── key-generator.ts         # DynamoDB key structure (PK/SK/GSI1) and tag index keys
@@ -526,13 +522,7 @@ src/
 │   │   ├── backend-tag-index.ts     # Tag index CRUD with BatchWriteItem + atomic counters (GSI2 TAG_COUNTS partition)
 │   │   ├── decode-stored-item.ts    # Tolerant decode of one raw DynamoDB record into MemoryToolItemData
 │   │   ├── sigmoid.ts               # sigmoidScore(): frequency × recency decay for state prioritization
-│   │   ├── index.ts                 # Public exports
-│   │   └── reconciliation/          # Tag index reconciliation (three phases: completeness/orphan/count)
-│   │       ├── types.ts             # Reconciliation config, state, and result types
-│   │       ├── factory.ts           # Binds a memory backend's private tag-index reconciliation operations at the storage boundary
-│   │       ├── reconciler.ts        # Three-phase reconciler implementation
-│   │       ├── scheduler.ts         # Interval-based reconciliation scheduler with abort support
-│   │       └── index.ts             # Public exports
+│   │   └── index.ts                 # Public exports
 │   ├── memory-vec/                  # Production embedding library (node-llama-cpp)
 │   │   ├── embedder.ts              # Embedder: wraps node-llama-cpp to produce packed binary embeddings
 │   │   ├── ubinary.ts               # Sign-bit packing: float32 vectors -> packed binary (ubinary) format
@@ -564,7 +554,7 @@ src/
 │   │   └── index.ts                 # Public exports
 │   └── index.ts                     # Public exports
 ├── app/                             # Application composition root
-│   ├── storage-layer.ts             # createStorageLayer: DynamoDB client, memory backend, reconciliation
+│   ├── storage-layer.ts             # createStorageLayer: DynamoDB client, memory backend, contacts backend
 │   ├── discord-infrastructure.ts    # createDiscordInfrastructure: client, registry, history, inbox
 │   ├── context-layer.ts             # createContextLayer: context builder for memory-aware agent operation
 │   ├── mcp-servers.ts               # createMcpSharedDeps + createMcpServerInstances: builds every MCP server set

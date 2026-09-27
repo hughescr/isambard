@@ -145,43 +145,4 @@ export const MemoryToolKeyGenerator = {
         }));
     },
 
-    /**
-   * Parses the tag name from a TAG# partition key.
-   *
-   * @param pk - Partition key in format TAG#tagname
-   * @returns The tag name
-   * @throws Error if pk is not in expected format
-   *
-   * @example
-   * ```ts
-   * const tag = MemoryToolKeyGenerator.parseTagFromPK('TAG#important');
-   * // 'important'
-   * ```
-   */
-    parseTagFromPK(pk: string): string {
-        if(!pk.startsWith('TAG#')) {
-            throw new InvariantViolationError('MemoryToolKeyGenerator.parseTagFromPK', `Invalid tag PK format: expected TAG#..., got ${pk}`);
-        }
-        return pk.slice(4);
-    },
-
-    /**
-   * Parses the memory path from a PATH# sort key.
-   *
-   * @param sk - Sort key in format PATH#/path/to/file
-   * @returns The memory path
-   * @throws Error if sk is not in expected format
-   *
-   * @example
-   * ```ts
-   * const path = MemoryToolKeyGenerator.parsePathFromTagSK('PATH#/identity/core.md');
-   * // '/identity/core.md'
-   * ```
-   */
-    parsePathFromTagSK(sk: string): string {
-        if(!sk.startsWith('PATH#')) {
-            throw new InvariantViolationError('MemoryToolKeyGenerator.parsePathFromTagSK', `Invalid tag SK format: expected PATH#..., got ${sk}`);
-        }
-        return sk.slice(5);
-    },
 };

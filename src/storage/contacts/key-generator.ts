@@ -1,5 +1,5 @@
 import { createPrefixedKey, parsePrefixedKey } from '../utils/key-builder.js';
-import { contactIdentifierKey, createPersonId, platformTypeSchema, type PersonId, type PlatformType } from './types';
+import { contactIdentifierKey, createPersonId, type PersonId, type PlatformType } from './types';
 import { InvariantViolationError } from '@/errors';
 
 /**
@@ -143,43 +143,6 @@ export const ContactKeyGenerator = {
             throw new InvariantViolationError('ContactKeyGenerator.parsePersonIdFromPK', `Invalid PK format: expected CONTACT#..., got ${pk}`);
         }
         return createPersonId(parsePrefixedKey(PREFIX_CONTACT, pk));
-    },
-
-    /**
-     * Parses a lookup PK back to platform and value.
-     *
-     * The value is returned exactly as stored — normally already in
-     * {@link normalizeIdentifierValue normalized} form, since {@link createLookupPK} and
-     * {@link createLookupKeys} write it that way. Callers comparing it to other identifiers
-     * normalize both sides rather than trusting a legacy row.
-     *
-     * @param pk - Primary Key (CONTACT_LOOKUP#{platform}#{value})
-     * @returns Object containing platform and value
-     * @throws Error if PK is not in expected format
-     *
-     * @example
-     * ```ts
-     * ContactKeyGenerator.parseLookupPK('CONTACT_LOOKUP#email#alice@example.com')
-     * // { platform: 'email', value: 'alice@example.com' }
-     * ```
-     */
-    parseLookupPK(pk: string): { platform: PlatformType, value: string } {
-        const PREFIX = 'CONTACT_LOOKUP#';
-        // Stryker disable next-line llm: startsWith always returns a boolean, so ! and === false are equivalent.
-        if(!pk.startsWith(PREFIX)) {
-            throw new InvariantViolationError('ContactKeyGenerator.parseLookupPK', `Invalid lookup PK format: expected CONTACT_LOOKUP#..., got ${pk}`);
-        }
-        // Stryker disable next-line llm: slice and substring are identical for a single non-negative start offset.
-        const rest = pk.slice(PREFIX.length);
-        // Stryker disable next-line llm: a leading "#" either yields an empty or "#"-prefixed platform (rejected by platformTypeSchema) or trips the separator check; both only throw on malformed keys, which no caller distinguishes.
-        const hashIndex = rest.indexOf('#');
-        // Stryker disable next-line llm: indexOf returns -1 as its only negative value, so === -1 and < 0 agree.
-        if(hashIndex === -1) {
-            throw new InvariantViolationError('ContactKeyGenerator.parseLookupPK', `Invalid lookup PK format: missing platform separator in ${pk}`);
-        }
-        const platform = platformTypeSchema.parse(rest.slice(0, hashIndex));
-        const value    = rest.slice(hashIndex + 1);
-        return { platform, value };
     },
 
     /**

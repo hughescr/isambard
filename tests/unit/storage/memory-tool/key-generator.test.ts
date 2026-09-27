@@ -6,12 +6,8 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
     test.each([
         { parse: () => MemoryToolKeyGenerator.parsePath('BAD#/state', 'FILE#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
         { parse: () => MemoryToolKeyGenerator.parsePath('DIR#/state', 'BAD#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
-        { parse: () => MemoryToolKeyGenerator.parseTagFromPK('BAD#important'), location: 'MemoryToolKeyGenerator.parseTagFromPK' },
-        { parse: () => MemoryToolKeyGenerator.parsePathFromTagSK('BAD#/state/note.md'), location: 'MemoryToolKeyGenerator.parsePathFromTagSK' },
         { parse: () => MemoryToolKeyGenerator.parsePath('BAD#DIR#/state', 'FILE#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
         { parse: () => MemoryToolKeyGenerator.parsePath('DIR#/state', 'BAD#FILE#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
-        { parse: () => MemoryToolKeyGenerator.parseTagFromPK('BAD#TAG#important'), location: 'MemoryToolKeyGenerator.parseTagFromPK' },
-        { parse: () => MemoryToolKeyGenerator.parsePathFromTagSK('BAD#PATH#/state/note.md'), location: 'MemoryToolKeyGenerator.parsePathFromTagSK' },
     ])('reports the validation boundary for malformed keys: $location', ({ parse, location }) => {
         expect(parse).toThrow(expect.objectContaining({ context: expect.objectContaining({ location }) }));
     });
@@ -315,54 +311,6 @@ describe.concurrent('MemoryToolKeyGenerator', () => {
             );
             expect(result[0].SK).toMatch(/^PATH#/);
             expect(result[0].SK).toBe('PATH#/identity/test.md');
-        });
-    });
-
-    describe('parseTagFromPK', () => {
-        test('parses tag correctly from TAG#mytag', () => {
-            const tag = MemoryToolKeyGenerator.parseTagFromPK('TAG#mytag');
-            expect(tag).toBe('mytag');
-        });
-
-        test('parses tag with special characters', () => {
-            const tag = MemoryToolKeyGenerator.parseTagFromPK('TAG#my-tag_123');
-            expect(tag).toBe('my-tag_123');
-        });
-
-        test('throws on invalid format (missing TAG# prefix)', () => {
-            expect(() => {
-                MemoryToolKeyGenerator.parseTagFromPK('INVALID#mytag');
-            }).toThrow('Invalid tag PK format: expected TAG#..., got INVALID#mytag');
-        });
-
-        test('throws on empty prefix', () => {
-            expect(() => {
-                MemoryToolKeyGenerator.parseTagFromPK('mytag');
-            }).toThrow('Invalid tag PK format: expected TAG#..., got mytag');
-        });
-    });
-
-    describe('parsePathFromTagSK', () => {
-        test('parses path correctly from PATH#/identity/core.md', () => {
-            const path = MemoryToolKeyGenerator.parsePathFromTagSK('PATH#/identity/core.md');
-            expect(path).toBe('/identity/core.md');
-        });
-
-        test('parses nested paths correctly', () => {
-            const path = MemoryToolKeyGenerator.parsePathFromTagSK('PATH#/events/conversation/2024.md');
-            expect(path).toBe('/events/conversation/2024.md');
-        });
-
-        test('throws on invalid format (missing PATH# prefix)', () => {
-            expect(() => {
-                MemoryToolKeyGenerator.parsePathFromTagSK('INVALID#/test.md');
-            }).toThrow('Invalid tag SK format: expected PATH#..., got INVALID#/test.md');
-        });
-
-        test('throws on empty prefix', () => {
-            expect(() => {
-                MemoryToolKeyGenerator.parsePathFromTagSK('/test.md');
-            }).toThrow('Invalid tag SK format: expected PATH#..., got /test.md');
         });
     });
 });
