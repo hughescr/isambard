@@ -1,6 +1,6 @@
 /**
  * Read-capacity pacing for operator tools that read DynamoDB while Izzy is live
- * (tools/backfill-vectors.ts and tools/repair-tag-index.ts).
+ * (tools/backfill-vectors.ts).
  *
  * Each request asks DynamoDB for its ConsumedCapacity; before the next request the tool pauses
  * (consumed RCU / rate) seconds less the time already spent, so the average read rate stays at or
