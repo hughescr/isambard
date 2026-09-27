@@ -11,7 +11,7 @@ import { FIRST_BACKOFF_MS, MAX_BACKOFF_MS, type Memory, type Meta, type RepairSt
 import { MemoryToolKeyGenerator } from '@/storage/memory-tool/key-generator';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
-const THROTTLE_ERRORS = new Set(['ProvisionedThroughputExceededException', 'ThrottlingException', 'RequestLimitExceeded']);
+const THROTTLE_ERRORS = new Set<string | undefined>(['ProvisionedThroughputExceededException', 'ThrottlingException', 'RequestLimitExceeded']);
 const ROW_FIELDS = ['updatedAt', 'tags', 'layer', 'contentPreview', 'memoryPath', 'TTL'] as const;
 
 export interface AdapterDeps {
@@ -19,8 +19,8 @@ export interface AdapterDeps {
     signal: AbortSignal
 }
 
-function errorName(error: unknown): string {
-    return (new Object(error) as { name?: string }).name ?? '';
+function errorName(error: unknown): string | undefined {
+    return (new Object(error) as { name?: string }).name;
 }
 
 /** Retries throttled requests from 1 s doubling to 30 s, until the request succeeds or the run is aborted. */

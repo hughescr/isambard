@@ -154,6 +154,10 @@ describe('repair-tag-index aws helpers', () => {
         });
     });
 
+    test('rowCondition includes attribute values when exactly one repaired attribute exists', () => {
+        expect(rowCondition({ PK: 'TAG#x', SK: 'PATH#/a', layer: 'events' }).ExpressionAttributeValues).toStrictEqual({ ':layer': 'events' });
+    });
+
     test('countCondition matches the count read or its absence', () => {
         expect(countCondition(3)).toStrictEqual({ ConditionExpression: '#count = :expected', ExpressionAttributeNames: { '#count': 'count' }, ExpressionAttributeValues: { ':expected': 3 } });
         expect(countCondition(undefined)).toStrictEqual({ ConditionExpression: 'attribute_not_exists(#count)', ExpressionAttributeNames: { '#count': 'count' } });
@@ -179,6 +183,12 @@ describe('repair-tag-index aws repair store reads', () => {
         expect(sent).toStrictEqual([{ name: 'QueryCommand', input }]);
     });
 
+    test('listMetaCounts identifies the GSI2 query when capacity is missing', async () => {
+        const { client } = fakeClient([{ Items: [] }]);
+
+        await expect(createRepairStore(client, 'T', adapterDeps()).listMetaCounts(undefined)).rejects.toThrow('GSI2 TAG_COUNTS query reported no ConsumedCapacity; refusing to continue unpaced');
+    });
+
     test('readTagPartition splits PATH rows from META and honours strong reads', async () => {
         const meta = { PK: 'TAG#x', SK: 'META_COUNT', count: 2 };
         const { client, sent } = fakeClient([
@@ -198,6 +208,13 @@ describe('repair-tag-index aws repair store reads', () => {
             ConsistentRead:            true,
         });
         expect(sent[1]?.input.ConsistentRead).toBe(false);
+    });
+
+    test('readTagPartition excludes non-prefix PATH keys and finds META after a path row', async () => {
+        const meta = { PK: 'TAG#x', SK: 'META_COUNT', count: 1 };
+        const { client } = fakeClient([{ Items: [ROW, { PK: 'TAG#x', SK: 'OTHER_PATH#/events/a' }, meta], ConsumedCapacity: { CapacityUnits: 1 } }]);
+
+        expect(await createRepairStore(client, 'T', adapterDeps()).readTagPartition('x', undefined, true)).toStrictEqual({ rows: [ROW], meta, next: undefined, units: { baseRcu: 1 } });
     });
 
     test('a read without ConsumedCapacity stops the run', async () => {
@@ -230,6 +247,12 @@ describe('repair-tag-index aws repair store reads', () => {
             ExpressionAttributeValues: { ':pk': 'LAYER#events' },
             ExclusiveStartKey:         undefined,
         });
+    });
+
+    test('walkNamespace identifies its namespace when capacity is missing', async () => {
+        const { client } = fakeClient([{ Items: [] }]);
+
+        await expect(createRepairStore(client, 'T', adapterDeps()).walkNamespace('events', undefined)).rejects.toThrow('GSI1 LAYER#events query reported no ConsumedCapacity; refusing to continue unpaced');
     });
 
     test('a query without Items yields no items', async () => {
@@ -318,6 +341,12 @@ describe('repair-tag-index aws repair store writes', () => {
         expect(sent).toStrictEqual([{ name: 'PutCommand', input: { TableName: 'T', Item: ROW, ReturnConsumedCapacity: 'INDEXES', ...rowCondition(ROW) } }]);
     });
 
+    test('putRow identifies the row when write capacity is missing', async () => {
+        const { client } = fakeClient([{ ConsumedCapacity: {} }]);
+
+        await expect(createRepairStore(client, 'T', adapterDeps()).putRow(ROW, ROW)).rejects.toThrow('PutItem TAG#x PATH#/events/a reported no ConsumedCapacity; refusing to continue unpaced');
+    });
+
     test('putRow of a missing row requires that it is still absent', async () => {
         const { client, sent } = fakeClient([{ ConsumedCapacity: { Table: { CapacityUnits: 1 } } }]);
 
@@ -374,12 +403,24 @@ describe('repair-tag-index aws repair store writes', () => {
         ]);
     });
 
+    test('setMeta identifies its tag when write capacity is missing', async () => {
+        const { client } = fakeClient([{ ConsumedCapacity: {} }]);
+
+        await expect(createRepairStore(client, 'T', adapterDeps()).setMeta('x', 2, 1)).rejects.toThrow('UpdateItem TAG#x META_COUNT reported no ConsumedCapacity; refusing to continue unpaced');
+    });
+
     test('deleteMeta deletes META conditioned on the count read', async () => {
         const { client, sent } = fakeClient([{ ConsumedCapacity: { Table: { CapacityUnits: 1 }, GlobalSecondaryIndexes: { GSI2: { CapacityUnits: 1 } } } }]);
 
         await createRepairStore(client, 'T', adapterDeps()).deleteMeta('x', 4);
 
         expect(sent).toStrictEqual([{ name: 'DeleteCommand', input: { TableName: 'T', Key: { PK: 'TAG#x', SK: 'META_COUNT' }, ReturnConsumedCapacity: 'INDEXES', ...countCondition(4) } }]);
+    });
+
+    test('deleteMeta identifies its tag when write capacity is missing', async () => {
+        const { client } = fakeClient([{ ConsumedCapacity: {} }]);
+
+        await expect(createRepairStore(client, 'T', adapterDeps()).deleteMeta('x', 4)).rejects.toThrow('DeleteItem TAG#x META_COUNT reported no ConsumedCapacity; refusing to continue unpaced');
     });
 });
 
