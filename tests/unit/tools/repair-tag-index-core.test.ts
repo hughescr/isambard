@@ -700,6 +700,28 @@ describe('repair-tag-index estimates', () => {
 
         expect(estimateExecute(snapshot, plan)).toStrictEqual({ baseRcu: 7 + 3 + 4 + 8 + 4 + 4, baseWcu: 10, gsi1Rcu: 0, gsi2Rcu: 0, gsi2Wcu: 3 });
     });
+
+    test('estimateExecute sizes each row at 512 bytes', () => {
+        const snapshot: Snapshot = {
+            memories: new Map(),
+            rows:     new Map([['many', Array.from({ length: 513 }, (_, index) => ({ PK: 'TAG#many', SK: `PATH#/p${index}` }))]]),
+            metas:    new Map(),
+        };
+        const plan: Plan = { paths: new Map(), recount: new Set(['many']), buckets: planRepair({ memories: new Map(), rows: new Map(), metas: new Map() }, NOW_S).buckets, rowWrites: 0 };
+
+        expect(estimateExecute(snapshot, plan).baseRcu).toBe(4 * 65);
+    });
+
+    test('estimateExecute charges one unit for an empty memory and an empty partition', () => {
+        const snapshot: Snapshot = {
+            memories: new Map([['/identity/empty', memory('/identity/empty', [], { content: '' })]]),
+            rows:     new Map([['empty', []]]),
+            metas:    new Map(),
+        };
+        const plan: Plan = { paths: new Map([['/identity/empty', []]]), recount: new Set(['empty']), buckets: planRepair({ memories: new Map(), rows: new Map(), metas: new Map() }, NOW_S).buckets, rowWrites: 0 };
+
+        expect(estimateExecute(snapshot, plan)).toStrictEqual({ baseRcu: 2 + 1 + 4, baseWcu: 1, gsi1Rcu: 0, gsi2Rcu: 0, gsi2Wcu: 1 });
+    });
 });
 
 describe('repair-tag-index repairMemory', () => {
@@ -1428,5 +1450,33 @@ describe('repair-tag-index pacing', () => {
         await pacing.charge({ baseRcu: 1 });
 
         expect(sleeps).toStrictEqual([1000, 2000]);
+    });
+
+    test('createPacing sleeps a debt of exactly one millisecond', async () => {
+        const sleeps: number[] = [];
+        const pacing = createPacing({ baseRcu: 1000, baseWcu: 1, gsi1Rcu: 1, gsi2Rcu: 1, gsi2Wcu: 1 }, async (ms) => {
+            sleeps.push(ms);
+        }, () => 0);
+
+        await pacing.charge({ baseRcu: 1 });
+
+        expect(sleeps).toStrictEqual([1]);
+    });
+
+    test('createPacing starts every resource free of debt whatever the clock reads', async () => {
+        const sleeps: number[] = [];
+        let now = -5000;
+        const pacing = createPacing({ baseRcu: 1, baseWcu: 1, gsi1Rcu: 1, gsi2Rcu: 1, gsi2Wcu: 1 }, async (ms) => {
+            sleeps.push(ms);
+            now += ms;
+        }, () => now);
+
+        await pacing.charge({ baseRcu: 1 });
+        await pacing.charge({ baseWcu: 1 });
+        await pacing.charge({ gsi1Rcu: 1 });
+        await pacing.charge({ gsi2Rcu: 1 });
+        await pacing.charge({ gsi2Wcu: 1 });
+
+        expect(sleeps).toStrictEqual([1000, 1000, 1000, 1000, 1000]);
     });
 });

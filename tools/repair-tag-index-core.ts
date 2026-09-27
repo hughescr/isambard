@@ -167,6 +167,10 @@ export function isLive(memory: Memory | undefined, nowSeconds: number): memory i
     return memory !== undefined && (memory.TTL === undefined || memory.TTL > nowSeconds);
 }
 
+/**
+ * The second '/'-segment: the namespace of a memory path, and equally of a row SK, since the
+ * `PATH#` prefix holds no '/'.
+ */
 function namespaceOf(path: string): string {
     return path.split('/')[1] ?? '';
 }
@@ -274,7 +278,7 @@ export async function scan(ctx: RepairContext): Promise<Snapshot> {
         await readPartition(tag);
     }
     ctx.log(`Scanned ${snapshot.rows.size} tag partitions`);
-    const rowNamespaces = [...snapshot.rows.values()].flat().map(row => namespaceOf(row.SK.slice(5)));
+    const rowNamespaces = [...snapshot.rows.values()].flat().map(row => namespaceOf(row.SK));
     const namespaces = new Set([...SEARCHABLE_NAMESPACE_VALUES, ...rowNamespaces].filter(namespace => namespace !== ''));
     for(const namespace of namespaces) {
         // eslint-disable-next-line no-await-in-loop -- sequential: paced reads
@@ -391,12 +395,14 @@ function readUnits(bytes: number): number {
  */
 export function estimateExecute(snapshot: Snapshot, plan: Plan): Rates {
     let baseRcu = 0;
+    // A memory or partition the snapshot lacks still costs a read's one-unit minimum.
     for(const [path, tags] of plan.paths) {
-        const content = snapshot.memories.get(path)?.content ?? '';
-        baseRcu += 2 * readUnits(Buffer.byteLength(content)) + tags.length + 1;
+        const memory = snapshot.memories.get(path);
+        baseRcu += 2 * (memory === undefined ? 1 : readUnits(Buffer.byteLength(memory.content))) + tags.length + 1;
     }
     for(const tag of plan.recount) {
-        baseRcu += 4 * readUnits((snapshot.rows.get(tag)?.length ?? 0) * ROW_BYTES);
+        const rows = snapshot.rows.get(tag);
+        baseRcu += 4 * (rows === undefined ? 1 : readUnits(rows.length * ROW_BYTES));
     }
     return { baseRcu, baseWcu: plan.rowWrites + plan.recount.size, gsi1Rcu: 0, gsi2Rcu: 0, gsi2Wcu: plan.recount.size };
 }
@@ -615,7 +621,9 @@ export async function executeRepair(ctx: RepairContext, plan: Plan, settleMs: nu
  */
 export function createPacing(rates: Rates, sleep: (ms: number) => Promise<void>, now: () => number): { charge: (units: Units) => Promise<void>, consumed: Rates } {
     const consumed: Rates = { baseRcu: 0, baseWcu: 0, gsi1Rcu: 0, gsi2Rcu: 0, gsi2Wcu: 0 };
-    const nextAllowedAt: Rates = { baseRcu: 0, baseWcu: 0, gsi1Rcu: 0, gsi2Rcu: 0, gsi2Wcu: 0 };
+    // No resource starts in debt, whatever the clock reads: the first charge counts from now().
+    const noDebt = Number.NEGATIVE_INFINITY;
+    const nextAllowedAt: Rates = { baseRcu: noDebt, baseWcu: noDebt, gsi1Rcu: noDebt, gsi2Rcu: noDebt, gsi2Wcu: noDebt };
     const charge = async (units: Units): Promise<void> => {
         for(const key of RATE_KEYS) {
             const amount = units[key] ?? 0;
