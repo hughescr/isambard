@@ -1,8 +1,9 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { BatchWriteCommand, DeleteCommand, DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { createIndexLayer, type MemoryPath } from '@/storage/memory-tool/types';
+import { epochSecondsSchema } from '@/storage/repositories/types';
 
 const IDENTITY = createIndexLayer('identity');
 
@@ -267,6 +268,42 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
         expect(ddbMock.commandCalls(QueryCommand)[0].args[0].input.ExpressionAttributeValues?.[':pk']).toBe('TAG#alpha');
     });
 
+    test('expiring-to-permanent update resolves only after the unchanged-tag count increment completes', async () => {
+        ddbMock.on(BatchWriteCommand).resolves({ UnprocessedItems: {} });
+        const incrementStarted = deferred<void>();
+        const incrementFinished = deferred<Record<string, never>>();
+        ddbMock.on(UpdateCommand).callsFake(() => {
+            incrementStarted.resolve();
+            return incrementFinished.promise;
+        });
+
+        let completed = false;
+        const operation = backend.updateTagIndexItems(
+            '/identity/value.md' as MemoryPath,
+            new Set(['shared']),
+            new Set(['shared']),
+            '2026-01-01T00:00:00.000Z',
+            'preview',
+            IDENTITY,
+            { before: epochSecondsSchema.parse(1_800_000_000) }
+        ).then(() => {
+            completed = true;
+            return undefined;
+        });
+        await incrementStarted.promise;
+        await drainMicrotasks();
+        try {
+            expect(completed).toBe(false);
+        } finally {
+            incrementFinished.resolve({});
+            await operation;
+        }
+        expect(completed).toBe(true);
+        expect(ddbMock.commandCalls(UpdateCommand).map(call => call.args[0].input.Key)).toStrictEqual([
+            { PK: 'TAG#shared', SK: 'META_COUNT' },
+        ]);
+    });
+
     test('incrementTagCounts targets the configured table', async () => {
         ddbMock.on(UpdateCommand).resolves({});
 
@@ -289,5 +326,55 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
         const calls = ddbMock.commandCalls(QueryCommand);
         expect(calls).toHaveLength(1);
         expect(calls[0].args[0].input.ExclusiveStartKey).toEqual(key);
+    });
+});
+
+describe('MemoryToolBackendTagIndex final-attempt unprocessed items', () => {
+    const ddbMock = mockClient(DynamoDBDocumentClient);
+    let backend: MemoryToolBackendTagIndex;
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        ddbMock.reset();
+        backend = new MemoryToolBackendTagIndex(ddbMock as unknown as DynamoDBDocumentClient, 'TestTable');
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+        ddbMock.reset();
+    });
+
+    test('an undefined table entry in the last retry response raises the collectFailedRequests invariant', async () => {
+        const stuck = { PutRequest: { Item: { PK: 'TAG#stuck', SK: 'PATH#/identity/value.md' } } };
+        // DynamoDB's typings forbid an undefined table entry, so the malformed final
+        // response is returned through callsFake, as the TTL tests do.
+        let calls = 0;
+        ddbMock.on(BatchWriteCommand).callsFake(async () => {
+            calls++;
+            return { UnprocessedItems: { TestTable: calls < 3 ? [stuck] : undefined } };
+        });
+
+        const promise = backend.refreshTagIndexItems(
+            '/identity/value.md' as MemoryPath,
+            new Set(['stuck']),
+            '2026-01-01T00:00:00.000Z',
+            'preview',
+            IDENTITY
+        );
+        for(let attempt = 0; attempt < 8; attempt++) {
+            jest.runAllTimers();
+            // eslint-disable-next-line no-await-in-loop -- each retry timer is installed after the preceding microtask
+            await Promise.resolve();
+        }
+
+        await expect(promise).rejects.toMatchObject({
+            name:    'InvariantViolationError',
+            message: 'Invariant violated in collectFailedRequests: unprocessedItems[tableName] undefined despite tableName from Object.keys()',
+            context: {
+                location:  'collectFailedRequests',
+                invariant: 'unprocessedItems[tableName] undefined despite tableName from Object.keys()',
+            },
+        });
+        expect(ddbMock.commandCalls(BatchWriteCommand)).toHaveLength(3);
     });
 });
