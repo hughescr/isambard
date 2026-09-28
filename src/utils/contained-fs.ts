@@ -148,6 +148,7 @@ async function openRoot(bound: Bound, root: string, target: string): Promise<{ f
     } catch{
         throw new PathSecurityError(`Root directory does not exist: ${root}`, target, 'not_found');
     }
+    // Stryker disable next-line NumberLiteralValue: open(2) reads mode only with O_CREAT, which dirFlags never carries
     const fd = bound.libc.openat(bound.atFdCwd, Buffer.from(`${real}\0`), bound.dirFlags, 0);
     if(fd < 0) {
         throw new PathSecurityError(`Root is not a directory: ${root}`, target, 'not_directory');
@@ -168,6 +169,7 @@ async function walk(bound: Bound, parentFd: number, segments: string[], create: 
         if(create) {
             bound.libc.mkdirat(current, name, 0o700);
         }
+        // Stryker disable next-line NumberLiteralValue: open(2) reads mode only with O_CREAT, which dirFlags never carries
         const fd = bound.libc.openat(current, name, bound.dirFlags, 0);
         if(fd < 0) {
             // eslint-disable-next-line no-await-in-loop -- terminal: closes what was opened, then leaves the loop by throwing
@@ -258,6 +260,7 @@ export async function openContainedForRead(
         heldFds.push(...await walk(bound, rootFd, segments, false, relPath));
         const dirFd = heldFds.at(-1)!;
 
+        // Stryker disable next-line NumberLiteralValue: open(2) reads mode only with O_CREAT, which readFlags never carries
         const fileFd = bound.libc.openat(dirFd, cSegment(last), bound.readFlags, 0);
         if(fileFd < 0) {
             throw await openFailure(path.join(real, ...segments, last), relPath);
