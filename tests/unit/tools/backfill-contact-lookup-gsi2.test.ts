@@ -277,15 +277,20 @@ test('update rate limiter default sleep waits for the real timer before resolvin
         resolved = true;
         return undefined;
     });
-    await Promise.resolve();
+    // The tail chain has several microtask hops (await sleep -> recordStart -> return -> outer
+    // .then); a single Promise.resolve() flush is order-dependent (it can race ahead of, or
+    // behind, unrelated microtasks left over from whichever test ran just before this one under
+    // bun's randomized test order). Flush a bounded number of rounds instead, as
+    // tests/helpers/settle-with-fake-timers.ts does for the same class of chained-timer promise.
+    await flushMicrotasks(10);
     expect(resolved).toBe(false);
 
     jest.advanceTimersByTime(249);
-    await Promise.resolve();
+    await flushMicrotasks(10);
     expect(resolved).toBe(false);
 
     jest.advanceTimersByTime(1);
-    await Promise.resolve();
+    await flushMicrotasks(10);
     expect(resolved).toBe(true);
 });
 
