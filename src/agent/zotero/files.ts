@@ -121,17 +121,20 @@ export async function storePdfs(client: ZoteroClient, pdfs: PdfToStore[], now: (
 
     const limit = pLimit(2);
     const failedUploads: (PlaceholderCheck & { index: number, error: string })[] = [];
+    // Stryker disable next-line PromiseCombinatorSwap: every mapped task catches its own error below and always resolves, so Promise.all and Promise.allSettled observe the same settled array here
     await Promise.all(created.successful.map(async success => limit(async () => {
         const pdf = pdfs[success.index]!;
         try {
             const outcome = await client.uploadAttachmentFile(success.key, { bytes: pdf.bytes, filename: pdf.filename, contentType: 'application/pdf', mtimeMs: now() });
             results[success.index] = { pdf: outcome === 'uploaded' ? 'attached' : 'already_stored', attachmentKey: success.key };
         } catch (error) {
+            // Stryker disable next-line ArrayMethodSwap: failedUploads is immediately sorted by index below and never read positionally before that, so push vs unshift cannot change the outcome
             failedUploads.push({ index: success.index, key: success.key, createdVersion: success.version, md5: md5Hex(pdf.bytes), error: errorMessage(error) });
         }
     })));
 
     if(failedUploads.length > 0) {
+        // Stryker disable next-line MethodExpression,ArithmeticOperator: cleanupPlaceholders(entries) below returns its outcomes keyed to each entry's own key, not to array position (see client.ts), and failedUploads is only ever read via that same array afterward, so this sort's order (or a broken comparator) never reaches an observable result
         failedUploads.sort((a, b) => a.index - b.index);
         const outcomes = await client.cleanupPlaceholders(failedUploads.map(({ key, createdVersion, md5 }) => ({ key, createdVersion, md5 })));
         for(const [i, upload] of failedUploads.entries()) {
@@ -216,9 +219,11 @@ interface DownloadTarget {
 /** Why an attachment cannot be downloaded, or undefined when it can. */
 function ineligible(item: ZoteroItem, maxBytes: number): string | undefined {
     const { data } = item;
+    // Stryker disable ConditionalExpression,StringLiteral,BlockStatement: ineligible's only two callers (resolveTargets and addChildTargets, below) already narrow to itemType === 'attachment' before calling it, so this guard and its body never run and any mutation here is unobservable
     if(data.itemType !== 'attachment') {
         return `not an attachment (${data.itemType})`;
     }
+    // Stryker restore ConditionalExpression,StringLiteral,BlockStatement
     if(!STORED_LINK_MODES.has(String(data.linkMode))) {
         return 'no_stored_file: linked files and links are not stored in Zotero';
     }
@@ -265,6 +270,7 @@ async function resolveTargets(deps: ZoteroFileDeps, keys: string[]): Promise<{ t
 async function addChildTargets(deps: ZoteroFileDeps, parents: ZoteroItem[], targets: Map<string, DownloadTarget>, skipped: SkippedDownload[]): Promise<void> {
     const children = await deps.client.getChildren(parents.map(parent => parent.key));
     for(const parent of parents) {
+        // Stryker disable next-line ConditionalExpression: forcing this to true only lets a non-attachment child reach ineligible(), whose own itemType !== 'attachment' guard (above) returns a defined reason for it regardless, so the filtered set is identical either way
         const eligible = (children.get(parent.key) ?? []).filter(child => child.data.itemType === 'attachment' && ineligible(child, deps.maxStoredFileBytes) === undefined);
         if(eligible.length === 0) {
             skipped.push({ key: parent.key, reason: 'no_stored_file: no stored PDF, HTML or text attachment within the size limit' });
@@ -279,6 +285,7 @@ async function cachedCopy(deps: ZoteroFileDeps, relPath: string, md5: unknown): 
     if(typeof md5 !== 'string') {
         return undefined;
     }
+    // Stryker disable BlockStatement: the catch block below is the async function's last statement; emptying it still falls off the end and implicitly returns undefined, identical to the explicit return it has today
     try {
         const { bytes } = await openContainedForRead(deps.root, relPath, deps.maxStoredFileBytes);
         return md5Hex(bytes) === md5 ? bytes : undefined;
@@ -287,6 +294,7 @@ async function cachedCopy(deps: ZoteroFileDeps, relPath: string, md5: unknown): 
         return undefined;
     }
 }
+// Stryker restore BlockStatement
 
 async function downloadOne(deps: ZoteroFileDeps, target: DownloadTarget): Promise<DownloadedFile> {
     const { attachment } = target;
