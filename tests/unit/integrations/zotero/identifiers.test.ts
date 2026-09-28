@@ -54,7 +54,7 @@ describe('normalizeArxivId', () => {
         ['hep-th/9901001', { id: 'hep-th/9901001' }],
         ['hep-th/9901001v3', { id: 'hep-th/9901001', version: 'v3' }],
         ['math.GT/0309136', { id: 'math.GT/0309136' }],
-    ])('%p → %p', (input, expected) => {
+    ])('normalizes %p', (input, expected) => {
         expect(normalizeArxivId(input)).toEqual(expected);
     });
 
