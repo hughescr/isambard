@@ -39,7 +39,9 @@ export interface ZoteroDepsOverrides {
 }
 
 export function createZoteroDeps(config: ZoteroConfig, overrides: ZoteroDepsOverrides = {}): ZoteroDeps {
-    const crossref = new CrossrefResolver({ ...overrides, ...config.crossrefMailto === undefined ? {} : { mailto: config.crossrefMailto } });
+    // Equivalent to branching on config.crossrefMailto === undefined: CrossrefResolver reads deps.mailto
+    // by plain property access, so passing `mailto: undefined` behaves exactly like omitting the key.
+    const crossref = new CrossrefResolver({ ...overrides, mailto: config.crossrefMailto });
     const arxiv = new ArxivResolver(overrides);
     return {
         client:   new ZoteroClient({ apiKey: config.apiKey, groupId: config.groupId, ...overrides }),

@@ -56,6 +56,7 @@ export function fitToTemplate(
             continue;
         }
         if(field === 'extra') {
+            // Stryker disable next-line ArrayMethodSwap -- mapped.fields has at most one 'extra' key, so this pushes at most once; push and unshift are then equivalent
             extraLines.push(value);
         } else if(Object.hasOwn(template, field) && !STRUCTURAL_FIELDS.has(field)) {
             item[field] = value;
