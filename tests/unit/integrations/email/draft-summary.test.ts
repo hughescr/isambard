@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { buildDraftSummary, DRAFT_SNIPPET_MAX_CODE_POINTS } from '@/integrations/email/draft-summary';
+import { buildDraftSummary, DRAFT_SNIPPET_MAX_CODE_POINTS, formatAttachmentSize } from '@/integrations/email/draft-summary';
 
 describe('buildDraftSummary', () => {
     test('carries From, To, Cc, Bcc and Subject exactly as stored', () => {
@@ -71,5 +71,21 @@ describe('buildDraftSummary', () => {
             { filename: 'report.pdf', contentType: 'application/pdf', sizeBytes: 12_345 },
             { filename: 'photo.jpg', contentType: 'image/jpeg', sizeBytes: 2048 },
         ]);
+    });
+});
+
+describe('formatAttachmentSize', () => {
+    test.each([
+        [0, '0 B'],
+        [1023, '1023 B'],
+        [1024, '1.0 KB'],
+        [12_595, '12.3 KB'],
+        [1024 * 1024 - 1, '1024.0 KB'],
+        [1024 * 1024, '1.0 MB'],
+        [5.5 * 1024 * 1024, '5.5 MB'],
+        [1024 * 1024 * 1024, '1.0 GB'],
+        [1024 * 1024 * 1024 * 1024, '1024.0 GB'],
+    ])('formats %d bytes as %s', (bytes, expected) => {
+        expect(formatAttachmentSize(bytes)).toBe(expected);
     });
 });

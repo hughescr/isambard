@@ -163,6 +163,23 @@ describe('setupEmail — isSendableChannel type guard', () => {
         expect(getMessage).toHaveBeenCalledWith('Drafts', 9);
     });
 
+    it('gives cards a preview link only when a preview URL builder is passed', async () => {
+        const token = 'A'.repeat(43);
+        const sendToChannel = mock(async (_channelId: string, _payload: { components: { toJSON(): { components: { url?: string }[] } }[] }) => ({ status: 'queued', outboxId: 'o' }));
+        options.discordCapability = { sendToChannel } as never;
+        options.wildDuckClient = { ...options.wildDuckClient, getMessage: mock(async () => ({ id: 3, draft: true, metaData: { previewToken: token } })) } as unknown as WildDuckClient;
+        const linkUrls = (): (string | undefined)[] => sendToChannel.mock.calls.at(-1)![1].components.flatMap(row => row.toJSON().components.map(c => c.url)).filter(url => url !== undefined);
+
+        const withoutPreview = await setupEmail(options);
+        await withoutPreview.approvalCards.present(3);
+        expect(linkUrls()).toEqual([]);
+
+        options.previewUrlFor = (uid, t) => `https://mac.ts.net/d/${uid}/${t}`;
+        const withPreview = await setupEmail(options);
+        await withPreview.approvalCards.present(3);
+        expect(linkUrls()).toEqual([`https://mac.ts.net/d/3/${token}`]);
+    });
+
     it('decides clicks under the process-wide card gate, on the draft\'s key after the card\'s', async () => {
         const getMessage = mock(async () => ({ id: 5, draft: true, messageId: '<m@x>', date: '2026-09-27T00:00:00.000Z', metaData: {} }));
         const create = mock(async () => undefined);

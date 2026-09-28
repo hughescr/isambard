@@ -8,6 +8,7 @@ export {
     vectorIndexConfigSchema,
     agentGatewayConfigSchema,
     type EmailConfig,
+    type EmailPreviewConfig,
     type DiscordConfig,
     type DynamoDBConfig,
     type GuildId,

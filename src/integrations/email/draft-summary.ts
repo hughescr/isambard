@@ -21,6 +21,21 @@ export interface DraftSummary {
     attachments: { filename: string, contentType: string, sizeBytes: number }[]
 }
 
+/** A byte count as B, KB, MB or GB (binary units, one decimal above bytes). */
+export function formatAttachmentSize(bytes: number): string {
+    if(bytes < 1024) {
+        return `${bytes} B`;
+    }
+    const units = ['KB', 'MB', 'GB'];
+    let value = bytes / 1024;
+    let unit = 0;
+    while(value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    return `${value.toFixed(1)} ${units[unit]}`;
+}
+
 /** The body as plain text: the text part, or else the HTML parts converted (any wrapping is collapsed away with the rest of the whitespace). */
 function bodyText(draft: WildDuckMessage): string {
     return draft.text ?? convert((draft.html ?? []).join('\n'));

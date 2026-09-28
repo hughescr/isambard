@@ -3661,4 +3661,170 @@ describe('WildDuckClient', () => {
             await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow(WildDuckAuthError);
         });
     });
+
+    // -----------------------------------------------------------------------
+    // openAttachmentStream() (#158 draft preview)
+    // -----------------------------------------------------------------------
+    describe('openAttachmentStream()', () => {
+        function streamResponse(headers: Record<string, string> = {}, status = 200): { response: Response, body: ReadableStream<Uint8Array>, cancel: ReturnType<typeof mock> } {
+            const cancel = mock(async () => {});
+            const body = { cancel } as unknown as ReadableStream<Uint8Array>;
+            const response = {
+                ok:         status >= 200 && status < 300,
+                status,
+                statusText: statusText(status),
+                headers:    new Headers(headers),
+                body,
+                text:       async () => '',
+            } as unknown as Response;
+            return { response, body, cancel };
+        }
+
+        test('GETs the attachment with the access token and returns its body unread, with its length', async () => {
+            const client = await makeInitializedClient();
+            const { response, body } = streamResponse({ 'content-length': '1234' });
+            mockFetch.mockResolvedValueOnce(response);
+
+            const result = await client.openAttachmentStream('Drafts', 42, 'ATT00001');
+
+            expect(result).toEqual({ body, contentLength: 1234 });
+            expect(result?.body).toBe(body);
+            const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-drafts/messages/42/attachments/ATT00001');
+            expect(options.method).toBe('GET');
+            expect(options.headers).toEqual({ 'X-Access-Token': 'test-auth-token' });
+        });
+
+        test.each([
+            ['absent', {}],
+            ['not a plain integer', { 'content-length': '12abc' }],
+            ['prefixed', { 'content-length': 'x12' }],
+            ['for an encoded body', { 'content-length': '10', 'content-encoding': 'gzip' }],
+        ])('omits the length when it is %s', async (_label, headers) => {
+            const client = await makeInitializedClient();
+            const { response, body } = streamResponse(headers);
+            mockFetch.mockResolvedValueOnce(response);
+
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ body });
+        });
+
+        test('reports a zero length', async () => {
+            const client = await makeInitializedClient();
+            const { response, body } = streamResponse({ 'content-length': '0' });
+            mockFetch.mockResolvedValueOnce(response);
+
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ body, contentLength: 0 });
+        });
+
+        test('returns null for a 404 and releases the response body', async () => {
+            const client = await makeInitializedClient();
+            const { response, cancel } = streamResponse({}, 404);
+            mockFetch.mockResolvedValueOnce(response);
+
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00009')).toBeNull();
+            expect(cancel).toHaveBeenCalledTimes(1);
+        });
+
+        test('returns null for a 404 with no body', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({}, 404));
+
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00009')).toBeNull();
+        });
+
+        test('throws a WildDuckError carrying the status and body for other failures', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('boom', 500));
+
+            const err = await client.openAttachmentStream('Drafts', 42, 'ATT00001').catch((error: unknown) => error);
+
+            expect(err).toBeInstanceOf(WildDuckError);
+            expect((err as WildDuckError).message).toBe('WildDuck API error: 500 Error: boom');
+            expect((err as WildDuckError).context).toEqual({ status: 500 });
+        });
+
+        test('omits an empty error body from the message', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('', 502));
+
+            await expect(client.openAttachmentStream('Drafts', 42, 'ATT00001')).rejects.toThrow(/^WildDuck API error: 502 Error$/u);
+        });
+
+        test('re-authenticates once on a 401 and retries with the new token', async () => {
+            const client = await makeInitializedClient();
+            const { response, body } = streamResponse();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(response);
+
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ body });
+            const [_url, options] = mockFetch.mock.calls[2] as [string, RequestInit];
+            expect(options.headers).toEqual({ 'X-Access-Token': 'refreshed-token' });
+        });
+
+        test('rejects before init without calling WildDuck', async () => {
+            const client = new WildDuckClient(CLIENT_OPTIONS);
+            await expect(client.openAttachmentStream('Drafts', 42, 'ATT00001')).rejects.toThrow(WildDuckError);
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        test('sends no token header once the token has been dropped', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            await client.shutdown();
+            mockFetch.mockClear();
+            mockFetch.mockResolvedValueOnce(streamResponse().response);
+
+            await client.openAttachmentStream('Drafts', 42, 'ATT00001');
+
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(options.headers).toEqual({});
+        });
+
+        test('aborts the request when the headers take longer than 30 s', async () => {
+            const client = await makeInitializedClient();
+            let seen: AbortSignal | undefined;
+            mockFetch.mockImplementationOnce(async (_url: string, options?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+                seen = options?.signal ?? undefined;
+                seen?.addEventListener('abort', () => reject(seen?.reason as Error));
+            }));
+
+            const pending = client.openAttachmentStream('Drafts', 42, 'ATT00001').catch((error: unknown) => error);
+            await drainMicrotasks();
+            jest.advanceTimersByTime(29_999);
+            expect(seen?.aborted).toBe(false);
+            jest.advanceTimersByTime(1);
+
+            const err = await pending;
+            expect(err).toBeInstanceOf(WildDuckError);
+            expect((err as WildDuckError).message).toBe('WildDuck attachment request timed out before its headers arrived');
+        });
+
+        test('stops the header deadline once the headers arrive, so only the caller can abort the body', async () => {
+            const client = await makeInitializedClient();
+            const caller = new AbortController();
+            mockFetch.mockResolvedValueOnce(streamResponse().response);
+
+            await client.openAttachmentStream('Drafts', 42, 'ATT00001', caller.signal);
+            const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            jest.advanceTimersByTime(60_000);
+            expect(options.signal?.aborted).toBe(false);
+
+            caller.abort();
+            expect(options.signal?.aborted).toBe(true);
+        });
+
+        test('stops the header deadline when the request fails', async () => {
+            const client = await makeInitializedClient();
+            let seen: AbortSignal | undefined;
+            mockFetch.mockImplementationOnce(async (_url: string, options?: RequestInit) => {
+                seen = options?.signal ?? undefined;
+                throw new Error('connection refused');
+            });
+
+            await expect(client.openAttachmentStream('Drafts', 42, 'ATT00001')).rejects.toThrow('connection refused');
+            jest.advanceTimersByTime(60_000);
+            expect(seen?.aborted).toBe(false);
+        });
+    });
 });

@@ -38,6 +38,8 @@ export interface EmailApprovalCardPresenterDeps {
     reply:          (card: { channelId: string, messageId: string }, text: string) => Promise<void>
     /** Orders card repaints against clicks on the same card; the process-wide gate when omitted. */
     cardEdits?:     ApprovalCardEditGate
+    /** The preview page URL for a draft and its token; set only while the preview server is running. */
+    previewUrlFor?: (uid: number, token: string) => string
 }
 
 /**
@@ -67,10 +69,11 @@ export class EmailApprovalCardPresenter implements EmailApprovalCardPort {
             return 'missing';
         }
         const summary = buildDraftSummary(draft);
-        const link = readDraftApprovalMeta(draft.metaData).card;
+        const { card: link, previewToken } = readDraftApprovalMeta(draft.metaData);
+        const previewUrl = this.previewUrl(uid, previewToken);
 
         if(previousUid !== undefined && link !== undefined) {
-            const card = buildEmailApprovalCard({ uid, summary, edits: link.edits, state: 'pending' });
+            const card = buildEmailApprovalCard({ uid, summary, edits: link.edits, state: 'pending', previewUrl });
             if(await this.editInPlace(link, previousUid, uid, card)) {
                 await this.replyEdited(link, uid);
                 return 'updated';
@@ -78,7 +81,12 @@ export class EmailApprovalCardPresenter implements EmailApprovalCardPort {
         }
 
         const edits = previousUid === undefined ? link?.edits ?? 0 : 0;
-        return this.post(uid, buildEmailApprovalCard({ uid, summary, edits, state: 'pending' }), edits);
+        return this.post(uid, buildEmailApprovalCard({ uid, summary, edits, state: 'pending', previewUrl }), edits);
+    }
+
+    /** The draft's preview link, when the preview server is running and the draft has a token. */
+    private previewUrl(uid: number, token: string | undefined): string | undefined {
+        return token === undefined ? undefined : this.deps.previewUrlFor?.(uid, token);
     }
 
     /**

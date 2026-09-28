@@ -4,6 +4,8 @@ import {
     draftLockKey,
     hasDecisionMarker,
     mergeDraftMeta,
+    newPreviewToken,
+    previewTokenMatches,
     readDraftApprovalMeta
 } from '@/integrations/email/draft-approval-meta';
 
@@ -110,5 +112,38 @@ describe('amendedDraftMeta', () => {
 describe('draftLockKey', () => {
     test('prefixes the uid so it can never collide with a card (snowflake) key', () => {
         expect(draftLockKey(42)).toBe('email-draft:42');
+    });
+});
+
+describe('newPreviewToken', () => {
+    test('is 43 base64url characters (32 random bytes)', () => {
+        const token = newPreviewToken();
+        expect(token).toMatch(/^[\w-]{43}$/u);
+        expect(Buffer.from(token, 'base64url')).toHaveLength(32);
+    });
+
+    test('is fresh on every call', () => {
+        expect(newPreviewToken()).not.toBe(newPreviewToken());
+    });
+});
+
+describe('previewTokenMatches', () => {
+    const token = 'A'.repeat(43);
+
+    test('matches an identical token', () => {
+        expect(previewTokenMatches(token, `${'A'.repeat(42)}A`)).toBe(true);
+    });
+
+    test.each([
+        ['a different token of the same length', `${'A'.repeat(42)}B`],
+        ['a shorter token', 'A'.repeat(42)],
+        ['a longer token', 'A'.repeat(44)],
+    ])('rejects %s', (_label, candidate) => {
+        expect(previewTokenMatches(token, candidate)).toBe(false);
+    });
+
+    test('rejects any candidate when the draft has no token', () => {
+        expect(previewTokenMatches(undefined, token)).toBe(false);
+        expect(previewTokenMatches(undefined, '')).toBe(false);
     });
 });

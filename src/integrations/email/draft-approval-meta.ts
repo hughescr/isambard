@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 /**
@@ -103,4 +104,22 @@ export function amendedDraftMeta(metaData: unknown): Record<string, unknown> {
 /** The gate key that serialises every metaData write and decision for one draft. */
 export function draftLockKey(uid: number): string {
     return `email-draft:${uid}`;
+}
+
+/**
+ * A fresh draft preview token (#158): 32 random bytes as 43 base64url characters. Every Drafts
+ * upload stores a new one in its metaData, so an amended draft never inherits the old link.
+ */
+export function newPreviewToken(): string {
+    return randomBytes(32).toString('base64url');
+}
+
+/** Whether `candidate` is the draft's preview token, compared in constant time; never matches a draft without one. */
+export function previewTokenMatches(stored: string | undefined, candidate: string): boolean {
+    if(stored === undefined) {
+        return false;
+    }
+    const expected = Buffer.from(stored);
+    const actual = Buffer.from(candidate);
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
 }

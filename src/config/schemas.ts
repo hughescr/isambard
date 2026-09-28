@@ -49,6 +49,23 @@ export const agentConfigSchema = z.object({
     gateway:       agentGatewayConfigSchema.optional(),
 });
 
+/**
+ * The draft preview server (#158, `docs/email-preview.md`): a loopback-only HTTP server that
+ * `tailscale serve` exposes to the admin's tailnet. Absent means disabled. Port and TTL are
+ * coerced so the loader can pass the env-var strings verbatim.
+ */
+export const emailPreviewConfigSchema = z.object({
+    port:          z.coerce.number().int().min(1).max(65_535),
+    /** The tailnet HTTPS origin (and optional path) links point at, without a trailing slash. */
+    publicBaseUrl: z.url({ protocol: /^https$/u }).transform(url => url.replace(/\/$/u, '')),
+    /** How long after the draft's Date a preview link keeps working. */
+    ttlHours:      z.coerce.number().int().positive().default(168),
+    /** When set, only these `Tailscale-User-Login` values may open a preview (compared lower-cased). */
+    allowedLogins: z.array(z.string().trim().toLowerCase().min(1)).min(1).optional(),
+});
+
+export type EmailPreviewConfig = z.infer<typeof emailPreviewConfigSchema>;
+
 // Email config
 export const emailConfigSchema = z.object({
     user:                           z.string().min(1),
@@ -59,6 +76,7 @@ export const emailConfigSchema = z.object({
     wildDuckApiUrl:                 z.url(),
     sendReservoirCapacity:          z.number().int().positive().default(24),
     sendReservoirRefillRatePerHour: z.number().positive().default(1),
+    preview:                        emailPreviewConfigSchema.optional(),
 });
 
 // GuildId branded type - canonical definition (re-exported by src/integrations/discord/types.ts)

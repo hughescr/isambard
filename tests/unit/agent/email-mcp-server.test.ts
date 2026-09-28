@@ -12,6 +12,9 @@ import * as utils from '../../../src/utils';
 import { callSdkTool } from '../../helpers/sdk-mcp-client';
 import { mockLogger, mockFsPromises, resetMockFs } from '../../setup';
 
+/** A draft preview token: 32 random bytes as base64url (#158). */
+const PREVIEW_TOKEN_RE = /^[\w-]{43}$/u;
+
 /** Minimal offline-state ServiceHealthRegistry double for the getRejectedDrafts health-guard test. */
 function makeOfflineHealthRegistry(): ServiceHealthRegistry {
     const offlineEntry: ServiceHealthEntry = { state: 'offline', epoch: 0, failureCount: 1 };
@@ -2480,8 +2483,20 @@ describe('createEmailMCPServer', () => {
             await handler({ to: 'target@example.com', subject: 'Hi', body: 'Body', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
-            // metaData.to is no longer stored — to is part of the message itself
-            expect((payload.metaData as Record<string, unknown> | undefined)?.to).toBeUndefined();
+            // metaData carries only the preview token — to is part of the message itself
+            expect(payload.metaData).toEqual({ previewToken: expect.stringMatching(PREVIEW_TOKEN_RE) });
+        });
+
+        test('stores a fresh preview token with every draft upload', async () => {
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => false);
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist }), 'sendEmail');
+
+            await handler({ to: 'target@example.com', subject: 'Hi', body: 'Body', senderProfile: 'formal' });
+            await handler({ to: 'target@example.com', subject: 'Hi', body: 'Body', senderProfile: 'formal' });
+
+            const tokens = mockUploadMessage.mock.calls.map(call => ((call as unknown as [string, { metaData: { previewToken: string } }])[1]).metaData.previewToken);
+            expect(tokens).toHaveLength(2);
+            expect(tokens[0]).not.toBe(tokens[1]);
         });
 
         test('should not include rate limit warning in result when limit is not reached', async () => {
@@ -2964,8 +2979,8 @@ describe('createEmailMCPServer', () => {
             await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
-            // metaData.to is no longer stored — to is part of the message itself
-            expect((payload.metaData as Record<string, unknown> | undefined)?.to).toBeUndefined();
+            // metaData carries only the preview token — to is part of the message itself
+            expect(payload.metaData).toEqual({ previewToken: expect.stringMatching(PREVIEW_TOKEN_RE) });
         });
 
         test('should use replyTo.address from WildDuck message for allowlist check when replyTo present', async () => {
@@ -3327,17 +3342,20 @@ describe('createEmailMCPServer', () => {
 
             const [payload, previousUid] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(previousUid).toBe(42);
-            expect(payload.metaData).toEqual({ approvalCard: { ...LINK, edits: 2 } });
+            expect(payload.metaData).toEqual({ approvalCard: { ...LINK, edits: 2 }, previewToken: expect.stringMatching(PREVIEW_TOKEN_RE) });
             expect(mockSendApprovalRequest.mock.calls).toEqual([[55, 42]]);
         });
 
-        test('uploads no metaData for a draft without a card link', async () => {
+        test('uploads only a fresh preview token for a draft without a card link, never the old token', async () => {
+            const oldToken = 'o'.repeat(43);
+            mockGetMessageAmend.mockImplementation(async () => ({ ...originalDraft, metaData: { previewToken: oldToken } }));
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest) });
 
             await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
 
-            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
-            expect(payload).not.toHaveProperty('metaData');
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [{ metaData: { previewToken: string } }, number];
+            expect(payload.metaData).toEqual({ previewToken: expect.stringMatching(PREVIEW_TOKEN_RE) });
+            expect(payload.metaData.previewToken).not.toBe(oldToken);
         });
 
         test('reports an in-place card update with its edit number', async () => {

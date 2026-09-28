@@ -93,6 +93,11 @@ export interface EmailSetupOptions {
      * not a runtime log branch.
      */
     notify:                      NotifyFn
+    /**
+     * Builds a draft's preview page URL (#158); passed only while the draft preview server is
+     * running, so cards carry an "Open full preview" link only then.
+     */
+    previewUrlFor?:              (uid: number, token: string) => string
 }
 
 export interface EmailSetupResult {
@@ -317,7 +322,8 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
     // The approval cards the email tools present, edit in place and mark deleted (#158).
     const approvalCards = new EmailApprovalCardPresenter({
         wildDuckClient,
-        draftMeta: outboundApprovals,
+        draftMeta:     outboundApprovals,
+        previewUrlFor: options.previewUrlFor,
         ...buildEmailApprovalCardTransport({ client, adminDiscordChannelId, discordCapability: options.discordCapability, retryDeps }),
     });
 

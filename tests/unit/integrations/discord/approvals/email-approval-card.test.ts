@@ -1,11 +1,10 @@
 import { describe, test, expect } from 'bun:test';
-import { ButtonStyle, type APIButtonComponentWithCustomId, type APIEmbed } from 'discord.js';
+import { ButtonStyle, ComponentType, type APIButtonComponentWithCustomId, type APIEmbed } from 'discord.js';
 import {
     buildDraftGoneEmbed,
     buildEmailApprovalCard,
     currentCardDraftUid,
     DRAFT_GONE_GREY,
-    formatAttachmentSize,
     type EmailApprovalCard
 } from '@/integrations/discord/approvals/email-approval-card';
 import type { DraftSummary } from '@/integrations/email';
@@ -215,6 +214,27 @@ describe('buildEmailApprovalCard — pending', () => {
         ]);
     });
 
+    test('adds an "Open full preview" link button after the decision buttons when given a preview URL', () => {
+        const card = buildEmailApprovalCard({ uid: 42, edits: 0, state: 'pending', summary: summary(), previewUrl: 'https://mac.ts.net/d/42/tok' });
+        const components = card.components.flatMap(row => row.toJSON().components);
+
+        expect(components).toHaveLength(4);
+        expect(components[3]).toEqual({ type: ComponentType.Button, style: ButtonStyle.Link, label: 'Open full preview', url: 'https://mac.ts.net/d/42/tok' });
+    });
+
+    test('keeps the preview link on a card whose recipients cannot fit, beside the lone Reject button', () => {
+        const card = buildEmailApprovalCard({ uid: 9, edits: 0, state: 'pending', summary: summary({ to: addresses(160) }), previewUrl: 'https://mac.ts.net/d/9/tok' });
+        const components = card.components.flatMap(row => row.toJSON().components);
+
+        expect(components.map(c => ('custom_id' in c ? c.custom_id : (c as { url: string }).url))).toEqual(['email-send-reject:9', 'https://mac.ts.net/d/9/tok']);
+    });
+
+    test('has no link button without a preview URL', () => {
+        const components = buildEmailApprovalCard({ uid: 42, edits: 0, state: 'pending', summary: summary() }).components.flatMap(row => row.toJSON().components);
+
+        expect(components.every(c => 'custom_id' in c)).toBe(true);
+    });
+
     test('drops the snippet and attachment lines first when the card would exceed Discord\'s size limit', () => {
         const to = addresses(136);
         const attachments = [{ filename: 'a.pdf', contentType: 'application/pdf', sizeBytes: 1 }];
@@ -282,6 +302,10 @@ describe('buildEmailApprovalCard — deleted', () => {
         expect(card.components).toEqual([]);
     });
 
+    test('has no preview link even when given a preview URL', () => {
+        expect(buildEmailApprovalCard({ uid: 42, edits: 0, state: 'deleted', summary: summary(), previewUrl: 'https://mac.ts.net/d/42/tok' }).components).toEqual([]);
+    });
+
     test('shows the plain warning, no buttons, when the recipients cannot fit', () => {
         const card = buildEmailApprovalCard({ uid: 42, edits: 0, state: 'deleted', summary: summary({ to: addresses(160) }) });
 
@@ -293,22 +317,6 @@ describe('buildEmailApprovalCard — deleted', () => {
 describe('buildDraftGoneEmbed', () => {
     test('is a grey "no longer exists" embed', () => {
         expect(buildDraftGoneEmbed().toJSON()).toEqual({ title: 'Draft no longer exists — nothing was sent', color: 0x99_AA_B5 });
-    });
-});
-
-describe('formatAttachmentSize', () => {
-    test.each([
-        [0, '0 B'],
-        [1023, '1023 B'],
-        [1024, '1.0 KB'],
-        [12_595, '12.3 KB'],
-        [1024 * 1024 - 1, '1024.0 KB'],
-        [1024 * 1024, '1.0 MB'],
-        [5.5 * 1024 * 1024, '5.5 MB'],
-        [1024 * 1024 * 1024, '1.0 GB'],
-        [1024 * 1024 * 1024 * 1024, '1024.0 GB'],
-    ])('formats %d bytes as %s', (bytes, expected) => {
-        expect(formatAttachmentSize(bytes)).toBe(expected);
     });
 });
 

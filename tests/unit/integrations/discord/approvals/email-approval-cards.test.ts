@@ -44,7 +44,14 @@ interface Harness {
     events:         string[]
 }
 
-function makeHarness(stored: WildDuckMessage | null, card: ApprovalCardMessage = cardMessage(OLD_UID)): Harness {
+/** The URLs of a card's link buttons. */
+function linkUrlsOf(card: EmailApprovalCard): string[] {
+    return card.components.flatMap(row => row.toJSON().components.flatMap(c => ('url' in c ? [c.url] : [])));
+}
+
+const previewUrlFor = (uid: number, token: string): string => `https://mac.ts.net/d/${uid}/${token}`;
+
+function makeHarness(stored: WildDuckMessage | null, card: ApprovalCardMessage = cardMessage(OLD_UID), previewUrls?: (uid: number, token: string) => string): Harness {
     const events: string[] = [];
     const gate = new ApprovalCardEditGate();
     const getMessage = mock(async (_folder: string, _uid: number): Promise<WildDuckMessage | null> => stored);
@@ -72,6 +79,7 @@ function makeHarness(stored: WildDuckMessage | null, card: ApprovalCardMessage =
         fetchChannel,
         reply,
         cardEdits:      gate,
+        previewUrlFor:  previewUrls,
     });
     return { presenter, getMessage, linkCard, markSuperseded, postCard, fetchChannel, fetchMessage, reply, gate, events };
 }
@@ -168,6 +176,51 @@ describe('EmailApprovalCardPresenter', () => {
 
             expect(await h.presenter.present(NEW_UID, OLD_UID)).toBe('posted');
             expect(h.fetchChannel).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('present — the preview link', () => {
+        const TOKEN = 't'.repeat(43);
+
+        test('links a new card to the draft\'s preview when preview is on and the draft has a token', async () => {
+            const h = makeHarness(draft(NEW_UID, { previewToken: TOKEN }), cardMessage(OLD_UID), previewUrlFor);
+
+            await h.presenter.present(NEW_UID);
+
+            expect(linkUrlsOf(h.postCard.mock.calls[0][0])).toEqual([`https://mac.ts.net/d/55/${TOKEN}`]);
+        });
+
+        test('has no link when the draft has no token', async () => {
+            const h = makeHarness(draft(NEW_UID), cardMessage(OLD_UID), previewUrlFor);
+
+            await h.presenter.present(NEW_UID);
+
+            expect(linkUrlsOf(h.postCard.mock.calls[0][0])).toEqual([]);
+        });
+
+        test('has no link when preview is off', async () => {
+            const h = makeHarness(draft(NEW_UID, { previewToken: TOKEN }));
+
+            await h.presenter.present(NEW_UID);
+
+            expect(linkUrlsOf(h.postCard.mock.calls[0][0])).toEqual([]);
+        });
+
+        test('an in-place edit links to the new uid and its new token', async () => {
+            const card = cardMessage(OLD_UID);
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK, previewToken: 'n'.repeat(43) }), card, previewUrlFor);
+
+            expect(await h.presenter.present(NEW_UID, OLD_UID)).toBe('updated');
+
+            expect(linkUrlsOf(card.edit.mock.calls[0][0])).toEqual([`https://mac.ts.net/d/55/${'n'.repeat(43)}`]);
+        });
+
+        test('a card posted in place of an unusable link also carries the preview link', async () => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK, previewToken: TOKEN }), cardMessage(undefined), previewUrlFor);
+
+            expect(await h.presenter.present(NEW_UID, OLD_UID)).toBe('posted');
+
+            expect(linkUrlsOf(h.postCard.mock.calls[0][0])).toEqual([`https://mac.ts.net/d/55/${TOKEN}`]);
         });
     });
 

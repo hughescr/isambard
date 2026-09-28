@@ -31,6 +31,32 @@ export interface DynamoDBResources {
     IsambardMemory: { name: string }
 }
 
+/** An env var's value, with an empty string counted as unset. */
+function nonEmptyEnv(name: string): string | undefined {
+    const value = env.get(name).asString();
+    return value === '' ? undefined : value;
+}
+
+/**
+ * The raw draft preview settings (#158), or undefined — preview disabled — when neither
+ * EMAIL_PREVIEW_PORT nor EMAIL_PREVIEW_PUBLIC_BASE_URL is set. Setting only one of them passes
+ * the other through as undefined, which the schema rejects.
+ */
+function rawEmailPreviewConfig(): Record<string, unknown> | undefined {
+    const port = nonEmptyEnv('EMAIL_PREVIEW_PORT');
+    const publicBaseUrl = nonEmptyEnv('EMAIL_PREVIEW_PUBLIC_BASE_URL');
+    if(port === undefined && publicBaseUrl === undefined) {
+        return undefined;
+    }
+    const allowedLogins = env.get('EMAIL_PREVIEW_ALLOWED_LOGINS').asArray();
+    return {
+        port,
+        publicBaseUrl,
+        ttlHours:      nonEmptyEnv('EMAIL_PREVIEW_TTL_HOURS'),
+        allowedLogins: allowedLogins?.length ? allowedLogins : undefined,
+    };
+}
+
 export function loadConfig(resources: SstResources = Resource): Config {
     const rawConfig = {
         app: {
@@ -114,6 +140,7 @@ export function loadConfig(resources: SstResources = Resource): Config {
                 user:           resources.EmailUser.value,
                 password:       resources.EmailPassword.value,
                 wildDuckApiUrl: resources.WildDuckApiUrl.value,
+                preview:        rawEmailPreviewConfig(),
             }
             : undefined,
         bsky: resources.BskyHandle.value && resources.BskyAppPassword.value

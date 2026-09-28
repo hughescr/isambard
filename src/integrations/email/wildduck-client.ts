@@ -187,6 +187,12 @@ export interface WildDuckMessage {
     draft?:       boolean
 }
 
+/** An attachment's bytes as WildDuck streams them, with their length when WildDuck gave one. */
+export interface AttachmentStream {
+    body:           ReadableStream<Uint8Array> | null
+    contentLength?: number
+}
+
 export interface WildDuckMessageSummary {
     id:          number
     from:        { address: string, name?: string }
@@ -494,6 +500,15 @@ export class WildDuckClient {
      */
     async getAttachment(mailboxPath: string, messageUid: number, attachmentId: string): Promise<Buffer> {
         return this.withAuthRetry(() => this.doGetAttachment(mailboxPath, messageUid, attachmentId));
+    }
+
+    /**
+     * Open an attachment's decoded bytes as a stream, unread and unbuffered, for the draft preview
+     * (#158). Null when WildDuck has no such attachment (404). The 30 s request deadline covers
+     * only the wait for the response headers; after that only `signal` aborts the body.
+     */
+    async openAttachmentStream(mailboxPath: string, uid: number, attachmentId: string, signal?: AbortSignal): Promise<AttachmentStream | null> {
+        return this.withAuthRetry(() => this.doOpenAttachmentStream(mailboxPath, uid, attachmentId, signal));
     }
 
     /**
@@ -931,6 +946,43 @@ export class WildDuckClient {
             `/users/me/mailboxes/${mailboxId}/messages/${messageUid}/attachments/${attachmentId}`,
             { method: 'GET' }
         );
+    }
+
+    private async doOpenAttachmentStream(mailboxPath: string, uid: number, attachmentId: string, signal?: AbortSignal): Promise<AttachmentStream | null> {
+        const mailboxId = this.resolveMailboxId(mailboxPath);
+        const headerDeadline = new AbortController();
+        const timer = setTimeout(() => {
+            headerDeadline.abort(new WildDuckError('WildDuck attachment request timed out before its headers arrived'));
+        }, REQUEST_TIMEOUT_MS);
+        let response: Response;
+        try {
+            response = await fetch(`${this.options.url}/users/me/mailboxes/${mailboxId}/messages/${uid}/attachments/${attachmentId}`, {
+                method:  'GET',
+                headers: this.token === null ? {} : { 'X-Access-Token': this.token },
+                signal:  signal ? AbortSignal.any([signal, headerDeadline.signal]) : headerDeadline.signal,
+            });
+        } finally {
+            clearTimeout(timer);
+        }
+
+        if(response.status === 404) {
+            await response.body?.cancel();
+            return null;
+        }
+        if(response.status === 401) {
+            throw new WildDuckAuthError('WildDuck authentication failed (401)');
+        }
+        if(!response.ok) {
+            const body = await response.text();
+            const bodySuffix = body ? `: ${body}` : '';
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`, undefined, { status: response.status });
+        }
+
+        // A decoded (content-encoded) body's length differs from the header's, so it is only passed through for an identity body.
+        const length = response.headers.get('content-length');
+        return length !== null && /^\d+$/u.test(length) && response.headers.get('content-encoding') === null
+            ? { body: response.body, contentLength: Number(length) }
+            : { body: response.body };
     }
 
     private async makeRequestBuffer(path: string, options: RequestInit): Promise<Buffer> {

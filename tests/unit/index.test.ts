@@ -1548,6 +1548,27 @@ describe('createApp', () => {
             expect(emailOptions.adminDiscordChannelId).toBe(ADMIN_REVIEW_CHANNEL_ID);
         });
 
+        test('starts the draft preview from the email config over the WildDuck client and threads its URL builder into setupEmail (#158)', async () => {
+            const { emailSetupSpy } = wireHappyPath(spies);
+            spies.push(spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+            }));
+            const previewUrlFor = (uid: number, token: string): string => `https://mac.ts.net/d/${uid}/${token}`;
+            const startPreviewSpy = spyOn(staticWildDuckClientModule, 'startDraftPreview').mockReturnValue(previewUrlFor);
+            spies.push(startPreviewSpy);
+
+            await staticIndexModule.createApp();
+
+            const [previewConfig, deps] = startPreviewSpy.mock.calls[0];
+            expect(previewConfig).toBeUndefined();
+            expect(deps.wildDuckClient).toBeDefined();
+            expect(typeof deps.serve).toBe('function');
+            expect(typeof deps.registerCleanup).toBe('function');
+            const emailOptions = emailSetupSpy.mock.calls[0]?.[0] as { wildDuckClient?: unknown, previewUrlFor?: unknown };
+            expect(emailOptions.previewUrlFor).toBe(previewUrlFor);
+            expect(emailOptions.wildDuckClient).toBe(deps.wildDuckClient);
+        });
+
         test('starts the dmPoller during app.start() and stops it during app.stop() (Q8)', async () => {
             const { dmPollerStart, dmPollerStop } = wireHappyPath(spies, {}, {}, true);
             // app.start() fires real healthRegistry.sendEvent transitions, which independently wake

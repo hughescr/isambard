@@ -5,6 +5,7 @@ import {
     agentConfigSchema,
     agentGatewayConfigSchema,
     emailConfigSchema,
+    emailPreviewConfigSchema,
     discordConfigSchema,
     bskyConfigSchema,
     browserConfigSchema,
@@ -1541,5 +1542,58 @@ describe('sessionConfigSchema', () => {
     test('rejects a non-positive reopenTaskWaitMs', () => {
         expect(sessionConfigSchema.safeParse({ reopenTaskWaitMs: 0 }).success).toBe(false);
         expect(sessionConfigSchema.safeParse({ reopenTaskWaitMs: -1 }).success).toBe(false);
+    });
+});
+
+describe('emailPreviewConfigSchema', () => {
+    const base = { port: 8791, publicBaseUrl: 'https://mac.tailnet.ts.net' };
+
+    test('applies the 168-hour TTL default and leaves allowedLogins unset', () => {
+        expect(emailPreviewConfigSchema.parse(base)).toEqual({ port: 8791, publicBaseUrl: 'https://mac.tailnet.ts.net', ttlHours: 168 });
+    });
+
+    test('coerces string port and TTL values from the environment', () => {
+        expect(emailPreviewConfigSchema.parse({ ...base, port: '8792', ttlHours: '24' })).toMatchObject({ port: 8792, ttlHours: 24 });
+    });
+
+    test('strips a trailing slash from the public base URL', () => {
+        expect(emailPreviewConfigSchema.parse({ ...base, publicBaseUrl: 'https://mac.tailnet.ts.net/' }).publicBaseUrl).toBe('https://mac.tailnet.ts.net');
+    });
+
+    test('keeps a path on the public base URL', () => {
+        expect(emailPreviewConfigSchema.parse({ ...base, publicBaseUrl: 'https://mac.tailnet.ts.net/preview/' }).publicBaseUrl).toBe('https://mac.tailnet.ts.net/preview');
+    });
+
+    test.each([
+        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- asserting that a clear-text base URL is refused
+        ['an http base URL', { publicBaseUrl: 'http://mac.tailnet.ts.net' }],
+        ['a base URL whose scheme only starts with https', { publicBaseUrl: 'httpsx://mac.tailnet.ts.net' }],
+        ['a base URL whose scheme only ends with https', { publicBaseUrl: 'xhttps://mac.tailnet.ts.net' }],
+        ['a missing base URL', { publicBaseUrl: undefined }],
+        ['a missing port', { port: undefined }],
+        ['port 0', { port: 0 }],
+        ['port 65536', { port: 65_536 }],
+        ['a fractional port', { port: 80.5 }],
+        ['a zero TTL', { ttlHours: 0 }],
+        ['a fractional TTL', { ttlHours: 1.5 }],
+        ['an empty allowedLogins list', { allowedLogins: [] }],
+        ['a blank login', { allowedLogins: ['craig@example.com', '  '] }],
+    ])('rejects %s', (_label, patch) => {
+        expect(emailPreviewConfigSchema.safeParse({ ...base, ...patch }).success).toBe(false);
+    });
+
+    test('accepts the port range bounds', () => {
+        expect(emailPreviewConfigSchema.parse({ ...base, port: 1 }).port).toBe(1);
+        expect(emailPreviewConfigSchema.parse({ ...base, port: 65_535 }).port).toBe(65_535);
+    });
+
+    test('trims and lower-cases allowed logins', () => {
+        expect(emailPreviewConfigSchema.parse({ ...base, allowedLogins: [' Craig@Example.com ', 'b@example.com'] }).allowedLogins).toEqual(['craig@example.com', 'b@example.com']);
+    });
+
+    test('is optional on emailConfigSchema', () => {
+        const email = { user: 'u@example.com', password: 'p', wildDuckApiUrl: 'https://wildduck.example.com' };
+        expect(emailConfigSchema.parse(email).preview).toBeUndefined();
+        expect(emailConfigSchema.parse({ ...email, preview: base }).preview).toEqual({ ...base, ttlHours: 168 });
     });
 });

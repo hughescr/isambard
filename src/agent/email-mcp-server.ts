@@ -11,7 +11,7 @@ import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthG
 import { EmailFolder } from '@/config';
 import { EmailProcessingError, WildDuckError } from '@/errors';
 // eslint-disable-next-line boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { amendedDraftMeta, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage } from '@/integrations/email';
+import { amendedDraftMeta, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
@@ -53,13 +53,15 @@ function amendRefusal(draftRef: string, meta: DraftApprovalMeta): string | undef
 }
 
 /**
- * What an amended draft's upload carries — the card link with one more edit, and nothing else of
- * the old metaData; nothing at all without a link — and the edit number its card will show.
+ * What an amended draft's upload carries — the card link with one more edit (when it has one) and
+ * a fresh preview token, never anything else of the old metaData — and the edit number its card
+ * will show.
  */
-function amendCarry(metaData: unknown, meta: DraftApprovalMeta): { upload: { metaData?: Record<string, unknown> }, edits: number } {
-    return meta.card === undefined
-        ? { upload: {}, edits: 1 }
-        : { upload: { metaData: amendedDraftMeta(metaData) }, edits: meta.card.edits + 1 };
+function amendCarry(metaData: unknown, meta: DraftApprovalMeta): { metaData: Record<string, unknown>, edits: number } {
+    return {
+        metaData: { ...amendedDraftMeta(metaData), previewToken: newPreviewToken() },
+        edits:    (meta.card?.edits ?? 0) + 1,
+    };
 }
 
 /** Whether a WildDuck call failed because the message does not exist. */
@@ -639,12 +641,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // Upload to Drafts
                         const uid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
                             from,
-                            to:      toAddresses,
-                            subject: args.subject,
+                            to:       toAddresses,
+                            subject:  args.subject,
                             // Stryker disable next-line llm: sendEmail's schema requires body to be a string, so a nullish fallback is inert.
-                            text:    args.body,
+                            text:     args.body,
                             ...(attachments.length > 0 ? { attachments } : {}),
-                            draft:   true,
+                            draft:    true,
+                            metaData: { previewToken: newPreviewToken() },
                         });
 
                         // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
@@ -726,7 +729,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                     id:      originalUid,
                                 },
                                 ...(attachments.length > 0 ? { attachments } : {}),
-                                draft: true,
+                                draft:    true,
+                                metaData: { previewToken: newPreviewToken() },
                             });
 
                             return submitOrRequestApproval(uid, isReplyAllowed(args.mode, primaryTo), rateLimitWarning, `Reply sent to ${primaryTo}.`);
@@ -815,15 +819,16 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const toAddresses    = argToAddresses ?? (original.to ?? []);
 
                         // Re-upload as a new UID replacing the old one, carrying the card link (one more
-                        // edit) and nothing else of the old metaData — never a decision or a reason.
+                        // edit) and a fresh preview token, and nothing else of the old metaData — never a
+                        // decision, a reason or the old token.
                         const carry = amendCarry(original.metaData, meta);
                         const { id: newUid, previousDeleted } = await wildDuckClient.uploadReplacingDraft({
                             from,
-                            to:    toAddresses,
+                            to:       toAddresses,
                             subject,
-                            text:  body,
-                            draft: true,
-                            ...carry.upload,
+                            text:     body,
+                            draft:    true,
+                            metaData: carry.metaData,
                         }, uid);
 
                         // WildDuck's replace is not atomic: if it did not delete the old UID, delete it

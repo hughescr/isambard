@@ -2,7 +2,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, escapeMarkd
 import { truncate } from 'lodash-es';
 import { BLUE } from '../colors';
 import { EMAIL_ALLOWLIST_SELECT_PREFIX } from '@/config';
-import type { DraftSummary } from '@/integrations/email';
+import { formatAttachmentSize, type DraftSummary } from '@/integrations/email';
 import { encodeCustomId, parseCustomId } from '@/utils';
 
 /** A deleted or vanished draft's card. */
@@ -24,11 +24,13 @@ const TOO_MANY = '(too many to display)';
 const DRAFT_CONTROL_PREFIXES: ReadonlySet<string> = new Set(['email-send-approve', 'email-send-approveallowlist', 'email-send-reject', EMAIL_ALLOWLIST_SELECT_PREFIX]);
 
 export interface EmailApprovalCardInput {
-    uid:     number
-    summary: DraftSummary
+    uid:         number
+    summary:     DraftSummary
     /** How many times the draft has been edited under this card; shown when above 0. */
-    edits:   number
-    state:   'pending' | 'deleted'
+    edits:       number
+    state:       'pending' | 'deleted'
+    /** The draft's preview page (#158); a pending card links to it. */
+    previewUrl?: string
 }
 
 export interface EmailApprovalCard {
@@ -44,21 +46,6 @@ interface Field {
 interface Address {
     address: string
     name?:   string
-}
-
-/** A byte count as B, KB, MB or GB (binary units, one decimal above bytes). */
-export function formatAttachmentSize(bytes: number): string {
-    if(bytes < 1024) {
-        return `${bytes} B`;
-    }
-    const units = ['KB', 'MB', 'GB'];
-    let value = bytes / 1024;
-    let unit = 0;
-    while(value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit++;
-    }
-    return `${value.toFixed(1)} ${units[unit]}`;
 }
 
 function formatAddress(address: Address): string {
@@ -120,26 +107,28 @@ function embedLength(title: string, description: string, fields: Field[]): numbe
     return fields.reduce((sum, field) => sum + field.name.length + field.value.length, title.length + description.length);
 }
 
-function approvalButtons(uid: number, rejectOnly: boolean): ActionRowBuilder<ButtonBuilder> {
+function approvalButtons(uid: number, rejectOnly: boolean, previewUrl: string | undefined): ActionRowBuilder<ButtonBuilder> {
     const id = String(uid);
     const reject = new ButtonBuilder()
         .setCustomId(encodeCustomId({ prefix: 'email-send-reject', id }))
         .setLabel('Reject')
         .setStyle(ButtonStyle.Danger);
-    if(rejectOnly) {
-        return new ActionRowBuilder<ButtonBuilder>().addComponents(reject);
-    }
-    return new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-            .setCustomId(encodeCustomId({ prefix: 'email-send-approve', id }))
-            .setLabel('Approve')
-            .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-            .setCustomId(encodeCustomId({ prefix: 'email-send-approveallowlist', id }))
-            .setLabel('Approve + Allowlist...')
-            .setStyle(ButtonStyle.Primary),
-        reject
-    );
+    const decisions = rejectOnly
+        ? [reject]
+        : [
+            new ButtonBuilder()
+                .setCustomId(encodeCustomId({ prefix: 'email-send-approve', id }))
+                .setLabel('Approve')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId(encodeCustomId({ prefix: 'email-send-approveallowlist', id }))
+                .setLabel('Approve + Allowlist...')
+                .setStyle(ButtonStyle.Primary),
+            reject,
+        ];
+    // A link button carries no customId, so it never counts as one of the card's live controls.
+    const preview = previewUrl === undefined ? [] : [new ButtonBuilder().setLabel('Open full preview').setStyle(ButtonStyle.Link).setURL(previewUrl)];
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(...decisions, ...preview);
 }
 
 /**
@@ -149,7 +138,8 @@ function approvalButtons(uid: number, rejectOnly: boolean): ActionRowBuilder<But
  * Recipients are never truncated: when the card would exceed Discord's limits the snippet and
  * attachment lines go first, and if the recipients still do not fit the card shows only their
  * counts and a warning — and, while pending, only the Reject button. A pending card's buttons
- * act on `uid`; a deleted card has none.
+ * act on `uid`, followed by an "Open full preview" link when `previewUrl` is given; a deleted
+ * card has none.
  */
 export function buildEmailApprovalCard(input: EmailApprovalCardInput): EmailApprovalCard {
     const { uid, summary, edits, state } = input;
@@ -189,7 +179,7 @@ export function buildEmailApprovalCard(input: EmailApprovalCardInput): EmailAppr
         .setColor(pending ? BLUE : DRAFT_GONE_GREY)
         .setDescription(chosen.description)
         .addFields(chosen.fields);
-    return { embeds: [embed], components: pending ? [approvalButtons(uid, overflow)] : [] };
+    return { embeds: [embed], components: pending ? [approvalButtons(uid, overflow, input.previewUrl)] : [] };
 }
 
 /** The card an admin click leaves when the draft it acted on no longer exists. */

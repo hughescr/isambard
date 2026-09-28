@@ -22,7 +22,7 @@ import {
 } from '@/integrations/bsky';
 import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createOutboxDiscardReporter, createApprovedActionOutcomeDelivery, ApprovedActionEscalationHandler, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
-import { EmailHistoryProvider, EmailFolder, WildDuckClient, checkEmailSendDelivery, emailSendParamsSchema } from '@/integrations/email';
+import { EmailHistoryProvider, EmailFolder, WildDuckClient, checkEmailSendDelivery, emailSendParamsSchema, startDraftPreview } from '@/integrations/email';
 import { createJevOutboxFailureClassifier } from '@/integrations/typesafe/jev-outbox-failure-classifier';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, createOutboxDrainListener, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type ContactChangeRequest, type EmbedderLike } from '@/storage';
@@ -484,6 +484,16 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             // Construction rollback remains fatal; only graceful shutdown is best-effort.
             registerCleanup({ name: 'WildDuck client', run: shutdownEmailClient });
 
+            // Draft preview server (#158): off unless EMAIL_PREVIEW_* is configured; bound to
+            // 127.0.0.1 and exposed to the admin's devices only by their own `tailscale serve`.
+            // Registered after the client, so shutdown stops it first. Requests before WildDuck
+            // init finishes answer 502.
+            const previewUrlFor = startDraftPreview(config.email.preview, {
+                wildDuckClient: stableWildDuckClient,
+                serve:          options => Bun.serve(options),
+                registerCleanup,
+            });
+
             // Create reconnection loop eagerly so post-connect drops are also handled.
             emailReconnectionLoop = createReconnectionLoop({
                 service:   'email',
@@ -527,6 +537,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                     personAllowlist,
                     allowlistInteractionHandler,
                     notify:                notificationBridge.notify,
+                    previewUrlFor,
                 });
                 // Construction rollback remains fatal; only graceful shutdown is best-effort.
                 registerCleanup({ name: 'email listener', run: () => emailSetup?.listener.stop() });
