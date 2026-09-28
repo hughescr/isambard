@@ -97,6 +97,40 @@ function invalid(message: string): CallToolResult {
     return mcpErrorResult(message);
 }
 
+/**
+ * The first key given more than once in any of these lists, as a refusal. Checked before any write,
+ * because the client rejects a repeated key only when it reaches that batch, which in a two-phase
+ * tool is after the first phase has written.
+ */
+function repeatedKeyProblem(lists: Record<string, string[] | undefined>): string | undefined {
+    for(const [name, keys] of Object.entries(lists)) {
+        const seen = new Set<string>();
+        for(const key of keys ?? []) {
+            if(seen.has(key)) {
+                return `nothing was changed: ${key} appears more than once in ${name}; combine those changes into one entry`;
+            }
+            seen.add(key);
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Runs the second write of a two-phase tool. If it throws after the first phase wrote something, the
+ * result still carries what was written, so Izzy does not retry the whole call and duplicate it.
+ */
+async function secondPhase<T>(done: Record<string, unknown>, step: string, run: () => Promise<T>): Promise<{ value: T } | { failure: CallToolResult }> {
+    try {
+        return { value: await run() };
+    } catch (error) {
+        if(Object.keys(done).length === 0) {
+            throw error;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        return { failure: { ...mcpJsonResult({ ...done, error: `${step} failed: ${message}. Everything else in this result was already written; do not repeat it.` }), isError: true } };
+    }
+}
+
 interface CreatorInput {
     creatorType: string
     firstName?:  string
@@ -298,20 +332,23 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
         tools:   [
             tool(
                 'searchLibrary',
-                'Search the shared Zotero group library "Izzy-Craig Collab" (the only library you can reach). Returns one page of top-level items. The query matches title, creator and year (mode "everything" also matches full text); it does not match DOI or URL, so use addPapers to check whether a paper is already there.',
+                'Search the shared Zotero group library "Izzy-Craig Collab" (the only library you can reach). Returns one page of top-level items (the Trash search covers the whole group and can also return child notes and attachments). The query matches title, creator and year (mode "everything" also matches full text); it does not match DOI or URL. addPapers detects duplicates by DOI, arXiv id and URL itself, so call it directly when you mean to add a paper; it adds any paper that is not already there.',
                 {
                     query:         z.string().min(1).optional().describe('Search text'),
                     mode:          z.enum(['titleCreatorYear', 'everything']).optional().describe('What the query matches (default titleCreatorYear)'),
                     tags:          z.array(tagName).min(1).optional().describe('Only items with every one of these tags'),
                     collectionKey: zoteroKey.optional().describe('Only items in this collection'),
                     itemType:      z.string().min(1).optional().describe('Item type, e.g. journalArticle, or -attachment to exclude one'),
-                    inTrash:       z.boolean().optional().describe('Search the group Trash instead (default false)'),
+                    inTrash:       z.boolean().optional().describe('Search the whole group Trash instead (default false); cannot be combined with collectionKey'),
                     limit:         z.number().int().min(1).max(100).optional().describe('Page size, 1-100 (default 25)'),
                     start:         z.number().int().min(0).optional().describe('Offset of the page (default 0)'),
                     sort:          z.enum(['dateAdded', 'dateModified', 'title', 'creator', 'date']).optional().describe('Sort field (default dateModified)'),
                     direction:     z.enum(['asc', 'desc']).optional().describe('Sort direction (default desc)'),
                 },
                 withToolErrorHandling('searchLibrary', async (args): Promise<CallToolResult> => {
+                    if(args.inTrash === true && args.collectionKey !== undefined) {
+                        return invalid('collectionKey cannot be combined with inTrash: the Trash search covers the whole group');
+                    }
                     const start = args.start ?? 0;
                     const { items, totalResults } = await deps.client.searchItems({
                         ...args.query === undefined ? {} : { q: args.query },
@@ -467,6 +504,10 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
                     if(args.create === undefined && args.edit === undefined) {
                         return invalid('give create, edit, or both');
                     }
+                    const repeated = repeatedKeyProblem({ edit: args.edit?.map(edit => edit.key) });
+                    if(repeated !== undefined) {
+                        return invalid(repeated);
+                    }
                     const created = args.create === undefined
                         ? undefined
                         : createdRows(await deps.client.createItems(args.create.map(note => ({
@@ -477,8 +518,13 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
                             relations:   {},
                             ...note.parentKey === undefined ? {} : { parentItem: note.parentKey },
                         }))));
-                    const edited = args.edit === undefined ? undefined : await editNotes(args.edit);
-                    return mcpJsonResult({ ...created === undefined ? {} : { created }, ...edited === undefined ? {} : { edited } });
+                    const done = created === undefined ? {} : { created };
+                    const edits = args.edit;
+                    if(edits === undefined) {
+                        return mcpJsonResult(done);
+                    }
+                    const edited = await secondPhase(done, 'editing the notes', async () => editNotes(edits));
+                    return 'failure' in edited ? edited.failure : mcpJsonResult({ ...done, edited: edited.value });
                 }),
                 { annotations: { title: 'Write Zotero Notes', readOnlyHint: false, idempotentHint: false } }
             ),
@@ -506,6 +552,10 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
                     if(empty.length > 0) {
                         return invalid(`nothing was changed: give a name or a parentKey for ${empty.map(update => update.key).join(', ')}`);
                     }
+                    const repeated = repeatedKeyProblem({ update: args.update?.map(update => update.key) });
+                    if(repeated !== undefined) {
+                        return invalid(repeated);
+                    }
                     const moves = (args.update ?? []).flatMap(update => (update.parentKey === undefined ? [] : [{ key: update.key, parentKey: update.parentKey }]));
                     if(moves.some(move => move.parentKey !== null)) {
                         const collections = await deps.client.listCollections({ includeTrashed: true });
@@ -517,8 +567,13 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
                     const created = args.create === undefined
                         ? undefined
                         : createdRows(await deps.client.createCollections(args.create.map(entry => ({ name: entry.name, parentCollection: entry.parentKey ?? false }))));
-                    const updated = args.update === undefined ? undefined : await updateCollections(args.update);
-                    return mcpJsonResult({ ...created === undefined ? {} : { created }, ...updated === undefined ? {} : { updated } });
+                    const done = created === undefined ? {} : { created };
+                    const updates = args.update;
+                    if(updates === undefined) {
+                        return mcpJsonResult(done);
+                    }
+                    const updated = await secondPhase(done, 'updating the collections', async () => updateCollections(updates));
+                    return 'failure' in updated ? updated.failure : mcpJsonResult({ ...done, updated: updated.value });
                 }),
                 { annotations: { title: 'Manage Zotero Collections', readOnlyHint: false, idempotentHint: false } }
             ),
@@ -535,13 +590,19 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
                     if(args.itemKeys === undefined && args.collectionKeys === undefined) {
                         return invalid('give itemKeys, collectionKeys, or both');
                     }
+                    const repeated = repeatedKeyProblem({ itemKeys: args.itemKeys, collectionKeys: args.collectionKeys });
+                    if(repeated !== undefined) {
+                        return invalid(repeated);
+                    }
                     const deleted = args.action === 'trash';
                     const items = args.itemKeys === undefined ? undefined : await deps.client.setItemsDeleted(args.itemKeys.map(key => ({ key })), deleted);
-                    const collections = args.collectionKeys === undefined ? undefined : await deps.client.setCollectionsDeleted(args.collectionKeys.map(key => ({ key })), deleted);
-                    return mcpJsonResult({
-                        ...items === undefined ? {} : { items: items.map(outcome => outcomeRow(outcome)) },
-                        ...collections === undefined ? {} : { collections: collections.map(outcome => outcomeRow(outcome)) },
-                    });
+                    const done = items === undefined ? {} : { items: items.map(outcome => outcomeRow(outcome)) };
+                    const collectionKeys = args.collectionKeys;
+                    if(collectionKeys === undefined) {
+                        return mcpJsonResult(done);
+                    }
+                    const collections = await secondPhase(done, 'trashing or restoring the collections', async () => deps.client.setCollectionsDeleted(collectionKeys.map(key => ({ key })), deleted));
+                    return 'failure' in collections ? collections.failure : mcpJsonResult({ ...done, collections: collections.value.map(outcome => outcomeRow(outcome)) });
                 }),
                 { annotations: { title: 'Trash or Restore in Zotero', readOnlyHint: false, idempotentHint: true, destructiveHint: false } }
             ),

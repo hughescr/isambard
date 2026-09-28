@@ -153,6 +153,26 @@ describe('createZoteroMCPServer', () => {
             expect(tooMany.isError).toBe(true);
             expect(server.calls).toHaveLength(1);
         });
+
+        test('refuses a collection filter on a trash search rather than dropping it', async () => {
+            const { server, mcp } = setup();
+
+            const text = await callText(mcp, 'searchLibrary', { inTrash: true, collectionKey: 'CLLN2345' });
+
+            expect(text).toBe('Error: collectionKey cannot be combined with inTrash: the Trash search covers the whole group');
+            expect(server.calls).toEqual([]);
+        });
+
+        test('says the trash can return child items and never offers addPapers as a read-only check', async () => {
+            const { mcp } = setup();
+
+            const tools = await listSdkTools(mcp);
+            const search = tools.find(entry => entry.name === 'searchLibrary')!;
+
+            expect(search.description).toContain('the Trash search covers the whole group and can also return child notes and attachments');
+            expect(search.description).toContain('addPapers detects duplicates by DOI, arXiv id and URL itself');
+            expect(search.description).not.toContain('to check whether');
+        });
     });
 
     describe('getItems', () => {
@@ -423,6 +443,40 @@ describe('createZoteroMCPServer', () => {
                 expect.objectContaining({ key: 'NTE42345', status: 'conflict', expectedVersion: 3, currentVersion: 9 }),
             ]);
         });
+
+        test('refuses a note key given twice in edit before any write', async () => {
+            const { server, mcp } = setup(s => s.addItem({ key: 'NTE22345', version: 3, itemType: 'note', note: '<p>old</p>' }));
+
+            const text = await callText(mcp, 'writeNotes', { create: [{ text: 'A' }], edit: [{ key: 'NTE22345', version: 3, text: 'x' }, { key: 'NTE22345', version: 3, text: 'y' }] });
+
+            expect(text).toBe('Error: nothing was changed: NTE22345 appears more than once in edit; combine those changes into one entry');
+            expect(server.calls).toEqual([]);
+        });
+
+        test('still reports the created notes when the edit fails afterwards', async () => {
+            const { server, mcp } = setup((s) => {
+                s.addItem({ key: 'NTE22345', version: 3, itemType: 'note', note: '<p>old</p>' });
+                s.override = call => (call.method === 'GET' ? status(400, 'bad read') : undefined);
+            });
+
+            const result = await callTool(mcp, 'writeNotes', { create: [{ text: 'A' }], edit: [{ key: 'NTE22345', version: 3, text: 'x' }] });
+
+            expect(result.isError).toBe(true);
+            const body = JSON.parse(result.text) as { created: { created: { key: string }[] }, error: string };
+            expect(body.created.created).toEqual([expect.objectContaining({ index: 0, key: [...server.items.keys()].at(-1) })]);
+            expect(body.error).toStartWith('editing the notes failed: Zotero rejected the request');
+            expect(body.error).toEndWith('Everything else in this result was already written; do not repeat it.');
+        });
+
+        test('an edit-only failure is a plain error', async () => {
+            const { mcp } = setup((s) => {
+                s.override = () => status(400, 'bad read');
+            });
+
+            const text = await callText(mcp, 'writeNotes', { edit: [{ key: 'NTE22345', version: 3, text: 'x' }] });
+
+            expect(text).toStartWith('Error: Zotero rejected the request');
+        });
     });
 
     describe('manageCollections', () => {
@@ -497,6 +551,29 @@ describe('createZoteroMCPServer', () => {
             expect(text).toEndWith('would put it inside itself; nothing was changed');
             expect(writes(server)).toEqual([]);
         });
+
+        test('refuses a collection key given twice in update before any request', async () => {
+            const { server, mcp } = setup(tree);
+
+            const text = await callText(mcp, 'manageCollections', { create: [{ name: 'New' }], update: [{ key: 'KIDS2345', version: 1, name: 'A' }, { key: 'KIDS2345', version: 1, parentKey: 'RTTT2345' }] });
+
+            expect(text).toBe('Error: nothing was changed: KIDS2345 appears more than once in update; combine those changes into one entry');
+            expect(server.calls).toEqual([]);
+        });
+
+        test('still reports the created collections when the update fails afterwards', async () => {
+            const { mcp } = setup((s) => {
+                tree(s);
+                s.override = call => (call.method === 'GET' ? status(400, 'bad read') : undefined);
+            });
+
+            const result = await callTool(mcp, 'manageCollections', { create: [{ name: 'New' }], update: [{ key: 'KIDS2345', version: 1, name: 'Renamed' }] });
+
+            expect(result.isError).toBe(true);
+            const body = JSON.parse(result.text) as { created: { created: unknown[] }, error: string };
+            expect(body.created.created).toEqual([expect.objectContaining({ index: 0 })]);
+            expect(body.error).toStartWith('updating the collections failed: Zotero rejected the request');
+        });
     });
 
     describe('trashOrRestore', () => {
@@ -522,6 +599,33 @@ describe('createZoteroMCPServer', () => {
             expect(server.items.get('ITEM2345')!.data.deleted).toBe(true);
             expect(server.collections.get('CLLN2345')!.data.deleted).toBe(false);
             expect(server.calls.every(entry => entry.method === 'GET' || entry.method === 'POST')).toBe(true);
+        });
+
+        test.each([
+            ['itemKeys', { itemKeys: ['ITEM2345', 'ITEM2345'] }, 'ITEM2345'],
+            ['collectionKeys', { itemKeys: ['ITEM2345'], collectionKeys: ['CLLN2345', 'CLLN2345'] }, 'CLLN2345'],
+        ])('refuses a key given twice in %s before any request', async (list, keys, key) => {
+            const { server, mcp } = setup();
+
+            const text = await callText(mcp, 'trashOrRestore', { action: 'trash', ...keys });
+
+            expect(text).toBe(`Error: nothing was changed: ${key} appears more than once in ${list}; combine those changes into one entry`);
+            expect(server.calls).toEqual([]);
+        });
+
+        test('still reports the trashed items when the collections fail afterwards', async () => {
+            const { server, mcp } = setup((s) => {
+                s.addItem({ key: 'ITEM2345' });
+                s.override = call => (call.method === 'GET' && pathOf(call) === '/collections' ? status(400, 'bad read') : undefined);
+            });
+
+            const result = await callTool(mcp, 'trashOrRestore', { action: 'trash', itemKeys: ['ITEM2345'], collectionKeys: ['CLLN2345'] });
+
+            expect(result.isError).toBe(true);
+            const body = JSON.parse(result.text) as { items: unknown[], error: string };
+            expect(body.items).toEqual([expect.objectContaining({ key: 'ITEM2345', status: 'updated' })]);
+            expect(body.error).toStartWith('trashing or restoring the collections failed: Zotero rejected the request');
+            expect(server.items.get('ITEM2345')!.data.deleted).toBe(true);
         });
     });
 });
