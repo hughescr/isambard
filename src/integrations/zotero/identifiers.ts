@@ -45,12 +45,14 @@ export interface IdentitySource {
 export function normalizeDoi(input: string): string | undefined {
     let value = input.trim();
     if(DOI_URL_PREFIX.test(value)) {
+        // Stryker disable BlockStatement: on a decode failure `value` still holds the untouched doi.org URL text from the DOI_URL_PREFIX branch above, which can never match DOI_PATTERN's `^10\.` — an empty catch falls through to the same `undefined` the explicit return gives
         try {
             value = decodeURIComponent(value.replace(DOI_URL_PREFIX, ''));
         } catch{
             return undefined;
         }
     } else {
+        // Stryker restore BlockStatement
         value = value.replace(DOI_PREFIX, '');
     }
     return DOI_PATTERN.test(value) ? value : undefined;

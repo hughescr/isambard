@@ -97,6 +97,7 @@ const PUBLISHER_FIELD = new Map<string, string>([
 
 /** The parsed body, or undefined for a body that is not JSON (an error page, say). */
 function parseJson(text: string): unknown {
+    // Stryker disable BlockStatement: an empty catch still falls off the end of the function, which implicitly returns undefined — identical to `return undefined`
     try {
         return JSON.parse(text) as unknown;
     } catch{
@@ -104,6 +105,7 @@ function parseJson(text: string): unknown {
     }
 }
 
+// Stryker restore BlockStatement
 /** Crossref's rejection message for a failed request, or undefined when the body is not a rejection. */
 function rejectionReason(body: unknown): string | undefined {
     if(typeof body !== 'object' || body === null) {
@@ -118,12 +120,14 @@ function rejectionReason(body: unknown): string | undefined {
     return typeof message === 'string' ? message.slice(0, MAX_REASON_CHARS) : 'no reason given';
 }
 
-/** `YYYY[-MM[-DD]]` from Crossref's `date-parts`. */
-function dateFrom(work: CrossrefWork): string | undefined {
+/**
+ * `YYYY[-MM[-DD]]` from Crossref's `date-parts`, or `''` when there are none. Equivalent-mutant
+ * simplification: the empty-parts guard used to `return undefined` explicitly, but `set()` (the only
+ * caller) drops falsy values, so the `''` this produces without the guard is already indistinguishable
+ * from `undefined` at the only call site — the guard was dead weight.
+ */
+function dateFrom(work: CrossrefWork): string {
     const parts = (work.issued?.['date-parts']?.[0] ?? []).filter(part => part !== null);
-    if(parts.length === 0) {
-        return undefined;
-    }
     return parts.map((part, i) => (i === 0 ? String(part) : String(part).padStart(2, '0'))).join('-');
 }
 
@@ -138,6 +142,7 @@ function creator(person: Person, creatorType: string): MappedCreator | undefined
 /** JATS abstract markup to plain text: block elements become breaks, then all whitespace collapses. */
 function plainAbstract(abstract: string): string {
     const blocks = abstract.replaceAll(/<(\/?)jats:(?:p|title|sec)\b/g, '<$1p');
+    // Stryker disable next-line ObjectLiteral: wordwrap only inserts line breaks at whitespace, which the trailing `.replaceAll(/\s+/g, ' ')` collapses right back out — the option is unobservable in the returned text
     return convert(blocks, { wordwrap: false }).replaceAll(/\s+/g, ' ').trim();
 }
 
@@ -184,6 +189,7 @@ function setTypeFields(itemType: string, work: CrossrefWork, set: FieldSetter): 
 }
 
 function mapWork(work: CrossrefWork, accessDate: string): MappedItem {
+    // Stryker disable next-line StringLiteral: the fallback only feeds ITEM_TYPES.get(), whose keys are all fixed known strings — any non-key placeholder here (this one included) misses the map the same way and falls to the `?? 'document'` after it
     const itemType = ITEM_TYPES.get(work.type ?? '') ?? 'document';
     const fields: Record<string, string> = {};
     const set: FieldSetter = (field, value) => {

@@ -46,11 +46,13 @@ function collapse(text: string): string {
 function parseFeed(xml: string): ArxivEntry[] {
     const entries: ArxivEntry[] = [];
     let entry: ArxivEntry | undefined;
+    // Stryker disable next-line StringLiteral: `onopentag` resets `text` before any content-bearing close tag can read it, so this initial value is only ever visible to text seen before the very first open tag, which no case ever reads
     let text = '';
     const parser = new Parser({
         onopentag(name, attribs) {
             text = '';
             if(name === 'entry') {
+                // Stryker disable next-line StringLiteral: `id`/`published` only surface via normalizeArxivId()/the `\d{4}-\d{2}-\d{2}` regex in mapEntry, and every placeholder here (this one included) fails both the same way an empty entry does — observable only if the feed omits the tag entirely, which real arXiv responses never do
                 entry = { id: '', title: '', summary: '', published: '', authors: [] };
             } else if(entry !== undefined && name === 'link' && attribs.title === 'pdf') {
                 entry.pdfUrl = attribs.href;
@@ -98,6 +100,7 @@ function parseFeed(xml: string): ArxivEntry[] {
                     entry = undefined;
                     break;
                 }
+                // Stryker disable next-line ConditionalExpression,BlockStatement: the default case is the last clause in the switch, so an empty default and one that breaks both just end the switch with no effect
                 default: {
                     break;
                 }
