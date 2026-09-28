@@ -35,7 +35,7 @@ export interface DraftPreviewHandlerDeps {
     /** When set, only these `Tailscale-User-Login` values (lower-cased) are admitted. */
     allowedLogins?: readonly string[]
     /**
-     * The path the preview is published under on the tailnet: `/izzy-preview`, or `/` at the
+     * The path the preview is published under on the tailnet: `/izzy-preview-<port>`, or `/` at the
      * root. `tailscale serve` strips it before proxying, but a request that still carries it is
      * served the same, so the handler works either way.
      */

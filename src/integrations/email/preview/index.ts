@@ -5,5 +5,7 @@ export { startDraftPreviewServer } from './server';
 export type { PreviewServe, PreviewServeOptions, PreviewServer } from './server';
 export { startDraftPreview } from './start';
 export type { DraftPreview, PreviewUrlFor, StartDraftPreviewDeps } from './start';
-export { MAC_APP_TAILSCALE_CLI, PREVIEW_MOUNT_PATH, TAILSCALE_COMMAND_TIMEOUT_MS, openTailscaleCli } from './tailscale';
+export { KILL_GRACE_MS, createBoundedRunner } from './bounded-runner';
+export type { BoundedRunner, CommandResult } from './bounded-runner';
+export { MAC_APP_TAILSCALE_CLI, TAILSCALE_COMMAND_TIMEOUT_MS, openTailscaleCli, previewMountPath } from './tailscale';
 export type { TailnetSelf, TailscaleCli, TailscaleDeps } from './tailscale';

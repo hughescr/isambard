@@ -33,7 +33,7 @@ export { WildDuckListener } from './wildduck-listener';
 export type { WildDuckListenerConfig } from './wildduck-listener';
 export { WildDuckClient } from './wildduck-client';
 export type { AttachmentStream, WildDuckAttachment, WildDuckAttachmentMeta, WildDuckMessage, WildDuckMessageAttachment, WildDuckUploadPayload } from './wildduck-client';
-export { startDraftPreview, TAILSCALE_COMMAND_TIMEOUT_MS } from './preview';
+export { createBoundedRunner, startDraftPreview, TAILSCALE_COMMAND_TIMEOUT_MS } from './preview';
 export type { DraftPreview, PreviewServe, PreviewUrlFor, StartDraftPreviewDeps } from './preview';
 export { amendedDraftMeta, draftLockKey, hasDecisionMarker, mergeDraftMeta, newPreviewToken, previewTokenMatches, readDraftApprovalMeta } from './draft-approval-meta';
 export type { DraftApprovalCardLink, DraftApprovalMarker, DraftApprovalMeta, DraftLocks } from './draft-approval-meta';

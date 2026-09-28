@@ -2,18 +2,20 @@ import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:t
 import { mockLogger } from '../../../../setup';
 import type { EmailPreviewConfig } from '@/config';
 import { startDraftPreview, type PreviewServeOptions, type StartDraftPreviewDeps } from '@/integrations/email/preview';
+import type { CommandResult } from '@/integrations/email/preview/bounded-runner';
 import type { WildDuckMessage } from '@/integrations/email/wildduck-client';
-import type { SpawnRunner } from '@/utils';
-
-type SpawnResult = Awaited<ReturnType<SpawnRunner>>;
 
 const TOKEN = 'A'.repeat(43);
 const NOW = Date.parse('2026-09-27T12:00:00.000Z');
 const DNS = 'mac.tailnet.ts.net';
 const CLI = '/usr/local/bin/tailscale';
-const SERVE = 'serve --bg --https=443 --set-path=/izzy-preview http://127.0.0.1:8787';
-const UNSERVE = 'serve --https=443 --set-path=/izzy-preview off';
+const SERVE = 'serve --bg --https=443 --set-path=/izzy-preview-8787 http://127.0.0.1:8787';
+const UNSERVE = 'serve --https=443 --set-path=/izzy-preview-8787 off';
+const STATUS_CMD = 'serve status --json';
 const DISABLED = 'Draft preview disabled; approval cards will carry no preview links';
+const UNMOUNT_FAILED = 'Could not remove the draft preview from tailscale serve; the next start replaces it';
+const TIMED_OUT = new Error('timed out after 5000 ms and was killed');
+const NOT_PUBLISHED = '`tailscale serve` did not publish /izzy-preview-8787 → http://127.0.0.1:8787; check `tailscale serve status`';
 
 const AUTO: EmailPreviewConfig = { mode: 'auto', port: 8787, ttlHours: 2 };
 const MANUAL: EmailPreviewConfig = { mode: 'auto', port: 8791, publicBaseUrl: 'https://mac.tailnet.ts.net', ttlHours: 2 };
@@ -24,24 +26,32 @@ const STATUS = {
     CertDomains:  [DNS],
     User:         { '7': { LoginName: 'Craig@Example.com' } },
 };
-const PUBLISHED = { Web: { [`${DNS}:443`]: { Handlers: { '/izzy-preview': { Proxy: 'http://127.0.0.1:8787' } } } } };
 
-type Reply = Partial<SpawnResult> | Promise<Partial<SpawnResult>>;
+/** A serve config with `handlers` on this host's port 443. */
+function serving(handlers: Record<string, { Proxy: string }>): object {
+    return { Web: { [`${DNS}:443`]: { Handlers: handlers } } };
+}
+
+const PUBLISHED = serving({ '/izzy-preview-8787': { Proxy: 'http://127.0.0.1:8787' } });
+const FOREIGN = serving({ '/izzy-preview-8787': { Proxy: 'http://127.0.0.1:3000' } });
+
+/** A command's reply; an Error means the runner rejected (e.g. the command timed out). */
+type Reply = Partial<CommandResult> | Promise<Partial<CommandResult>> | Error;
 
 function json(value: unknown): Reply {
     return { stdout: JSON.stringify(value) };
 }
 
-/** The usual auto-mode conversation: status, Funnel check, serve, serve check. */
 /** Replies per command line (the arguments after the CLI path), consumed in order. */
 type Script = Partial<Record<string, Reply[]>>;
 
+/** The usual auto-mode conversation: status, preflight, serve, verify, then shutdown's check and removal. */
 function happyScript(): Script {
     return {
-        'status --json':       [json(STATUS)],
-        'serve status --json': [json(null), json(PUBLISHED)],
-        [SERVE]:               [{}],
-        [UNSERVE]:             [{}],
+        'status --json': [json(STATUS)],
+        [STATUS_CMD]:    [json(null), json(PUBLISHED), json(PUBLISHED)],
+        [SERVE]:         [{}],
+        [UNSERVE]:       [{}],
     };
 }
 
@@ -64,8 +74,8 @@ function draftClient(date = new Date(NOW).toISOString()): StartDraftPreviewDeps[
     };
 }
 
-function harness(script: Script = happyScript(), overrides: { which?: (command: string) => string | null, bindFails?: boolean, date?: string } = {}): Harness {
-    const events: string[] = [];
+function harness(script: Script = happyScript(), overrides: { which?: (command: string) => string | null, bindFails?: boolean, date?: string, events?: string[] } = {}): Harness {
+    const events: string[] = overrides.events ?? [];
     const cleanups: Step[] = [];
     const stop = mock(async (_close?: boolean): Promise<void> => {
         events.push('stop server');
@@ -77,11 +87,14 @@ function harness(script: Script = happyScript(), overrides: { which?: (command: 
         events.push(`bind ${options.hostname}:${options.port}`);
         return { stop };
     });
-    const run = mock(async (cmd: string[], _options?: { timeout?: number }): Promise<SpawnResult> => {
+    const run = mock(async (cmd: string[], _options: { timeout: number }): Promise<CommandResult> => {
         const line = cmd.slice(1).join(' ');
         events.push(line);
-        const reply = await (script[line]?.shift() ?? { exitCode: 99, stderr: 'unscripted' });
-        return { stdout: '', stderr: '', exitCode: 0, ...reply };
+        const next = script[line]?.shift() ?? { exitCode: 99, stderr: 'unscripted' };
+        if(next instanceof Error) {
+            throw next;
+        }
+        return { stdout: '', stderr: '', exitCode: 0, ...(await next) };
     });
     const tailscale: StartDraftPreviewDeps['tailscale'] = {
         run,
@@ -203,16 +216,16 @@ describe('startDraftPreview', () => {
     });
 
     describe('auto', () => {
-        test('checks Tailscale, binds, then publishes /izzy-preview and links to it', async () => {
+        test('checks Tailscale, binds, then publishes /izzy-preview-<port> and links to it', async () => {
             const h = harness();
 
             const preview = startDraftPreview(AUTO, h.deps);
             expect(preview?.urlFor(42, TOKEN)).toBeUndefined();
             expect(await preview?.ready).toBe(true);
 
-            expect(h.events).toEqual(['status --json', 'serve status --json', 'bind 127.0.0.1:8787', SERVE, 'serve status --json']);
-            expect(preview?.urlFor(42, TOKEN)).toBe(`https://${DNS}/izzy-preview/d/42/${TOKEN}`);
-            expect(mockLogger.info).toHaveBeenCalledWith({ publicBaseUrl: `https://${DNS}/izzy-preview`, msg: 'Draft preview published on the tailnet' });
+            expect(h.events).toEqual(['status --json', STATUS_CMD, 'bind 127.0.0.1:8787', SERVE, STATUS_CMD]);
+            expect(preview?.urlFor(42, TOKEN)).toBe(`https://${DNS}/izzy-preview-8787/d/42/${TOKEN}`);
+            expect(mockLogger.info).toHaveBeenCalledWith({ publicBaseUrl: `https://${DNS}/izzy-preview-8787`, msg: 'Draft preview published on the tailnet' });
             expect(mockLogger.warn).not.toHaveBeenCalled();
         });
 
@@ -220,7 +233,8 @@ describe('startDraftPreview', () => {
             const h = harness();
             await startDraftPreview(AUTO, h.deps)?.ready;
 
-            expect(await statusVia(h, `/izzy-preview/d/42/${TOKEN}`, 'craig@example.com')).toBe(200);
+            expect(await statusVia(h, `/izzy-preview-8787/d/42/${TOKEN}`, 'craig@example.com')).toBe(200);
+            expect(await statusVia(h, `/izzy-preview/d/42/${TOKEN}`, 'craig@example.com')).toBe(404);
             expect(await statusVia(h, `/d/42/${TOKEN}`, 'Craig@Example.com')).toBe(200);
             expect(await statusVia(h, `/d/42/${TOKEN}`, 'other@example.com')).toBe(403);
             expect(await statusVia(h, `/d/42/${TOKEN}`)).toBe(403);
@@ -235,28 +249,95 @@ describe('startDraftPreview', () => {
             expect(await statusVia(h, `/d/42/${TOKEN}`, 'craig@example.com')).toBe(403);
         });
 
-        test('removes only its own mount, then stops the server, at shutdown', async () => {
+        test('removes its own mount, after checking it is still its own, then stops the server, at shutdown', async () => {
             const h = harness();
             await startDraftPreview(AUTO, h.deps)?.ready;
 
             expect(h.cleanups.map(step => step.name)).toEqual(['email preview server']);
             await h.cleanups[0].run();
 
-            expect(h.events.slice(-2)).toEqual([UNSERVE, 'stop server']);
+            expect(h.events.slice(5)).toEqual([STATUS_CMD, UNSERVE, 'stop server']);
             expect(h.stop.mock.calls).toEqual([[true]]);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+            expect(mockLogger.info).not.toHaveBeenCalledWith(expect.objectContaining({ msg: 'Draft preview mount no longer points at this Izzy; left it in place' }));
         });
 
-        test('still stops the server when removing the mount fails, logging why', async () => {
-            const h = harness({ ...happyScript(), [UNSERVE]: [{ exitCode: 1, stderr: 'handler does not exist' }] });
+        test('leaves the mount in place at shutdown when it no longer points at this Izzy', async () => {
+            const h = harness({ ...happyScript(), [STATUS_CMD]: [json(null), json(PUBLISHED), json(FOREIGN)] });
             await startDraftPreview(AUTO, h.deps)?.ready;
 
             await h.cleanups[0].run();
 
-            expect(h.events.slice(-2)).toEqual([UNSERVE, 'stop server']);
-            expect(mockLogger.warn).toHaveBeenCalledWith({
-                error: `\`tailscale ${UNSERVE}\` failed (exit 1): handler does not exist`,
-                msg:   'Could not remove the draft preview from tailscale serve; the next start replaces it',
-            });
+            expect(h.events.slice(5)).toEqual([STATUS_CMD, 'stop server']);
+            expect(mockLogger.info).toHaveBeenLastCalledWith({ mountPath: '/izzy-preview-8787', msg: 'Draft preview mount no longer points at this Izzy; left it in place' });
+        });
+
+        test.each([
+            ['removing the mount fails', { [UNSERVE]: [{ exitCode: 1, stderr: 'handler does not exist' }] }, [STATUS_CMD, UNSERVE, 'stop server'], `\`tailscale ${UNSERVE}\` failed (exit 1): handler does not exist`],
+            ['the ownership check times out', { [STATUS_CMD]: [json(null), json(PUBLISHED), TIMED_OUT] }, [STATUS_CMD, 'stop server'], '`tailscale serve status --json` did not finish: timed out after 5000 ms and was killed'],
+        ])('still stops the server when %s, logging why', async (_label, changes, shutdownEvents, error) => {
+            const h = harness({ ...happyScript(), ...changes });
+            await startDraftPreview(AUTO, h.deps)?.ready;
+
+            await h.cleanups[0].run();
+
+            expect(h.events.slice(5)).toEqual(shutdownEvents);
+            expect(mockLogger.warn.mock.calls).toEqual([[{ error, msg: UNMOUNT_FAILED }]]);
+        });
+
+        test('runs two instances side by side on different ports, each publishing and removing only its own path', async () => {
+            const events: string[] = [];
+            const dev = harness({
+                'status --json':                                                              [json(STATUS)],
+                [STATUS_CMD]:                                                                 [json(PUBLISHED), json(serving({ '/izzy-preview-8787': { Proxy: 'http://127.0.0.1:8787' }, '/izzy-preview-8788': { Proxy: 'http://127.0.0.1:8788' } })), json(serving({ '/izzy-preview-8788': { Proxy: 'http://127.0.0.1:8788' } }))],
+                'serve --bg --https=443 --set-path=/izzy-preview-8788 http://127.0.0.1:8788': [{}],
+                'serve --https=443 --set-path=/izzy-preview-8788 off':                        [{}],
+            }, { events });
+            const live = harness(happyScript(), { events: [] });
+
+            const livePreview = startDraftPreview(AUTO, live.deps);
+            expect(await livePreview?.ready).toBe(true);
+            const devPreview = startDraftPreview({ ...AUTO, port: 8788 }, dev.deps);
+            expect(await devPreview?.ready).toBe(true);
+
+            expect(livePreview?.urlFor(42, TOKEN)).toBe(`https://${DNS}/izzy-preview-8787/d/42/${TOKEN}`);
+            expect(devPreview?.urlFor(42, TOKEN)).toBe(`https://${DNS}/izzy-preview-8788/d/42/${TOKEN}`);
+            await dev.cleanups[0].run();
+            await live.cleanups[0].run();
+
+            expect(events).toEqual([
+                'status --json',
+                STATUS_CMD,
+                'bind 127.0.0.1:8788',
+                'serve --bg --https=443 --set-path=/izzy-preview-8788 http://127.0.0.1:8788',
+                STATUS_CMD,
+                STATUS_CMD,
+                'serve --https=443 --set-path=/izzy-preview-8788 off',
+                'stop server',
+            ]);
+            expect(live.events.slice(-3)).toEqual([STATUS_CMD, UNSERVE, 'stop server']);
+        });
+
+        test('refuses to replace a handler someone else put at its path, and leaves it in place at shutdown', async () => {
+            const h = harness({ ...happyScript(), [STATUS_CMD]: [json(FOREIGN)] });
+
+            const preview = startDraftPreview(AUTO, h.deps);
+            expect(await preview?.ready).toBe(false);
+            await h.cleanups[0].run();
+
+            expect(h.events).toEqual(['status --json', STATUS_CMD]);
+            expect(h.serve).not.toHaveBeenCalled();
+            expect(mockLogger.warn.mock.calls).toEqual([[{
+                reason: `https://${DNS}:443/izzy-preview-8787 is already served by http://127.0.0.1:3000, not this Izzy (http://127.0.0.1:8787); refusing to replace it: remove that mount or set EMAIL_PREVIEW_PORT to another port`,
+                msg:    DISABLED,
+            }]]);
+        });
+
+        test('replaces its own mount left behind by a crash', async () => {
+            const h = harness({ ...happyScript(), [STATUS_CMD]: [json(PUBLISHED), json(PUBLISHED)] });
+
+            expect(await startDraftPreview(AUTO, h.deps)?.ready).toBe(true);
+            expect(h.events).toEqual(['status --json', STATUS_CMD, 'bind 127.0.0.1:8787', SERVE, STATUS_CMD]);
         });
 
         test('does nothing at shutdown when setup failed', async () => {
@@ -269,7 +350,7 @@ describe('startDraftPreview', () => {
         });
 
         test('neither binds nor publishes when shutdown starts during the Tailscale checks', async () => {
-            const status = Promise.withResolvers<Partial<SpawnResult>>();
+            const status = Promise.withResolvers<Partial<CommandResult>>();
             const h = harness({ ...happyScript(), 'status --json': [status.promise] });
             const preview = startDraftPreview(AUTO, h.deps);
 
@@ -311,14 +392,52 @@ describe('startDraftPreview', () => {
                 expect(mockLogger.warn.mock.calls).toEqual([[{ reason: `\`tailscale ${SERVE}\` failed (exit 1): already serving TCP`, msg: DISABLED }]]);
             });
 
-            test('when a command cannot even be spawned, logging a non-Error as a string', async () => {
-                const h = harness();
-                h.deps.tailscale.run = async () => {
-                    throw 'spawn blew up';
-                };
+            test.each([
+                ['does not show the mount', json(null), NOT_PUBLISHED],
+                ['times out', TIMED_OUT, '`tailscale serve status --json` did not finish: timed out after 5000 ms and was killed'],
+            ])('when serve succeeded but its verification %s, removing the mount and stopping the server', async (_label, verification, reason) => {
+                const h = harness({ ...happyScript(), [STATUS_CMD]: [json(null), verification] });
+
+                const preview = startDraftPreview(AUTO, h.deps);
+
+                expect(await preview?.ready).toBe(false);
+                expect(preview?.urlFor(42, TOKEN)).toBeUndefined();
+                expect(h.events).toEqual(['status --json', STATUS_CMD, 'bind 127.0.0.1:8787', SERVE, STATUS_CMD, UNSERVE, 'stop server']);
+                expect(mockLogger.warn.mock.calls).toEqual([[{ reason, msg: DISABLED }]]);
+            });
+
+            test('when the removal after a failed verification fails too, still stopping the server and logging both', async () => {
+                const h = harness({ ...happyScript(), [STATUS_CMD]: [json(null), json(null)], [UNSERVE]: [TIMED_OUT] });
 
                 expect(await startDraftPreview(AUTO, h.deps)?.ready).toBe(false);
-                expect(mockLogger.warn.mock.calls).toEqual([[{ reason: 'spawn blew up', msg: DISABLED }]]);
+
+                expect(h.events.slice(3)).toEqual([SERVE, STATUS_CMD, UNSERVE, 'stop server']);
+                expect(mockLogger.warn.mock.calls).toEqual([
+                    [{ error: `\`tailscale ${UNSERVE}\` did not finish: timed out after 5000 ms and was killed`, msg: UNMOUNT_FAILED }],
+                    [{ reason: NOT_PUBLISHED, msg: DISABLED }],
+                ]);
+            });
+
+            test('and does nothing more at shutdown after such a partial failure', async () => {
+                const h = harness({ ...happyScript(), [STATUS_CMD]: [json(null), json(null)] });
+                await startDraftPreview(AUTO, h.deps)?.ready;
+                const before = [...h.events];
+
+                await h.cleanups[0].run();
+
+                expect(h.events).toEqual(before);
+                expect(h.stop).toHaveBeenCalledTimes(1);
+            });
+
+            test('when a step throws something that is not an Error, logging it as a string', async () => {
+                const h = harness(happyScript(), {
+                    which: () => {
+                        throw 'which blew up';
+                    },
+                });
+
+                expect(await startDraftPreview(AUTO, h.deps)?.ready).toBe(false);
+                expect(mockLogger.warn.mock.calls).toEqual([[{ reason: 'which blew up', msg: DISABLED }]]);
             });
 
             test('when the port is taken, running no tailscale serve', async () => {

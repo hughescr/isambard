@@ -1556,6 +1556,8 @@ describe('createApp', () => {
             const previewUrlFor = (uid: number, token: string): string => `https://mac.ts.net/d/${uid}/${token}`;
             const startPreviewSpy = spyOn(staticWildDuckClientModule, 'startDraftPreview').mockReturnValue({ urlFor: previewUrlFor, ready: Promise.resolve(true) });
             spies.push(startPreviewSpy);
+            const boundedRun = mock(async () => ({ stdout: '', stderr: '', exitCode: 0 }));
+            spies.push(spyOn(staticWildDuckClientModule, 'createBoundedRunner').mockReturnValue(boundedRun));
 
             await staticIndexModule.createApp();
 
@@ -1564,7 +1566,7 @@ describe('createApp', () => {
             expect(deps.wildDuckClient).toBeDefined();
             expect(typeof deps.serve).toBe('function');
             expect(typeof deps.registerCleanup).toBe('function');
-            expect(typeof deps.tailscale.run).toBe('function');
+            expect(deps.tailscale.run).toBe(boundedRun);
             expect(typeof deps.tailscale.which).toBe('function');
             expect(typeof deps.tailscale.fileExists).toBe('function');
             expect(deps.tailscale.timeoutMs).toBe(5000);

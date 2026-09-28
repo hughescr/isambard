@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import type { WildDuckClient } from '../wildduck-client';
 import { createDraftPreviewHandler } from './handler';
 import { startDraftPreviewServer, type PreviewServe, type PreviewServer } from './server';
-import { PREVIEW_MOUNT_PATH, openTailscaleCli, type TailscaleCli, type TailscaleDeps } from './tailscale';
+import { openTailscaleCli, previewMountPath, type TailscaleCli, type TailscaleDeps } from './tailscale';
 import type { EmailPreviewConfig } from '@/config';
 
 const HOUR_MS = 3_600_000;
@@ -58,14 +58,27 @@ function startManual(config: EmailPreviewConfig, publicBaseUrl: string, deps: St
 interface Published {
     tailscale: TailscaleCli
     server:    PreviewServer
+    dnsName:   string
+}
+
+/** Runs a best-effort removal of the mount (each command is time-limited), logging a failure. */
+async function removeMount(remove: () => Promise<void>): Promise<void> {
+    try {
+        await remove();
+    } catch (err: unknown) {
+        logger.warn({ error: errorText(err), msg: 'Could not remove the draft preview from tailscale serve; the next start replaces it' });
+    }
 }
 
 /**
- * Auto mode: check Tailscale, bind the server, and publish it at `PREVIEW_MOUNT_PATH` on the Mac's
- * tailnet host, in the background. Until that finishes, and for good if any step fails, cards get
- * no preview link; a failure is one log line and never stops Izzy.
+ * Auto mode: check Tailscale, bind the server, and publish it at `previewMountPath(port)` on the
+ * Mac's tailnet host, in the background. Until that finishes, and for good if any step fails, cards
+ * get no preview link; a failure is one log line and never stops Izzy. A failure after `tailscale
+ * serve` succeeded removes the mount again, so a failed start never leaves one behind.
  */
 function startAuto(config: EmailPreviewConfig, deps: StartDraftPreviewDeps): DraftPreview {
+    const port = config.port;
+    const mountPath = previewMountPath(port);
     let publicBaseUrl: string | undefined;
     let stopping = false;
 
@@ -76,23 +89,29 @@ function startAuto(config: EmailPreviewConfig, deps: StartDraftPreviewDeps): Dra
         if(allowedLogins === undefined) {
             throw new Error('Tailscale lists no login for this Mac\'s owner; set EMAIL_PREVIEW_ALLOWED_LOGINS');
         }
-        await tailscale.assertNoFunnel(self.dnsName);
+        await tailscale.preflight(self.dnsName, port);
         if(stopping) {
             return undefined;
         }
-        const server = startServer(config, deps, allowedLogins, PREVIEW_MOUNT_PATH);
+        const server = startServer(config, deps, allowedLogins, mountPath);
         if(server === undefined) {
             return undefined;
         }
+        let served = false;
         try {
-            await tailscale.mount(self.dnsName, config.port);
+            await tailscale.serve(port);
+            served = true;
+            await tailscale.verify(self.dnsName, port);
         } catch (err: unknown) {
+            if(served) {
+                await removeMount(async () => tailscale.unmount(port));
+            }
             await server.stop();
             throw err;
         }
-        publicBaseUrl = `https://${self.dnsName}${PREVIEW_MOUNT_PATH}`;
+        publicBaseUrl = `https://${self.dnsName}${mountPath}`;
         logger.info({ publicBaseUrl, msg: 'Draft preview published on the tailnet' });
-        return { tailscale, server };
+        return { tailscale, server, dnsName: self.dnsName };
     }
 
     const published = publish().catch((err: unknown) => {
@@ -108,11 +127,11 @@ function startAuto(config: EmailPreviewConfig, deps: StartDraftPreviewDeps): Dra
             if(live === undefined) {
                 return;
             }
-            try {
-                await live.tailscale.unmount();
-            } catch (err: unknown) {
-                logger.warn({ error: errorText(err), msg: 'Could not remove the draft preview from tailscale serve; the next start replaces it' });
-            }
+            await removeMount(async () => {
+                if(!await live.tailscale.unmountIfOurs(live.dnsName, port)) {
+                    logger.info({ mountPath, msg: 'Draft preview mount no longer points at this Izzy; left it in place' });
+                }
+            });
             await live.server.stop();
         },
     });
