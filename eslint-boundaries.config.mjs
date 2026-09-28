@@ -7,7 +7,7 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  *
  * Module Hierarchy (from independent to dependent):
  * 1. utils      - Pure utilities, no domain knowledge
- *    Note: utils/path-validator.ts, utils/media/**, and
+ *    Note: utils/path-validator.ts, utils/contained-fs.ts, utils/media/**, and
  *    utils/assert-never.ts are allowed to import from errors (throw typed errors).
  *    This is scoped via fileInternalPath.
  * 2. errors     - Error types, minimal dependencies
@@ -111,6 +111,7 @@ export const boundariesConfig = {
             'default': 'disallow',
             policies:  [
                 { from: { element: { type: 'utils', fileInternalPath: 'path-validator.ts' } }, allow: { to: { element: { type: ['errors'] } } } },
+                { from: { element: { type: 'utils', fileInternalPath: 'contained-fs.ts' } }, allow: { to: { element: { type: ['errors'] } } } },
                 { from: { element: { type: 'utils', fileInternalPath: 'media/**' } }, allow: { to: { element: { type: ['errors'] } } } },
                 { from: { element: { type: 'utils', fileInternalPath: 'assert-never.ts' } }, allow: { to: { element: { type: ['errors'] } } } },
                 { from: { element: { type: 'errors' } },  allow: { to: { element: { type: ['utils'] } } } },

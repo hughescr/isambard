@@ -30,6 +30,15 @@ export {
     DELIVERY_TOKEN_MAX_LENGTH
 } from './delivery-code';
 
+export {
+    openContainedForRead,
+    writeContainedAtomic,
+    platformSyscalls,
+    type PlatformSyscalls,
+    type ContainedFsOptions,
+    type ContainedWriteOptions
+} from './contained-fs';
+
 export { safeAsyncHandler } from './safe-async-handler';
 
 export { sanitizeFilename, deduplicateFilename } from './filename';
