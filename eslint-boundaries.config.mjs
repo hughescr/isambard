@@ -32,6 +32,8 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  *    anthropic  - Direct Anthropic usage/quota wire adapter; imports agent's runtime values
  *                 (fileQuotaWindow, hasQuotaWindow, unifiedAnthropicQuotaId), never app, never
  *                 the utraque integration
+ *    zotero     - Zotero Web API v3 client pinned to the shared group library, plus Crossref/arXiv/
+ *                 HTML metadata (#157); reaches only utils, errors and config, never agent
  * 7. app        - Composition root (src/index.ts + src/app/**), wires everything together;
  *                 imports utraque and anthropic directly (src/app/quota-poller.ts)
  *
@@ -64,7 +66,8 @@ export const boundaryElements = [
     { type: 'caldav',  pattern: 'src/integrations/caldav/**' },
     { type: 'utraque',   pattern: 'src/integrations/utraque/**' },
     { type: 'anthropic', pattern: 'src/integrations/anthropic/**' },
-    { type: 'app',     pattern: ['src/index.ts', 'src/app/**'] },
+    { type: 'zotero',    pattern: 'src/integrations/zotero/**' },
+    { type: 'app',    pattern: ['src/index.ts', 'src/app/**'] },
 ];
 
 /**
@@ -128,6 +131,7 @@ export const boundariesConfig = {
                 { from: { element: { type: 'utraque' } }, dependency: { kind: 'type' }, allow: { to: { element: { type: ['agent'] } } } },
                 { from: { element: { type: 'utraque' } },   allow: { to: { element: { type: ['utils', 'errors', 'config'] } } } },
                 { from: { element: { type: 'anthropic' } }, allow: { to: { element: { type: ['utils', 'errors', 'config', 'agent'] } } } },
+                { from: { element: { type: 'zotero' } },    allow: { to: { element: { type: ['utils', 'errors', 'config'] } } } },
                 { from: { element: { type: 'app' } },     allow: { to: { element: { type: APP_MAY_IMPORT } } } },
                 // src/index.ts is the other half of the composition root. It is classified as a
                 // file category rather than an element (see elementDescriptors above), so it needs
@@ -142,7 +146,7 @@ export const boundariesConfig = {
                     disallow: {
                         to: {
                             element: {
-                                type:             ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'utraque', 'anthropic', 'app'],
+                                type:             ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'utraque', 'anthropic', 'zotero', 'app'],
                                 fileInternalPath: '!index.ts'
                             }
                         }
