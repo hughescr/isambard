@@ -19,6 +19,7 @@ A core goal of Isambard is to use available model capacity economically. Izzy ca
 - **Email Integration** - Inbox reading and outbound email via WildDuck HTTP API with SSE push notifications and admin approval workflow
 - **Bluesky Integration** - AT Protocol client for feeds, posts, DMs, and social graph with Discord-based approval workflow
 - **Calendar Integration** - Read-only CalDAV access with personal/shared calendar registry via Discord slash commands. Calendar MCP event responses carry a discriminated `time` object: `all_day` local dates (`endExclusive`), `floating` zone-less local date-times, or `timed` ISO instants and optional source timezone; no top-level instant pair is synthesized for date-only or floating events.
+- **Zotero Library** - Optional access to the shared "Izzy-Craig Collab" Zotero group: search and read items (notes and reader annotations included), add papers by DOI, arXiv id or URL, attach and download PDFs, edit fields, tags, notes and collections. Deleting means the group Trash only (see [docs/zotero.md](docs/zotero.md))
 - **Contacts System** - Cross-platform address book with identity resolution for unified person references
 - **Media Processing** - Video analysis with scene detection, transcription, and spectrogram generation
 - **Wikipedia Lookup** - Article retrieval for knowledge context
@@ -150,6 +151,12 @@ See [docs/email-preview.md](docs/email-preview.md) for exactly what Izzy does wi
    always retries (the deterministic fallback).
    ```bash
    bunx sst secret set TypesafeApiKey <api-key>
+   ```
+
+   **Zotero secret (optional):** when set, both sessions get the `zotero` MCP server for the shared
+   group library; unset, there is no Zotero client or tool. See [docs/zotero.md](docs/zotero.md).
+   ```bash
+   bunx sst secret set ZoteroApiKey "$(op read 'op://Private/z3okqvyyusudopgkwoezdfkn24/API Key for user 21862647')"
    ```
 
    **CalDAV calendar** credentials are managed per-user via Discord `/calendar` slash commands (stored in DynamoDB calendar-registry), not SST secrets.
@@ -319,6 +326,8 @@ src/
 │   ├── bsky-mcp-server.ts              # MCP server: Bluesky operations
 │   ├── browser-mcp-server.ts           # MCP server: browser automation (conversation role only, when configured)
 │   ├── caldav-mcp-server.ts            # MCP server: CalDAV calendar operations
+│   ├── zotero-mcp-server.ts            # MCP server: the shared Zotero group library (when ZoteroApiKey is set)
+│   ├── zotero/                         # Zotero tool helpers: pinned URL fetch, addPapers, file upload/download, output shaping
 │   ├── claude-retry.ts                 # Retry logic for Claude API calls
 │   ├── contacts-mcp-server.ts          # MCP server: contacts/address book operations
 │   ├── discord-mcp-server.ts           # MCP server: Discord message history
@@ -501,6 +510,7 @@ src/
 │   │       ├── resolve.ts               # Resolves a server identifier to a CalendarServerEntry
 │   │       ├── types.ts                 # CalendarRegistryScope and registry record types
 │   │       └── index.ts                 # Public exports
+│   ├── zotero/                        # Zotero Web API v3 client pinned to the shared group, Crossref/arXiv/page metadata (#157)
 │   ├── utraque/                       # Utraque schema-2 provider-capacity wire adapter (Codex/DeepSeek quota); not yet an eslint boundary element (pending)
 │   │   ├── provider-capacity.ts         # Parses schema-2 provider reports; invalid schema, non-OK status, and thrown transport failures stay distinct
 │   │   └── index.ts                     # Public exports
@@ -591,6 +601,7 @@ src/
 │   ├── bsky.ts                      # BskyError subtree (AT Protocol auth, rate limit, validation errors)
 │   ├── caldav.ts                    # CaldavError subtree (calendar auth, fetch, timeout, ambiguous-match errors)
 │   ├── browser.ts                   # BrowserError subtree (navigation timeout errors)
+│   ├── zotero.ts                    # ZoteroError subtree (auth, conflict, rate limit, file, URL-fetch, metadata errors)
 │   ├── config.ts                    # ConfigValidationError
 │   ├── memory-vec.ts                # MemoryVecError: embedding library error hierarchy
 │   ├── vector-index.ts              # Error hierarchy for the memory-vec-store module
