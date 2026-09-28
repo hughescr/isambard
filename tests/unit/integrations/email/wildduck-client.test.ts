@@ -2841,7 +2841,7 @@ describe('WildDuckClient', () => {
         test('calls PUT /users/me/mailboxes/{sourceId}/messages/{uid} with moveTo', async () => {
             const client = await makeInitializedClient();
 
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, 99]] }));
 
             await client.moveMessage('CleanInbox', 42, 'Archive');
 
@@ -2855,7 +2855,7 @@ describe('WildDuckClient', () => {
         test('sends Content-Type application/json header', async () => {
             const client = await makeInitializedClient();
 
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, 99]] }));
 
             await client.moveMessage('CleanInbox', 42, 'Archive');
 
@@ -2866,7 +2866,7 @@ describe('WildDuckClient', () => {
         test('sends auth token header', async () => {
             const client = await makeInitializedClient();
 
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, 99]] }));
 
             await client.moveMessage('CleanInbox', 42, 'Archive');
 
@@ -2874,12 +2874,45 @@ describe('WildDuckClient', () => {
             expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('test-auth-token');
         });
 
-        test('resolves without value on success', async () => {
+        test('resolves with the destination uid WildDuck assigned in the new mailbox', async () => {
             const client = await makeInitializedClient();
 
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, 99]] }));
 
-            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).resolves.toBeUndefined();
+            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).resolves.toBe(99);
+        });
+
+        test('matches the source uid explicitly rather than assuming a single-pair response', async () => {
+            const client = await makeInitializedClient();
+
+            // Out-of-order/multi-pair response — must not just take id[0].
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[7, 1000], [42, 99]] }));
+
+            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).resolves.toBe(99);
+        });
+
+        test('throws WildDuckError when the response has no id field', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive' }));
+
+            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckError);
+        });
+
+        test('throws WildDuckError when no pair matches the source uid', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[7, 1000]] }));
+
+            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckError);
+        });
+
+        test('throws WildDuckError when the destination uid is not a number', async () => {
+            const client = await makeInitializedClient();
+
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, null]] }));
+
+            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckError when source mailbox not in map', async () => {
@@ -2899,7 +2932,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, 99]] }));
 
             await client.moveMessage('CleanInbox', 42, 'Archive');
 
@@ -2911,7 +2944,7 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, 99]] }));
 
             await client.moveMessage('CleanInbox', 42, 'Archive');
 
@@ -2931,7 +2964,7 @@ describe('WildDuckClient', () => {
             const client = await makeInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, 99]] }));
 
             await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckAuthError);
         });

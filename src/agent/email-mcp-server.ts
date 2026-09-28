@@ -544,8 +544,10 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             };
                         }
 
-                        await wildDuckClient.moveMessage(folder, uid, EmailFolder.Archive);
-                        return mcpTextResult(`Email UID ${uid} archived successfully.`);
+                        // WildDuck assigns a new UID in Archive — report that one, not the caller's
+                        // source uid, so a later Archive:<uid> lookup targets the right message.
+                        const archivedUid = await wildDuckClient.moveMessage(folder, uid, EmailFolder.Archive);
+                        return mcpTextResult(`Email UID ${archivedUid} archived successfully.`);
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } }
             ),

@@ -103,7 +103,9 @@ describe('createEmailMCPServer', () => {
             attachmentMeta: [],
         }));
         mockWildDuck.updateMessageFlags = mock(async () => { /* intentionally empty */ });
-        mockWildDuck.moveMessage        = mock(async () => { /* intentionally empty */ });
+        // Echoes the source uid back as the destination uid by default (as a real move often
+        // does); tests covering the destination-uid behaviour override this with a distinct value.
+        mockWildDuck.moveMessage        = mock(async (_source: string, uid: number, _dest: string) => uid);
         mockWildDuck.getAttachment      = mock(async () => Buffer.from('attachment-data'));
     });
 
@@ -1615,6 +1617,22 @@ describe('createEmailMCPServer', () => {
             const text = getText(result);
             expect(text).toContain('7');
             expect(text).toContain('archived');
+        });
+
+        test('reports the destination uid WildDuck assigned in Archive, not the source uid', async () => {
+            // Regression test: WildDuck (like IMAP) assigns a new uid on move, so a later
+            // Archive:<uid> lookup must use the uid WildDuck actually gave it there.
+            mockWildDuck.moveMessage = mock(async () => 999); // WildDuck assigns uid 999 in Archive, not 7
+
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
+            const handler = getToolHandler(server, 'archiveEmail');
+
+            const result: CallToolResult = await handler({ message: 'CleanInbox:7' });
+
+            expect(result.isError).toBeUndefined();
+            const text = getText(result);
+            expect(text).toContain('999');
+            expect(text).not.toContain('UID 7 ');
         });
 
         test('should handle move error gracefully', async () => {

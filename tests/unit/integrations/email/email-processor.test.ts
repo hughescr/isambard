@@ -79,8 +79,14 @@ function makeClassifier(verdict: ClassifierVerdict | Error): EmailClassifier {
     return { classify: mock(async () => verdict) } as unknown as EmailClassifier;
 }
 
+/**
+ * Default moveMessage mock echoes the source uid back as the destination uid (as a real move
+ * often does), so existing assertions keyed on the fixture's uid=42 keep working. Tests that
+ * specifically cover the destination-uid behaviour (WildDuck assigning a *different* uid in the
+ * destination mailbox — the #<uid-staleness> bug) override this with a distinct value.
+ */
 function makeImap(): { conn: WildDuckClient, moveMessage: ReturnType<typeof mock> } {
-    const moveMessage = mock(async () => undefined);
+    const moveMessage = mock(async (_sourceMailbox: string, uid: number, _destMailbox: string) => uid);
     return {
         conn: { moveMessage } as unknown as WildDuckClient,
         moveMessage,
@@ -514,6 +520,27 @@ describe('EmailProcessor', () => {
             expect(onUnsafe).not.toHaveBeenCalled();
         });
 
+        test('uncertain verdict → onReview callback gets the destination uid WildDuck assigned in Review, not the inbox uid', async () => {
+            // Regression test: WildDuck (like IMAP) assigns a new uid on move. The review card built
+            // from onReview's email must carry that new uid, or clicking its buttons 404s against the
+            // stale inbox uid paired with the Review folder.
+            const verdict     = makeVerdict('uncertain');
+            const email       = makeEmail({ uid: 42 });
+            const classifier  = makeClassifier(verdict);
+            const moveMessage = mock(async () => 99); // WildDuck assigns uid 99 in Review, not 42
+            const conn        = { moveMessage } as unknown as WildDuckClient;
+            const onReview    = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                { allowlist: makeAllowlist(false), classifier, wildDuckClient: conn },
+                { onReview }
+            );
+
+            await processor.processEmail(email);
+
+            expect(onReview).toHaveBeenCalledWith(expect.objectContaining({ uid: 99 }), verdict);
+        });
+
         test('uncertain verdict → onSafe not invoked even when all callbacks provided', async () => {
             const verdict    = makeVerdict('uncertain');
             const email      = makeEmail();
@@ -563,6 +590,24 @@ describe('EmailProcessor', () => {
             expect(moveMessage).toHaveBeenCalledWith(EmailFolder.Inbox, 42, EmailFolder.Quarantine);
             expect(onUnsafe).toHaveBeenCalledWith(email, verdict);
             expect(onReview).not.toHaveBeenCalled();
+        });
+
+        test('unsafe verdict → onUnsafe callback gets the destination uid WildDuck assigned in Quarantine, not the inbox uid', async () => {
+            const verdict     = makeVerdict('unsafe');
+            const email       = makeEmail({ uid: 42 });
+            const classifier  = makeClassifier(verdict);
+            const moveMessage = mock(async () => 123); // WildDuck assigns uid 123 in Quarantine, not 42
+            const conn        = { moveMessage } as unknown as WildDuckClient;
+            const onUnsafe    = mock(async () => undefined);
+
+            const processor = new EmailProcessor(
+                { allowlist: makeAllowlist(false), classifier, wildDuckClient: conn },
+                { onUnsafe }
+            );
+
+            await processor.processEmail(email);
+
+            expect(onUnsafe).toHaveBeenCalledWith(expect.objectContaining({ uid: 123 }), verdict);
         });
 
         test('unsafe verdict → onReview not invoked even when all callbacks provided', async () => {
@@ -740,6 +785,26 @@ describe('EmailProcessor', () => {
             }));
         });
 
+        test('logs both the inbox uid and the destination uid for allowlist bypass, when they differ', async () => {
+            const email       = makeEmail({ uid: 42 });
+            const moveMessage = mock(async () => 77); // WildDuck assigns uid 77 in CleanInbox, not 42
+
+            const processor = new EmailProcessor({
+                allowlist:      makeAllowlist(true),
+                classifier:     makeClassifier(makeVerdict('safe')),
+                wildDuckClient: { moveMessage } as unknown as WildDuckClient,
+            });
+
+            await processor.processEmail(email);
+
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                inboxUid:          42,
+                uid:               77,
+                allowlistBypassed: true,
+                msg:               'Email routed (allowlist bypass)',
+            }));
+        });
+
         test('logs routing decision for classifier verdict', async () => {
             const email    = makeEmail();
             const verdict  = makeVerdict('spam');
@@ -758,6 +823,27 @@ describe('EmailProcessor', () => {
                 from:    'alice@example.com',
                 verdict: 'spam',
                 msg:     'Email routed',
+            }));
+        });
+
+        test('logs both the inbox uid and the destination uid for a classifier verdict, when they differ', async () => {
+            const email       = makeEmail({ uid: 42 });
+            const verdict     = makeVerdict('spam');
+            const moveMessage = mock(async () => 88); // WildDuck assigns uid 88 in Junk, not 42
+
+            const processor = new EmailProcessor({
+                allowlist:      makeAllowlist(false),
+                classifier:     makeClassifier(verdict),
+                wildDuckClient: { moveMessage } as unknown as WildDuckClient,
+            });
+
+            await processor.processEmail(email);
+
+            expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+                inboxUid: 42,
+                uid:      88,
+                verdict:  'spam',
+                msg:      'Email routed',
             }));
         });
     });

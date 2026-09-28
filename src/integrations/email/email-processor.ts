@@ -73,8 +73,10 @@ export class EmailProcessor {
     }
 
     private async routeAllowlistBypass(email: EmailMetadata): Promise<ProcessingResult> {
+        const inboxUid = email.uid;
+        let destUid: number;
         try {
-            await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, EmailFolder.CleanInbox);
+            destUid = await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, EmailFolder.CleanInbox);
         } catch (err) {
             throw new EmailProcessingError(
                 `Failed to move allowlist-bypassed email (uid=${email.uid}): ${err instanceof Error ? err.message : String(err)}`,
@@ -82,7 +84,8 @@ export class EmailProcessor {
             );
         }
         logger.info({
-            uid:               email.uid,
+            inboxUid,
+            uid:               destUid,
             from:              email.from.address,
             subject:           email.subject,
             destination:       EmailFolder.CleanInbox,
@@ -109,8 +112,10 @@ export class EmailProcessor {
 
         const destination = this.verdictToFolder(verdict.verdict);
 
+        const inboxUid = email.uid;
+        let destUid: number;
         try {
-            await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, destination);
+            destUid = await this.wildDuckClient.moveMessage(EmailFolder.Inbox, email.uid, destination);
         } catch (err) {
             throw new EmailProcessingError(
                 `Failed to move email (uid=${email.uid}, destination=${destination}): ${err instanceof Error ? err.message : String(err)}`,
@@ -118,14 +123,19 @@ export class EmailProcessor {
             );
         }
 
+        // The message now lives at destUid in `destination`, not at the caller's inbox uid — every
+        // callback, card, and notify key keyed on this email from here on must use the new uid.
+        const movedEmail: EmailMetadata = { ...email, uid: destUid };
+
         // onSafe is suppressed for allowlisted senders — onAuthFailed already handles that case.
         // onReview/onUnsafe still fire regardless: admin must know about suspicious emails even from known senders.
         if(!(verdict.verdict === 'safe' && senderAllowed)) {
-            await this.invokeCallback(email, verdict);
+            await this.invokeCallback(movedEmail, verdict);
         }
 
         logger.info({
-            uid:        email.uid,
+            inboxUid,
+            uid:        destUid,
             from:       email.from.address,
             subject:    email.subject,
             verdict:    verdict.verdict,

@@ -249,6 +249,17 @@ interface SearchResponse {
     results: SearchResultEntry[]
 }
 
+/**
+ * WildDuck's response to a `PUT .../messages/:message` move (`moveTo` in the body): `id` pairs
+ * each moved message's `[sourceUid, destinationUid]`. A single-message move always yields exactly
+ * one pair, but the source uid is matched explicitly rather than assumed to be `id[0]`.
+ */
+interface MoveMessageResponse {
+    success: boolean
+    mailbox: string
+    id?:     [number, number][]
+}
+
 interface MailboxInfoResponse {
     success: boolean
     total:   number
@@ -473,10 +484,13 @@ export class WildDuckClient {
     }
 
     /**
-     * Move a message from one mailbox to another.
+     * Move a message from one mailbox to another. WildDuck (like IMAP) assigns the message a new
+     * UID in the destination mailbox, so this returns that destination UID — any card, log entry,
+     * or further lookup keyed on the message after the move must use it instead of the caller's
+     * source `uid`.
      */
-    async moveMessage(sourceMailbox: string, uid: number, destMailbox: string): Promise<void> {
-        await this.withAuthRetry(() => this.doMoveMessage(sourceMailbox, uid, destMailbox));
+    async moveMessage(sourceMailbox: string, uid: number, destMailbox: string): Promise<number> {
+        return this.withAuthRetry(() => this.doMoveMessage(sourceMailbox, uid, destMailbox));
     }
 
     /**
@@ -831,10 +845,10 @@ export class WildDuckClient {
         return false;
     }
 
-    private async doMoveMessage(sourceMailbox: string, uid: number, destMailbox: string): Promise<void> {
+    private async doMoveMessage(sourceMailbox: string, uid: number, destMailbox: string): Promise<number> {
         const sourceId = this.resolveMailboxId(sourceMailbox);
         const destId   = this.resolveMailboxId(destMailbox);
-        await this.makeRequest<unknown>(
+        const response = await this.makeRequest<MoveMessageResponse>(
             `/users/me/mailboxes/${sourceId}/messages/${uid}`,
             {
                 method:  'PUT',
@@ -842,6 +856,16 @@ export class WildDuckClient {
                 body:    JSON.stringify({ moveTo: destId }),
             }
         );
+        const pair      = response.id?.find(([sourceUid]) => sourceUid === uid);
+        const destUid   = pair?.[1];
+        if(typeof destUid !== 'number') {
+            throw new WildDuckError(
+                `WildDuck move response missing destination uid for source uid ${uid}`,
+                undefined,
+                { sourceMailbox, uid, destMailbox }
+            );
+        }
+        return destUid;
     }
 
     private async doListMessages(mailbox: string, options?: { unseen?: boolean, limit?: number, order?: 'asc' | 'desc' }): Promise<WildDuckMessageSummary[]> {
