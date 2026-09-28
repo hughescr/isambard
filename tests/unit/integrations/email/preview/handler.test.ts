@@ -221,6 +221,17 @@ describe('createDraftPreviewHandler', () => {
                 expect(await summarise(await h.handle(get(path)))).toEqual(plain(404, 'Not found.'));
                 expect(h.getMessage).not.toHaveBeenCalled();
             });
+
+            test('does not strip the mount merely because it appears later in the path', async () => {
+                // mountPath "/d" makes the prefix "/d/"; that text also occurs, unremarkably, inside
+                // the real "/d/<uid>/<token>" path itself. Only a leading "/d/" should ever be
+                // stripped: a path that does not start with it must be refused, never matched by
+                // slicing from wherever "/d/" happens to occur.
+                const h = harness(stored(), { mountPath: '/d' });
+
+                expect(await summarise(await h.handle(get(`/y/d/42/${TOKEN}`)))).toEqual(plain(404, 'Not found.'));
+                expect(h.getMessage).not.toHaveBeenCalled();
+            });
         });
     });
 

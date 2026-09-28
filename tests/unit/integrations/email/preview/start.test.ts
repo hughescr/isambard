@@ -123,6 +123,14 @@ async function statusVia(h: Harness, path: string, login?: string): Promise<numb
     return response.status;
 }
 
+/** Drains a bounded number of microtask turns, so a still-pending promise reads as pending. */
+async function flush(count = 20): Promise<void> {
+    for(let i = 0; i < count; i += 1) {
+        // eslint-disable-next-line no-await-in-loop -- deterministic microtask drain, not a real async loop
+        await Promise.resolve();
+    }
+}
+
 describe('startDraftPreview', () => {
     beforeEach(() => {
         jest.useFakeTimers();
@@ -262,6 +270,26 @@ describe('startDraftPreview', () => {
             expect(mockLogger.info).not.toHaveBeenCalledWith(expect.objectContaining({ msg: 'Draft preview mount no longer points at this Izzy; left it in place' }));
         });
 
+        test('awaits the server stopping before cleanup\'s run() settles', async () => {
+            const stopGate = Promise.withResolvers<void>();
+            const h = harness();
+            h.stop.mockImplementation(async () => stopGate.promise);
+            await startDraftPreview(AUTO, h.deps)?.ready;
+
+            let settled = false;
+            const running = Promise.resolve(h.cleanups[0].run()).then(() => {
+                settled = true;
+                return undefined;
+            });
+
+            await flush();
+            expect(settled).toBe(false);
+
+            stopGate.resolve();
+            await running;
+            expect(settled).toBe(true);
+        });
+
         test('leaves the mount in place at shutdown when it no longer points at this Izzy', async () => {
             const h = harness({ ...happyScript(), [STATUS_CMD]: [json(null), json(PUBLISHED), json(FOREIGN)] });
             await startDraftPreview(AUTO, h.deps)?.ready;
@@ -389,6 +417,28 @@ describe('startDraftPreview', () => {
                 expect(await preview?.ready).toBe(false);
                 expect(preview?.urlFor(42, TOKEN)).toBeUndefined();
                 expect(h.events).toEqual(['status --json', 'serve status --json', 'bind 127.0.0.1:8787', SERVE, 'stop server']);
+                expect(mockLogger.warn.mock.calls).toEqual([[{ reason: `\`tailscale ${SERVE}\` failed (exit 1): already serving TCP`, msg: DISABLED }]]);
+            });
+
+            test('awaits the bound server stopping before disabling the preview, after tailscale serve fails', async () => {
+                const stopGate = Promise.withResolvers<void>();
+                const h = harness({ ...happyScript(), [SERVE]: [{ exitCode: 1, stderr: 'already serving TCP' }] });
+                h.stop.mockImplementation(async () => stopGate.promise);
+
+                const preview = startDraftPreview(AUTO, h.deps);
+                let settled = false;
+                void preview?.ready.then((ready) => {
+                    settled = true;
+                    return ready;
+                });
+
+                await flush();
+                expect(settled).toBe(false);
+                expect(mockLogger.warn).not.toHaveBeenCalled();
+
+                stopGate.resolve();
+                expect(await preview?.ready).toBe(false);
+                expect(settled).toBe(true);
                 expect(mockLogger.warn.mock.calls).toEqual([[{ reason: `\`tailscale ${SERVE}\` failed (exit 1): already serving TCP`, msg: DISABLED }]]);
             });
 
