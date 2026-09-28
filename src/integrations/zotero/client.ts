@@ -12,7 +12,8 @@
  *   returned, not thrown.
  * - **Updates are read-modify-write with per-object versions.** A caller-supplied expected version
  *   that no longer matches is a conflict with nothing written, and a 412 from Zotero is re-read and
- *   reported, never re-applied: Craig's edits are never overwritten blind.
+ *   reported, never re-applied: Craig's edits are never overwritten blind. The written object omits
+ *   `dateModified`, so Zotero stamps the edit time.
  * - **Deletion is the trash flag only.** There is no DELETE verb anywhere in the client.
  * - **Files.** Uploads use Zotero's authorise/upload/register flow with `If-None-Match: *`;
  *   downloads follow the storage redirect by hand so the API key never reaches the storage host.
@@ -242,7 +243,11 @@ function planWrites<T extends Record<string, unknown>>(
         if(next === 'unchanged') {
             outcomes[index] = { key: edit.key, status: 'unchanged' };
         } else {
-            writes.push({ index, key: edit.key, expectedVersion: fresh.version, object: { ...next, key: edit.key, version: fresh.version } });
+            // Zotero stamps dateModified with the current time only when the write omits it; sending
+            // back the value we read would leave the edited item with its old modification time.
+            const object: Record<string, unknown> = { ...next, key: edit.key, version: fresh.version };
+            delete object.dateModified;
+            writes.push({ index, key: edit.key, expectedVersion: fresh.version, object });
         }
     }
     return { outcomes, writes };

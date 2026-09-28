@@ -337,13 +337,19 @@ export class FakeZoteroServer {
             if(object.version !== existing.version) {
                 return { kind: 'failed', key: existing.key, value: { key: existing.key, code: 412, message: `Object has been modified since version ${String(object.version)}` } };
             }
+            // Like Zotero, an update without dateModified is stamped with the server's time. The stamp is
+            // only added to fixtures that carry a dateModified, so minimal fixtures stay minimal.
+            const stampsDate = object.dateModified === undefined && existing.data.dateModified !== undefined;
             const { version: _v, ...rest } = object;
             const { version: _ev, ...existingRest } = existing.data;
+            if(stampsDate) {
+                delete existingRest.dateModified;
+            }
             if(sortedJson(rest) === sortedJson(existingRest)) {
                 return { kind: 'unchanged', key: existing.key, value: {} };
             }
             existing.version = newVersion;
-            existing.data = { ...object, key: existing.key, version: newVersion };
+            existing.data = { ...object, key: existing.key, version: newVersion, ...stampsDate ? { dateModified: new Date(this.clock.now()).toISOString() } : {} };
             return { kind: 'successful', key: existing.key, value: { key: existing.key, version: newVersion, data: existing.data } };
         }
         this.#created++;

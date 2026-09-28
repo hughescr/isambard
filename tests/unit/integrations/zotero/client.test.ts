@@ -607,6 +607,28 @@ describe('ZoteroClient read-modify-write', () => {
         expect(outcomes).toEqual([{ key: 'ABCD2345', status: 'updated', version: 2, data: { itemType: 'journalArticle', key: 'ABCD2345', version: 2, title: 'New', tags: [{ tag: 'a' }], extra: 'keep me' } }]);
     });
 
+    test('an update omits dateModified so Zotero stamps the edit time, and keeps dateAdded', async () => {
+        const { server, client } = setup((s) => {
+            s.addItem({ key: 'ABCD2345', version: 7, title: 'Old', dateAdded: '2020-01-01T00:00:00Z', dateModified: '2020-02-02T00:00:00Z' });
+            s.addItem({ key: 'EFGH6789', version: 7, title: 'Same', dateModified: '2020-02-02T00:00:00Z' });
+        });
+        server.clock.advance(86_400_000);
+
+        const outcomes = await client.modifyItems([
+            { key: 'ABCD2345', expectedVersion: 7, apply: retitle('New') },
+            { key: 'EFGH6789', expectedVersion: 7, apply: retitle('Same') },
+        ]);
+
+        const body = JSON.parse(posts(server)[0].bodyText!) as Record<string, unknown>[];
+        expect(body).toEqual([
+            { itemType: 'journalArticle', key: 'ABCD2345', version: 7, title: 'New', dateAdded: '2020-01-01T00:00:00Z' },
+            { itemType: 'journalArticle', key: 'EFGH6789', version: 7, title: 'Same' },
+        ]);
+        expect(outcomes.map(outcome => outcome.status)).toEqual(['updated', 'unchanged']);
+        expect(server.items.get('ABCD2345')!.data.dateModified).toBe('1970-01-02T00:00:00.000Z');
+        expect(server.items.get('EFGH6789')!.data.dateModified).toBe('2020-02-02T00:00:00Z');
+    });
+
     test('without expectedVersion the fresh version is used', async () => {
         const { server, client } = setup((s) => {
             s.addItem({ key: 'ABCD2345', version: 9, title: 'Old' });
