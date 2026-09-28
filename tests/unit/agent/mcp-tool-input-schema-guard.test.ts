@@ -41,6 +41,7 @@ const serverFactories: Record<string, () => McpSdkServerConfigWithInstance> = {
     createMemoryMCPServer:        () => agent.createMemoryMCPServer({} as never, { vectorIndex: {} as never, embedder: {} as never }),
     createPersonContextMCPServer: () => agent.createPersonContextMCPServer({} as never),
     createWikipediaMCPServer:     () => agent.createWikipediaMCPServer(),
+    createZoteroMCPServer:        () => agent.createZoteroMCPServer({} as never),
 };
 
 describe('SDK MCP tool input schema guard', () => {

@@ -78,6 +78,9 @@ export { createBrowserMCPServer } from './browser-mcp-server';
 export type { BrowserAdapter, BrowserHostPolicy } from './browser';
 export { createWebViewAdapter } from './browser';
 
+// Zotero MCP Server (shared group library)
+export { createZoteroMCPServer, type ZoteroMCPServerDeps } from './zotero-mcp-server';
+
 // Identity Cache
 export { IdentityCache, type IdentityLoader } from './identity-cache';
 
