@@ -151,6 +151,18 @@ describe('parseCitationMeta', () => {
         expect(meta.doi).toBeUndefined();
     });
 
+    test('a title cut off by truncation is still used', () => {
+        const meta = parseCitationMeta('<html><head><title>Cut  off', PAGE, ACCESSED);
+
+        expect(meta.item.fields.title).toBe('Cut off');
+    });
+
+    test('an empty title is ignored in favour of the next one', () => {
+        const meta = parseCitationMeta(page('<title>  </title><title>Second</title>'), PAGE, ACCESSED);
+
+        expect(meta.item.fields.title).toBe('Second');
+    });
+
     test('tolerates a prefix truncated mid-tag', () => {
         const meta = parseCitationMeta('<html><head><meta name="citation_title" content="Kept"><meta name="citation_doi" cont', PAGE, ACCESSED);
 

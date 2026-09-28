@@ -31,15 +31,12 @@ function readHead(html: string): { metas: Map<string, string[]>, title?: string 
     const metas = new Map<string, string[]>();
     let title: string | undefined;
     let titleText: string | undefined;
-    let done = false;
 
+    // pause() stops the tokenizer, so nothing after </head> or <body> produces an event; end() then
+    // only closes the elements still open (which finishes a <title> cut off by truncation).
     const parser = new Parser({
         onopentag(name, attribs) {
-            if(done) {
-                return;
-            }
             if(name === 'body') {
-                done = true;
                 parser.pause();
             } else if(name === 'title' && title === undefined) {
                 titleText = '';
@@ -57,14 +54,10 @@ function readHead(html: string): { metas: Map<string, string[]>, title?: string 
             }
         },
         onclosetag(name) {
-            if(done) {
-                return;
-            }
             if(name === 'title' && titleText !== undefined) {
                 title = collapse(titleText) || undefined;
                 titleText = undefined;
             } else if(name === 'head') {
-                done = true;
                 parser.pause();
             }
         },
