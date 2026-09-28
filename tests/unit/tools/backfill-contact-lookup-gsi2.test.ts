@@ -265,6 +265,30 @@ test('update rate limiter honours a one-millisecond remaining wait', async () =>
     expect(waits).toEqual([1]);
 });
 
+test('update rate limiter default sleep waits for the real timer before resolving', async () => {
+    jest.useFakeTimers();
+    const pace = createUpdateRateLimiter(() => 0);
+    // First ticket has no reservation yet, so it resolves without invoking the default sleep
+    // and reserves the next start 250 ms out.
+    await pace();
+
+    let resolved = false;
+    void pace().then(() => {
+        resolved = true;
+        return undefined;
+    });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    jest.advanceTimersByTime(249);
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    jest.advanceTimersByTime(1);
+    await Promise.resolve();
+    expect(resolved).toBe(true);
+});
+
 describe('runBackfillLoop', () => {
     let fakeSleep: ReturnType<typeof mock<(ms: number) => Promise<void>>>;
 
