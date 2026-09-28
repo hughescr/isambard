@@ -292,14 +292,16 @@ describe('manageCollections boundaries (#157)', () => {
         expect(updateItem.parentKey.description).toBe('New parent collection, or null for top level');
     });
 
-    test('rejects an empty create.name and an empty update.name', async () => {
+    test('rejects an empty create.name and an empty update.name, accepts a 1-character create.name', async () => {
         const { mcp } = setup(tree);
 
         const emptyCreate = await callTool(mcp, 'manageCollections', { create: [{ name: '' }] });
         const emptyUpdate = await callTool(mcp, 'manageCollections', { update: [{ key: 'KIDS2345', version: 1, name: '' }] });
+        const oneChar = await callTool(mcp, 'manageCollections', { create: [{ name: 'C' }] });
 
         expect(emptyCreate.isError).toBe(true);
         expect(emptyUpdate.isError).toBe(true);
+        expect(oneChar.isError).toBe(false);
     });
 
     test('rejects an empty create array and a batch of 51, accepts exactly 50', async () => {
