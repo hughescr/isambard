@@ -56,6 +56,21 @@ describe('startDraftPreviewServer', () => {
         expect(stop.mock.calls).toEqual([[true]]);
     });
 
+    test('does not report the server stopped until its connections have closed', async () => {
+        const { serve, stop } = fakeServe();
+        const closed = Promise.withResolvers<undefined>();
+        stop.mockImplementation(async () => closed.promise);
+
+        const stopping = startDraftPreviewServer(8791, async () => new Response('ok'), serve)?.stop();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(stop).toHaveBeenCalledTimes(1);
+        expect(Bun.peek.status(stopping!)).toBe('pending');
+        closed.resolve(undefined);
+        expect(await stopping).toBeUndefined();
+    });
+
     test('logs a bind failure and reports no server', () => {
         const serve = mock((_options: PreviewServeOptions): { stop: () => Promise<void> } => {
             throw new Error('EADDRINUSE');

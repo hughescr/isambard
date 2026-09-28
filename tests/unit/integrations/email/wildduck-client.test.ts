@@ -3725,6 +3725,33 @@ describe('WildDuckClient', () => {
             expect(cancel).toHaveBeenCalledTimes(1);
         });
 
+        test('does not return from a 404 until the response body has been released', async () => {
+            const client = await makeInitializedClient();
+            const { response, cancel } = streamResponse({}, 404);
+            const released = Promise.withResolvers<undefined>();
+            cancel.mockImplementation(async () => released.promise);
+            mockFetch.mockResolvedValueOnce(response);
+
+            const pending = client.openAttachmentStream('Drafts', 42, 'ATT00009');
+            await drainMicrotasks();
+            expect(cancel).toHaveBeenCalledTimes(1);
+            expect(Bun.peek.status(pending)).toBe('pending');
+            released.resolve(undefined);
+            expect(await pending).toBeNull();
+        });
+
+        test('throws an explained WildDuckAuthError when the retry after re-authenticating is refused too', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401));
+
+            const err = await client.openAttachmentStream('Drafts', 42, 'ATT00001').catch((error: unknown) => error);
+
+            expect(err).toBeInstanceOf(WildDuckAuthError);
+            expect((err as WildDuckAuthError).message).toBe('WildDuck authentication failed (401)');
+        });
+
         test('returns null for a 404 with no body', async () => {
             const client = await makeInitializedClient();
             mockFetch.mockResolvedValueOnce(makeJsonResponse({}, 404));

@@ -187,18 +187,19 @@ export function buildDraftGoneEmbed(): EmbedBuilder {
     return new EmbedBuilder().setTitle(GONE_TITLE).setColor(DRAFT_GONE_GREY);
 }
 
-/** Every customId on a message's components, however deeply nested. */
-function customIdsOf(components: readonly unknown[]): string[] {
-    return components.flatMap((component): string[] => {
-        if(typeof component !== 'object' || component === null) {
-            return [];
-        }
-        const { components: children, customId } = component as { components?: unknown, customId?: unknown };
+/**
+ * Every customId on a message's components, however deeply nested. A non-object entry
+ * destructures to nothing (a primitive has neither key; null and undefined read as `{}`).
+ */
+function* customIdsOf(components: readonly unknown[]): Generator<string> {
+    for(const component of components) {
+        const { components: children, customId } = (component ?? {}) as { components?: unknown, customId?: unknown };
         if(Array.isArray(children)) {
-            return customIdsOf(children);
+            yield* customIdsOf(children);
+        } else if(typeof customId === 'string') {
+            yield customId;
         }
-        return typeof customId === 'string' ? [customId] : [];
-    });
+    }
 }
 
 /**
@@ -207,7 +208,7 @@ function customIdsOf(components: readonly unknown[]): string[] {
  * deleted, gone) or they disagree. A click is honoured only when its uid equals this, read fresh.
  */
 export function currentCardDraftUid(message: { components: readonly unknown[] }): number | undefined {
-    const uids = customIdsOf(message.components).flatMap((raw) => {
+    const uids = [...customIdsOf(message.components)].flatMap((raw) => {
         const parsed = parseCustomId(raw);
         if(parsed === undefined || !DRAFT_CONTROL_PREFIXES.has(parsed.prefix)) {
             return [];

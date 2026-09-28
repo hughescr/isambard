@@ -136,16 +136,16 @@ describe('renderPreviewPage', () => {
         const page = renderPreviewPage(draft({
             attachments: [
                 { id: 'ATT00001', filename: 'report.pdf', contentType: 'application/pdf', sizeKb: 13, size: 12_595 },
-                { id: 'ATT00002', filename: 'photo.jpg', contentType: 'image/jpeg', sizeKb: 2 },
+                { id: 'ATT00002', filename: 'photo.jpg', contentType: 'image/jpeg', sizeKb: 100 },
             ],
         }), TOKEN);
 
         expect(page).toContain('<h2>Attachments (2)</h2>');
         expect(page).toContain(`<tr><td><a href="${TOKEN}/a/ATT00001" download>report.pdf</a></td><td>application/pdf</td><td>12.3 KB</td></tr>`);
-        expect(page).toContain(`<tr><td><a href="${TOKEN}/a/ATT00002" download>photo.jpg</a></td><td>image/jpeg</td><td>2.0 KB</td></tr>`);
+        expect(page).toContain(`<tr><td><a href="${TOKEN}/a/ATT00002" download>photo.jpg</a></td><td>image/jpeg</td><td>100.0 KB</td></tr>`);
         expect(page).toContain('<table class="attachments">\n<tr><td>');
         expect(page).toContain('12.3 KB</td></tr>\n<tr><td>');
-        expect(page).toContain('2.0 KB</td></tr>\n</table>');
+        expect(page).toContain('100.0 KB</td></tr>\n</table>');
     });
 
     test('says when there are no attachments', () => {

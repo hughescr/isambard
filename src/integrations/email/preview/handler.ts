@@ -62,9 +62,12 @@ export function attachmentContentDisposition(filename: string): string {
     return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
-/** Whether the draft's link has outlived the TTL; an unreadable Date counts as expired. */
+/**
+ * Whether the draft's link has outlived the TTL; an unreadable Date counts as expired, and so
+ * does a missing one ("undefined" and "null" never parse).
+ */
 function expired(draft: WildDuckMessage, ttlMs: number, now: number): boolean {
-    const dated = Date.parse(draft.date ?? '');
+    const dated = Date.parse(String(draft.date));
     return Number.isNaN(dated) || dated + ttlMs < now;
 }
 
@@ -137,7 +140,8 @@ export function createDraftPreviewHandler(deps: DraftPreviewHandlerDeps): (reque
         if(request.method !== 'GET') {
             return text(405, 'Method not allowed.', { Allow: 'GET' });
         }
-        if(allowedLogins !== undefined && !allowedLogins.includes((request.headers.get('Tailscale-User-Login') ?? '').toLowerCase())) {
+        const login = request.headers.get('Tailscale-User-Login');
+        if(allowedLogins !== undefined && (login === null || !allowedLogins.includes(login.toLowerCase()))) {
             return text(403, 'Forbidden.');
         }
         const match = PREVIEW_PATH.exec(new URL(request.url).pathname);

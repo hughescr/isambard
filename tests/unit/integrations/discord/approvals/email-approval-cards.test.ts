@@ -110,6 +110,23 @@ describe('EmailApprovalCardPresenter', () => {
             expect(await h.presenter.present(NEW_UID)).toBe('posted');
         });
 
+        test('does not report posted until the draft has been linked to the card', async () => {
+            const h = makeHarness(draft(NEW_UID));
+            const linked = Promise.withResolvers<boolean>();
+            h.linkCard.mockImplementation(async () => linked.promise);
+
+            const presenting = h.presenter.present(NEW_UID);
+            for(let i = 0; i < 10; i++) {
+                // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+                await Promise.resolve();
+            }
+
+            expect(h.linkCard).toHaveBeenCalledTimes(1);
+            expect(Bun.peek.status(presenting)).toBe('pending');
+            linked.resolve(true);
+            expect(await presenting).toBe('posted');
+        });
+
         test('reports posted without a link when Discord returns no message', async () => {
             const h = makeHarness(draft(NEW_UID));
             h.postCard.mockImplementation(async () => ({ status: 'sent' }));
@@ -240,6 +257,23 @@ describe('EmailApprovalCardPresenter', () => {
             expect(h.postCard).not.toHaveBeenCalled();
             expect(h.linkCard).not.toHaveBeenCalled();
             expect(h.gate.pendingEdit('card-1')).toBeUndefined();
+        });
+
+        test('does not report updated until the reply under the card has been sent', async () => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
+            const replied = Promise.withResolvers<undefined>();
+            h.reply.mockImplementation(async () => replied.promise);
+
+            const presenting = h.presenter.present(NEW_UID, OLD_UID);
+            for(let i = 0; i < 20; i++) {
+                // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+                await Promise.resolve();
+            }
+
+            expect(h.reply).toHaveBeenCalledTimes(1);
+            expect(Bun.peek.status(presenting)).toBe('pending');
+            replied.resolve(undefined);
+            expect(await presenting).toBe('updated');
         });
 
         test('still reports updated when the reply fails', async () => {

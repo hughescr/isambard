@@ -3228,6 +3228,27 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toBe('Draft Drafts:42 deleted. The admin\'s approval card was marked deleted.');
         });
 
+        test('does not report the delete until the approval card has been marked', async () => {
+            const marking = Promise.withResolvers<undefined>();
+            const markDeleted = mock(async () => marking.promise);
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete, approvalCards: cardPort(mock(async () => 'posted'), { markDeleted }) });
+            let settled = false;
+
+            const pending = getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' }).then((result) => {
+                settled = true;
+                return result;
+            });
+            for(let i = 0; i < 20; i++) {
+                // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+                await Promise.resolve();
+            }
+
+            expect(markDeleted).toHaveBeenCalledTimes(1);
+            expect(settled).toBe(false);
+            marking.resolve(undefined);
+            expect(getText(await pending)).toBe('Draft Drafts:42 deleted. The admin\'s approval card was marked deleted.');
+        });
+
         test.each([
             ['no card link', {}],
             ['a rejection', { ...LINKED_META, rejectedAt: 'then' }],

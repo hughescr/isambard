@@ -1591,6 +1591,10 @@ describe('emailPreviewConfigSchema', () => {
         expect(emailPreviewConfigSchema.parse({ ...base, allowedLogins: [' Craig@Example.com ', 'b@example.com'] }).allowedLogins).toEqual(['craig@example.com', 'b@example.com']);
     });
 
+    test('accepts a single one-character allowed login', () => {
+        expect(emailPreviewConfigSchema.parse({ ...base, allowedLogins: [' A '] }).allowedLogins).toEqual(['a']);
+    });
+
     test('is optional on emailConfigSchema', () => {
         const email = { user: 'u@example.com', password: 'p', wildDuckApiUrl: 'https://wildduck.example.com' };
         expect(emailConfigSchema.parse(email).preview).toBeUndefined();

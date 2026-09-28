@@ -439,6 +439,26 @@ describe('buildEmailApprovalCardTransport', () => {
         fetch.mockImplementation(async () => null as never);
         await expect(transport({ channels: { fetch } }).reply(REF, 'Edited')).resolves.toBeUndefined();
     });
+
+    it.each([
+        ['through the capability', (send: () => Promise<unknown>) => transport({}, { sendText: send })],
+        ['straight to the channel', (send: () => Promise<unknown>) => transport({ channels: { fetch: mock(async () => ({ send })) } })],
+    ])('does not finish a reply %s until Discord has taken it', async (_label, build) => {
+        const gate = makeDeferred();
+        const started = makeDeferred();
+        const send = mock(async () => {
+            started.resolve();
+            await gate.promise;
+            return { status: 'sent' };
+        });
+        const operation = build(send).reply(REF, 'Edited');
+
+        await Promise.race([started.promise, operation]);
+        await drainMicrotasks();
+        expect(Bun.peek.status(operation)).toBe('pending');
+        gate.resolve();
+        expect(await operation).toBeUndefined();
+    });
 });
 
 describe('setupEmail — createEmailMcpServerInstance', () => {

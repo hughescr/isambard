@@ -55,6 +55,12 @@ describe('readDraftApprovalMeta', () => {
             card: { channelId: 'ch', messageId: 'msg', edits: 0 },
         });
     });
+
+    test('keeps a card link whose channel and message ids are a single character', () => {
+        expect(readDraftApprovalMeta({ approvalCard: { channelId: 'c', messageId: 'm', edits: 0 } })).toEqual({
+            card: { channelId: 'c', messageId: 'm', edits: 0 },
+        });
+    });
 });
 
 describe('mergeDraftMeta', () => {

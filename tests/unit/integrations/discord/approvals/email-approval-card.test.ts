@@ -111,6 +111,7 @@ describe('buildEmailApprovalCard — pending', () => {
 
     test('marks an edited card in its title', () => {
         expect(embedOf(buildEmailApprovalCard({ uid: 1, edits: 2, state: 'pending', summary: summary() })).title).toBe('Outbound Email Approval Required · Edited (2)');
+        expect(embedOf(buildEmailApprovalCard({ uid: 1, edits: 1, state: 'pending', summary: summary() })).title).toBe('Outbound Email Approval Required · Edited (1)');
     });
 
     test('lists every attachment with its name, type and size', () => {
@@ -167,6 +168,25 @@ describe('buildEmailApprovalCard — pending', () => {
         expect(valueFor('n'.repeat(1013))).toBe(`${'n'.repeat(1013)} — x/y, 1 B`);
         expect(valueFor('n'.repeat(1013))?.length).toBe(1024);
         expect(valueFor('n'.repeat(1014))).toBe('… and 1 more (see preview)');
+    });
+
+    describe('cutting two attachment lines at the field boundary', () => {
+        const valueFor = (first: string): string | undefined => fieldValue(embedOf(buildEmailApprovalCard({
+            uid:     1,
+            edits:   0,
+            state:   'pending',
+            summary: summary({ attachments: [{ filename: first, contentType: 'x/y', sizeBytes: 1 }, { filename: 'b', contentType: 'x/y', sizeBytes: 1 }] }),
+        })), 'Attachments (2)');
+
+        test('keeps a first line that exactly fills the field with its "1 more" note, and then the last line with no note', () => {
+            // 997-character first line + "\n… and 1 more (see preview)" (27) = 1024; both lines together are 1010.
+            expect(valueFor('n'.repeat(986))).toBe(`${'n'.repeat(986)} — x/y, 1 B\nb — x/y, 1 B`);
+        });
+
+        test('cuts before a first line that fits alone but not with its "1 more" note', () => {
+            // 998-character first line + its 27-character note = 1025, although both lines together (1011) would fit.
+            expect(valueFor('n'.repeat(987))).toBe('… and 2 more (see preview)');
+        });
     });
 
     test('cuts a From longer than a field allows', () => {
@@ -347,6 +367,7 @@ describe('currentCardDraftUid', () => {
 
     test('reads the uid as decimal', () => {
         expect(currentCardDraftUid(message('email-send-approve:010'))).toBe(10);
+        expect(currentCardDraftUid(message('email-send-approve:0x2A'))).toBe(0);
     });
 
     test('reads the controls of a card it built', () => {

@@ -240,7 +240,7 @@ describe('EmailApprovalInteractionAdapter', () => {
             const operation = handler.handleModalSubmit(interaction);
 
             try {
-                await started.promise;
+                await Promise.race([started.promise, operation]);
                 await drainMicrotasks();
                 expect(editReply).not.toHaveBeenCalled();
                 expect(Bun.peek.status(operation)).toBe('pending');
@@ -266,7 +266,7 @@ describe('EmailApprovalInteractionAdapter', () => {
             const operation = handler.handleSelectMenu(interaction);
 
             try {
-                await started.promise;
+                await Promise.race([started.promise, operation]);
                 await drainMicrotasks();
                 expect(deps.sagaBackend.create).not.toHaveBeenCalled();
                 expect(Bun.peek.status(operation)).toBe('pending');
@@ -298,7 +298,7 @@ describe('EmailApprovalInteractionAdapter', () => {
             const operation = handler.handleSelectMenu(interaction);
 
             try {
-                await started.promise;
+                await Promise.race([started.promise, operation]);
                 await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
@@ -322,7 +322,7 @@ describe('EmailApprovalInteractionAdapter', () => {
             const operation = handler.handleSelectMenu(interaction);
 
             try {
-                await started.promise;
+                await Promise.race([started.promise, operation]);
                 await drainMicrotasks();
                 expect(notify).not.toHaveBeenCalled();
                 expect(Bun.peek.status(operation)).toBe('pending');
@@ -348,7 +348,7 @@ describe('EmailApprovalInteractionAdapter', () => {
             const operation = handler.handleButton(interaction);
 
             try {
-                await started.promise;
+                await Promise.race([started.promise, operation]);
                 await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
@@ -371,7 +371,7 @@ describe('EmailApprovalInteractionAdapter', () => {
             const operation = handler.handleButton(interaction);
 
             try {
-                await started.promise;
+                await Promise.race([started.promise, operation]);
                 await drainMicrotasks();
                 expect(Bun.peek.status(operation)).toBe('pending');
             } finally {
@@ -395,7 +395,7 @@ describe('EmailApprovalInteractionAdapter', () => {
         const operation = handler.handleButton(interaction);
 
         try {
-            await acknowledgementStarted.promise;
+            await Promise.race([acknowledgementStarted.promise, operation]);
             await drainMicrotasks();
             expect(Bun.peek.status(operation)).toBe('pending');
             expect(deps.sagaBackend.create).not.toHaveBeenCalled();
@@ -2007,5 +2007,67 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
         await adapter.handleButton(interaction);
 
         expect(events).toEqual([]);
+    });
+
+    interface Refusal { status: 'refused', reason: string, detail: string }
+    const refusal = (reason: string): Refusal => ({ status: 'refused', reason, detail: `detail for ${reason}` });
+    interface ReplyCase {
+        route:       'approve' | 'approveallowlist' | 'reject'
+        cardUid?:    number
+        noMessage?:  true
+        recipients?: string[]
+        refused?:    Refusal
+        expected:    string
+    }
+    const MANY = Array.from({ length: 26 }, (_, i) => `r${i}@example.com`);
+
+    test.each([
+        ['a reject on a card it cannot read', { route: 'reject', noMessage: true, expected: CARD_UNREADABLE }],
+        ['a reject on a stale card', { route: 'reject', cardUid: 55, expected: STALE_CARD }],
+        ['a refused reject', { route: 'reject', refused: refusal('decided'), expected: 'This draft was already approved or rejected.' }],
+        ['an approve on a stale card', { route: 'approve', cardUid: 55, expected: STALE_CARD }],
+        ['an approve refused as unreadable', { route: 'approve', refused: refusal('unreadable'), expected: 'detail for unreadable — nothing was changed; try again.' }],
+        ['an approve refused as unrecorded', { route: 'approve', refused: refusal('unrecorded'), expected: 'detail for unrecorded' }],
+        ['an approve+allowlist on a stale card', { route: 'approveallowlist', cardUid: 55, expected: STALE_CARD }],
+        ['an approve+allowlist whose draft cannot be read', { route: 'approveallowlist', recipients: undefined, expected: 'Couldn\'t read the draft from WildDuck (down) — nothing was changed; try again.' }],
+        ['an approve+allowlist with too many recipients', { route: 'approveallowlist', recipients: MANY, expected: 'This draft has 26 recipients, more than the 25 a Discord menu can offer, so they can\'t be allowlisted from this card — nothing was approved. Use Approve, or allowlist them another way first.' }],
+    ] as [string, ReplyCase][])('%s does not finish, or free the card, until its private reply is taken', async (_label, c) => {
+        const cardEdits = new ApprovalCardEditGate();
+        const { adapter, events } = makeOpsAdapter('recipients' in c ? c.recipients : ['a@example.com'], cardEdits);
+        const approvals = (adapter as unknown as { approvals: { approveSend: ReturnType<typeof mock>, rejectSend: ReturnType<typeof mock> } }).approvals;
+        if(c.refused) {
+            approvals.approveSend.mockImplementation(async () => c.refused);
+            approvals.rejectSend.mockImplementation(async () => c.refused);
+        }
+        const parts = c.route === 'reject'
+            ? trackInteraction(makeModalInteraction('email-send-reject-reason:42', 'Too blunt'), events)
+            : trackInteraction(makeButtonInteraction(`email-send-${c.route}:42`), events);
+        parts.cardFetch.mockImplementation(async () => liveCard(c.cardUid ?? 42));
+        if(c.noMessage) {
+            (parts.interaction as unknown as { message: null }).message = null;
+        }
+        const gate = makeDeferred();
+        const started = makeDeferred();
+        parts.followUp.mockImplementation(async () => {
+            started.resolve();
+            await gate.promise;
+            return {};
+        });
+        const operation = c.route === 'reject'
+            ? adapter.handleModalSubmit(parts.interaction as ModalSubmitInteraction)
+            : adapter.handleButton(parts.interaction as ButtonInteraction);
+
+        try {
+            await Promise.race([started.promise, operation]);
+            await drainMicrotasks();
+            expect(Bun.peek.status(operation)).toBe('pending');
+            expect(cardEdits.pendingEdit(CARD_MESSAGE_ID) === undefined).toBe(c.noMessage === true);
+        } finally {
+            gate.resolve();
+            await operation;
+        }
+
+        expect(parts.followUp.mock.calls).toEqual([[{ content: c.expected, flags: MessageFlags.Ephemeral }]]);
+        expect(cardEdits.pendingEdit(CARD_MESSAGE_ID)).toBeUndefined();
     });
 });
