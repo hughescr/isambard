@@ -6,4 +6,4 @@
  */
 export { createWebViewAdapter } from './webview-adapter';
 export type { BrowserAdapter, BrowserHostPolicy } from './types';
-export { validateUrl } from './host-guard';
+export { validateUrl, checkResolvedAddress, type ResolvedAddressResult } from './host-guard';

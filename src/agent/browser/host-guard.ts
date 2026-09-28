@@ -169,6 +169,40 @@ function checkIpRanges(hostname: string): ValidateUrlError | null {
 }
 
 // ============================================================================
+// Resolver answers
+// ============================================================================
+
+/** A resolver answer after canonicalisation: `address` is the string to pin the connection to. */
+export type ResolvedAddressResult = { ok: true, address: string, family: 4 | 6 } | { ok: false, reason: string };
+
+const MALFORMED_ADDRESS = 'resolver returned a malformed address';
+
+/**
+ * Checks one DNS answer against the same range logic as {@link validateUrl}.
+ *
+ * The range checks assume the URL parser's normalised form (`::ffff:7f00:1`), but a resolver can
+ * return `::ffff:127.0.0.1` or `0:0:0:0:0:0:0:1` verbatim. So the answer is canonicalised first,
+ * exactly as `validateUrl` sees an IP literal: IPv4 only in strict dotted-decimal form, IPv6
+ * through the URL parser. Zone ids, hostnames and anything else are rejected as malformed. The
+ * returned `address` is the canonical string that was checked, so callers pin what they validated.
+ */
+export function checkResolvedAddress(raw: string): ResolvedAddressResult {
+    let canonical = raw;
+    const kind = isIP(raw) as 0 | 4 | 6;
+    if(kind === 6 && !raw.includes('%')) {
+        // isIP()===6 guarantees the bracketed literal parses; hostname keeps the brackets in Bun.
+        canonical = new URL(`http://[${raw}]/`).hostname.slice(1, -1);
+    } else if(kind !== 4) {
+        return { ok: false, reason: MALFORMED_ADDRESS };
+    }
+    const blocked = checkIpRanges(canonical);
+    if(blocked !== null) {
+        return blocked;
+    }
+    return { ok: true, address: canonical, family: kind };
+}
+
+// ============================================================================
 // Main export
 // ============================================================================
 
