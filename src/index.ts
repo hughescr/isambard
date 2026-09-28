@@ -24,6 +24,7 @@ import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createOutboxDiscardReporter, createApprovedActionOutcomeDelivery, ApprovedActionEscalationHandler, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
 import { EmailHistoryProvider, EmailFolder, TAILSCALE_COMMAND_TIMEOUT_MS, WildDuckClient, checkEmailSendDelivery, createBoundedRunner, emailSendParamsSchema, startDraftPreview } from '@/integrations/email';
 import { createJevOutboxFailureClassifier } from '@/integrations/typesafe/jev-outbox-failure-classifier';
+import { createZoteroDeps, type ZoteroDeps } from '@/integrations/zotero';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, createOutboxDrainListener, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type ContactChangeRequest, type EmbedderLike } from '@/storage';
 import { resolveTimezone } from '@/utils';
@@ -274,6 +275,14 @@ async function createAppLifecycle(): Promise<App> {
         }
         throw error;
     }
+}
+
+/**
+ * Zotero (#157): built once so both sessions share one client (its Backoff deadline and template
+ * memo) and one addPapers lock. No network call; undefined when the ZoteroApiKey secret is unset.
+ */
+function buildZoteroDeps(config: Config): ZoteroDeps | undefined {
+    return config.zotero ? createZoteroDeps(config.zotero) : undefined;
 }
 
 async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onFailure'>) => void): Promise<App> {
@@ -920,6 +929,8 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     const { browserAdapter, browserPolicy } = createBrowserIntegration();
     registerCleanup({ name: 'browser adapter', run: () => browserAdapter?.close() });
 
+    const zoteroDeps = buildZoteroDeps(config);
+
     // Shared once: built here so the conversation and perch conductors (built further below),
     // each of which builds its own MCP instance set, reuse the same singleton state (DMTracker,
     // BskyCheckpointManager) rather than constructing it twice.
@@ -956,6 +967,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             vectorIndex:               storage.vectorIndex,
             embedder,
             personAllowlist,
+            zotero:                    zoteroDeps,
         });
     }
     const mcpSharedDeps = buildMcpSharedDeps();

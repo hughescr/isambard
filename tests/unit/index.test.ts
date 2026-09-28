@@ -56,6 +56,8 @@ import * as staticEmailSetupModule from '@/integrations/discord/setup/email-setu
 import { createGuildId } from '@/integrations/discord/types';
 import * as staticWildDuckClientModule from '@/integrations/email';
 import * as staticJevModule from '@/integrations/typesafe/jev-outbox-failure-classifier';
+import * as staticZoteroModule from '@/integrations/zotero';
+import type { ZoteroDeps } from '@/integrations/zotero';
 import type { HealthChangeListener } from '@/services';
 import * as staticServicesModule from '@/services';
 import * as staticPersonAllowlistModule from '@/storage';
@@ -109,6 +111,7 @@ const sessionConfig: SessionConfig = {
 
 /** Top-level `config.adminDiscordChannelId` (the admin review channel) used by `wireHappyPath`. */
 const ADMIN_REVIEW_CHANNEL_ID = createChannelId('987654321098765432');
+const ZOTERO_CONFIG = { apiKey: 'test-zotero-key', groupId: 6_692_257, userId: 21_862_647, maxStoredFileBytes: 52_428_800 };
 
 /** Default `config.perch` for `wireHappyPath` — perch enabled, matching production defaults. `perchOverrides` lets a test disable it (`{ enabled: false }`) or tweak a field. */
 const defaultPerchConfig = {
@@ -133,8 +136,10 @@ const defaultPerchConfig = {
  * `typesafeEnabled` (default false) additionally configures `config.typesafe.apiKey`, so tests
  * can prove the Jev outbox classifier receives it. `jevClassifierSpy` is always returned (spying,
  * not mocking — the real factory has no side effects) so every test can assert its call args.
+ * `zoteroEnabled` (default false) additionally configures `config.zotero`, as a set `ZoteroApiKey`
+ * secret would.
  */
-function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false, emailEnabled = true, typesafeEnabled = false): {
+function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Partial<SessionConfig> = {}, perchOverrides: Partial<typeof defaultPerchConfig> = {}, bskyEnabled = false, emailEnabled = true, typesafeEnabled = false, zoteroEnabled = false): {
     createBotSpy:       ReturnType<typeof spyOn>
     recordMemoryAccess: ReturnType<typeof mock>
     emailSetupSpy:      ReturnType<typeof spyOn>
@@ -277,6 +282,9 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
                 : {}),
             ...(typesafeEnabled
                 ? { typesafe: { apiKey: 'test-typesafe-key' } }
+                : {}),
+            ...(zoteroEnabled
+                ? { zotero: ZOTERO_CONFIG }
                 : {}),
         }),
         spyOn(staticConfigModule, 'loadDynamoDBConfig').mockReturnValue({
@@ -525,6 +533,38 @@ describe('createApp', () => {
             await app.stop();
 
             expect(jevClassifierSpy).toHaveBeenCalledWith({ apiKey: undefined });
+        });
+    });
+
+    describe('Zotero wiring (ZoteroApiKey)', () => {
+        test('builds the Zotero deps once from config.zotero and hands them to the MCP servers', async () => {
+            wireHappyPath(spies, {}, {}, false, true, false, true);
+            const createZoteroDepsSpy = spyOn(staticZoteroModule, 'createZoteroDeps');
+            const createMcpSharedDepsSpy = spyOn(staticMcpServersModule, 'createMcpSharedDeps');
+            spies.push(createZoteroDepsSpy, createMcpSharedDepsSpy);
+
+            const app = await staticIndexModule.createApp();
+            await app.stop();
+
+            expect(createZoteroDepsSpy).toHaveBeenCalledTimes(1);
+            expect(createZoteroDepsSpy).toHaveBeenCalledWith(ZOTERO_CONFIG);
+            const zotero = createMcpSharedDepsSpy.mock.calls[0][0].zotero;
+            expect(zotero).toBe(createZoteroDepsSpy.mock.results[0].value as ZoteroDeps);
+            expect(zotero?.client).toBeInstanceOf(staticZoteroModule.ZoteroClient);
+            expect(zotero?.izzyUserId).toBe(21_862_647);
+        });
+
+        test('leaves Zotero out when ZoteroApiKey is not configured', async () => {
+            wireHappyPath(spies);
+            const createZoteroDepsSpy = spyOn(staticZoteroModule, 'createZoteroDeps');
+            const createMcpSharedDepsSpy = spyOn(staticMcpServersModule, 'createMcpSharedDeps');
+            spies.push(createZoteroDepsSpy, createMcpSharedDepsSpy);
+
+            const app = await staticIndexModule.createApp();
+            await app.stop();
+
+            expect(createZoteroDepsSpy).not.toHaveBeenCalled();
+            expect(createMcpSharedDepsSpy.mock.calls[0][0].zotero).toBeUndefined();
         });
     });
 

@@ -109,7 +109,7 @@ const FAKE_MCP_SERVERS: MCPServers = {
 
 type FakeMcpServerConfig = MCPServers['memoryMcpServer'];
 
-/** All twelve server slots populated, each with a distinguishable value, for asserting the exact key mapping onto `SessionMcpServers`. */
+/** All thirteen server slots populated, each with a distinguishable value, for asserting the exact key mapping onto `SessionMcpServers`. */
 const FULL_MCP_SERVERS: Required<MCPServers> = {
     memoryMcpServer:        { name: 'memory' } as unknown as FakeMcpServerConfig,
     discordMcpServer:       { name: 'discord' } as unknown as FakeMcpServerConfig,
@@ -123,6 +123,7 @@ const FULL_MCP_SERVERS: Required<MCPServers> = {
     browserMcpServer:       { name: 'browser' } as unknown as FakeMcpServerConfig,
     emailMcpServer:         { name: 'email' } as unknown as FakeMcpServerConfig,
     healthMcpServer:        { name: 'health' } as unknown as FakeMcpServerConfig,
+    zoteroMcpServer:        { name: 'zotero' } as unknown as FakeMcpServerConfig,
 };
 
 const DEFAULT_CONFIG: SessionConfig = sessionConfigSchema.parse({});
@@ -1001,7 +1002,7 @@ describe('createConversationConductor', () => {
         expect(conductor.getCompactionThresholdPercent()).toBe(DEFAULT_CONFIG.compactThresholdPercent);
     });
 
-    it('wires all twelve MCP server instances into the session\'s SDK options, correctly keyed', async () => {
+    it('wires all thirteen MCP server instances into the session\'s SDK options, correctly keyed', async () => {
         const h = build();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FULL_MCP_SERVERS);
 
@@ -1024,6 +1025,7 @@ describe('createConversationConductor', () => {
             browser:        FULL_MCP_SERVERS.browserMcpServer,
             email:          FULL_MCP_SERVERS.emailMcpServer,
             health:         FULL_MCP_SERVERS.healthMcpServer,
+            zotero:         FULL_MCP_SERVERS.zoteroMcpServer,
         });
     });
 
@@ -1378,7 +1380,7 @@ describe('createPerchConductor', () => {
         expect(h.instances[0].receivedParams?.options.allowedTools).toContain('mcp__email__*');
     });
 
-    it('wires no browser MCP server for perch (the single WebView belongs to conversation), but does wire email and health', async () => {
+    it('wires no browser MCP server for perch (the single WebView belongs to conversation), but does wire email, health and zotero', async () => {
         const h = buildPerch();
         jest.spyOn(mcpServersModule, 'createMcpServerInstances').mockReturnValue(FULL_MCP_SERVERS);
 
@@ -1394,6 +1396,8 @@ describe('createPerchConductor', () => {
         expect(mcpServersOption.memory).toBe(FULL_MCP_SERVERS.memoryMcpServer);
         expect(mcpServersOption.wikipedia).toBe(FULL_MCP_SERVERS.wikipediaMcpServer);
         expect(mcpServersOption.health).toBe(FULL_MCP_SERVERS.healthMcpServer);
+        expect(mcpServersOption.zotero).toBe(FULL_MCP_SERVERS.zoteroMcpServer);
+        expect(h.instances[0].receivedParams?.options.allowedTools).toContain('mcp__zotero__*');
     });
 
     it('defers an identity reopen until the open perch slot ends', async () => {

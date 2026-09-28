@@ -446,6 +446,7 @@ export async function createConversationConductor(params: CreateConversationCond
         browser:        mcpInstances.browserMcpServer,
         email:          mcpInstances.emailMcpServer,
         health:         mcpInstances.healthMcpServer,
+        zotero:         mcpInstances.zoteroMcpServer,
     };
 
     // Rebuilt whenever the identity behind them changes (see scheduleIdentityRefresh below).
@@ -856,6 +857,7 @@ export async function createPerchConductor(params: CreatePerchConductorParams): 
         media:          mcpInstances.mediaMcpServer,
         health:         mcpInstances.healthMcpServer,
         email:          mcpInstances.emailMcpServer,
+        zotero:         mcpInstances.zoteroMcpServer,
         // No browser (single Bun.WebView — conversation only).
     };
 

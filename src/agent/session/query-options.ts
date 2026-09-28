@@ -31,7 +31,8 @@ export type SessionMcpServerName
       | 'contacts'
       | 'user-context'
       | 'browser'
-      | 'health';
+      | 'health'
+      | 'zotero';
 
 /** MCP servers configured for a session, by name. Absent/undefined entries are not attached. */
 export type SessionMcpServers = Partial<Record<SessionMcpServerName, McpServerConfig>>;
@@ -190,7 +191,7 @@ const DISALLOWED_CRON_TOOLS = ['CronCreate', 'CronDelete', 'CronList', 'Schedule
  * matching the one-shot path's historical behaviour.
  */
 const OPTIONAL_MCP_SERVER_ORDER: Exclude<SessionMcpServerName, 'memory'>[] = [
-    'discord', 'inbox', 'email', 'bsky', 'caldav', 'wikipedia', 'media', 'contacts', 'user-context', 'browser', 'health',
+    'discord', 'inbox', 'email', 'bsky', 'caldav', 'wikipedia', 'media', 'contacts', 'user-context', 'browser', 'health', 'zotero',
 ];
 
 /**

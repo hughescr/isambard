@@ -16,6 +16,7 @@ import * as personContextMcpModule from '@/agent/person-context-mcp-server';
 import type { QuestionRegistry } from '@/agent/question-registry/registry';
 import { createChannelId } from '@/agent/types';
 import * as wikipediaMcpModule from '@/agent/wikipedia-mcp-server';
+import * as zoteroMcpModule from '@/agent/zotero-mcp-server';
 import * as mcpServersModule from '@/app/mcp-servers';
 import type { MCPServersOptions } from '@/app/mcp-servers';
 import * as bskyCheckpointModule from '@/integrations/bsky/checkpoint';
@@ -27,6 +28,7 @@ import type { ChannelRegistryManager } from '@/integrations/discord/channel-regi
 import type { InboxManager } from '@/integrations/discord/inbox/inbox-manager';
 import type { MessageSearchService } from '@/integrations/discord/message-history/search';
 import { splitMessage } from '@/integrations/discord/messages';
+import type { ZoteroDeps } from '@/integrations/zotero';
 import type { ServiceHealthRegistry } from '@/services';
 import type { TokenBucketRateLimiter } from '@/services/rate-limiters/token-bucket';
 import type { ContactBackend, ContactChangeRequest, PersonAllowlist } from '@/storage';
@@ -786,6 +788,73 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
         const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
 
         expect(result.healthMcpServer).toBeUndefined();
+    });
+
+    describe('zotero', () => {
+        const zotero = { client: {}, metadata: {}, maxStoredFileBytes: 52_428_800, izzyUserId: 21_862_647, addPapersLock: {} } as unknown as ZoteroDeps;
+
+        test.each(['conversation', 'perch'] as const)('builds the Zotero server for the %s role with the browser policy and caps', (role) => {
+            const mockZoteroServer = freshServerConfig('zotero');
+            const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer').mockReturnValue(mockZoteroServer);
+            spies.push(createZoteroSpy);
+            const policy = { allowlist: ['example.org'] };
+            const shared = mcpServersModule.createMcpSharedDeps({ ...mockOptions, zotero, browserPolicy: policy, browserMaxTextBytes: 100_000, browserMaxScreenshotBytes: 2_000_000 });
+
+            const result = mcpServersModule.createMcpServerInstances(shared, { role });
+
+            expect(result.zoteroMcpServer).toBe(mockZoteroServer);
+            expect(createZoteroSpy).toHaveBeenCalledTimes(1);
+            expect(createZoteroSpy.mock.calls[0][0]).toEqual({ ...zotero, hostPolicy: policy, maxHtmlBytes: 100_000, maxUrlPdfBytes: 2_000_000 });
+        });
+
+        test.each([1234, 5678])('takes the URL PDF cap from browserMaxScreenshotBytes (%d), never from maxStoredFileBytes', (cap) => {
+            const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer').mockReturnValue(freshServerConfig('zotero'));
+            spies.push(createZoteroSpy);
+            const shared = mcpServersModule.createMcpSharedDeps({ ...mockOptions, zotero, browserMaxTextBytes: 100_000, browserMaxScreenshotBytes: cap });
+
+            mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+            expect(createZoteroSpy.mock.calls[0][0].maxUrlPdfBytes).toBe(cap);
+        });
+
+        test('defaults to a permissive policy object when no browser policy is given', () => {
+            const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer').mockReturnValue(freshServerConfig('zotero'));
+            spies.push(createZoteroSpy);
+            const shared = mcpServersModule.createMcpSharedDeps({ ...mockOptions, zotero, browserMaxTextBytes: 1, browserMaxScreenshotBytes: 2 });
+
+            mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+            const { hostPolicy } = createZoteroSpy.mock.calls[0][0];
+            expect(hostPolicy).toEqual({ allowlist: undefined });
+            expect(Object.hasOwn(hostPolicy, 'allowlist')).toBe(true);
+        });
+
+        test.each([
+            ['browserMaxTextBytes', { browserMaxScreenshotBytes: 2 }],
+            ['browserMaxScreenshotBytes', { browserMaxTextBytes: 1 }],
+        ])('skips the Zotero server with an error log when %s is missing', (_missing, caps) => {
+            const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer').mockReturnValue(freshServerConfig('zotero'));
+            spies.push(createZoteroSpy);
+            mockLogger.error.mockClear();
+            const shared = mcpServersModule.createMcpSharedDeps({ ...mockOptions, zotero, ...caps });
+
+            const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+            expect(result.zoteroMcpServer).toBeUndefined();
+            expect(createZoteroSpy).not.toHaveBeenCalled();
+            expect(mockLogger.error).toHaveBeenCalledWith('browserMaxTextBytes and browserMaxScreenshotBytes are required for the Zotero URL fetch caps; skipping zotero MCP server');
+        });
+
+        test('is absent when Zotero is not configured', () => {
+            const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer');
+            spies.push(createZoteroSpy);
+            const shared = mcpServersModule.createMcpSharedDeps({ ...mockOptions, browserMaxTextBytes: 1, browserMaxScreenshotBytes: 2 });
+
+            const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
+
+            expect(result.zoteroMcpServer).toBeUndefined();
+            expect(createZoteroSpy).not.toHaveBeenCalled();
+        });
     });
 });
 

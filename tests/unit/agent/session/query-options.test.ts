@@ -207,7 +207,7 @@ describe('buildAllowedTools', () => {
     });
 
     test('every configured mcpServers key has a matching allowedTools pattern', () => {
-        const names: (keyof SessionMcpServers)[] = ['memory', 'discord', 'inbox', 'email', 'bsky', 'caldav', 'wikipedia', 'media', 'contacts', 'user-context', 'browser', 'health'];
+        const names: (keyof SessionMcpServers)[] = ['memory', 'discord', 'inbox', 'email', 'bsky', 'caldav', 'wikipedia', 'media', 'contacts', 'user-context', 'browser', 'health', 'zotero'];
         for(const name of names) {
             const tools = buildAllowedTools({ [name]: mockMcpServer });
             expect(tools).toContain(`mcp__${name}__*`);
@@ -222,6 +222,11 @@ describe('buildAllowedTools', () => {
         // discord precedes inbox in OPTIONAL_MCP_SERVER_ORDER; push (not unshift) keeps them last, in that order.
         const tools = buildAllowedTools({ discord: mockMcpServer, inbox: mockMcpServer });
         expect(tools.slice(-2)).toEqual(['mcp__discord__*', 'mcp__inbox__*']);
+    });
+
+    test('adds mcp__zotero__* last, and only when the Zotero server is configured', () => {
+        expect(buildAllowedTools({ health: mockMcpServer, zotero: mockMcpServer }).slice(-2)).toEqual(['mcp__health__*', 'mcp__zotero__*']);
+        expect(buildAllowedTools({ health: mockMcpServer })).not.toContain('mcp__zotero__*');
     });
 
     test('an explicit null server value is treated as absent, not attached', () => {

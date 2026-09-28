@@ -1,10 +1,11 @@
 import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '@hughescr/logger';
 import type { Client } from 'discord.js';
-import { createMemoryMCPServer, createDiscordMCPServer, createDiscordInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createPersonContextMCPServer, createMediaMCPServer, createHealthMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator, type SessionRole } from '@/agent';
+import { createMemoryMCPServer, createDiscordMCPServer, createDiscordInboxMCPServer, createBskyMCPServer, createBrowserMCPServer, createCaldavMCPServer, createWikipediaMCPServer, createContactsMCPServer, createPersonContextMCPServer, createMediaMCPServer, createHealthMCPServer, createZoteroMCPServer, type BrowserAdapter, type BrowserHostPolicy, type QuestionRegistry, type PersonHistoryCoordinator, type SessionRole } from '@/agent';
 import { BskyCheckpointManager, type BlueskyClient, type BskyRejectionBackend, type BskyReplyInput } from '@/integrations/bsky';
 import type { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { DMTracker, resolveChannelId, splitMessage, withDiscordRetry, buildQuestionButtons, type DiscordCapability, type MessageSearchService, type ChannelRegistryManager, type InboxManager } from '@/integrations/discord';
+import type { ZoteroDeps } from '@/integrations/zotero';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { MemoryToolBackend, MemoryPath, ContactBackend, ContactChangeRequest, PersonAllowlist, EmbedderLike, VectorIndex, OperationalStateStore } from '@/storage';
 
@@ -189,6 +190,13 @@ export interface MCPServersOptions {
      */
     personAllowlist?: PersonAllowlist
 
+    /**
+     * Optional Zotero dependencies (built once by `createZoteroDeps` when the `ZoteroApiKey` secret
+     * is set). When present, the Zotero MCP server is built for every role, using the browser host
+     * policy and the browser byte caps for URL fetches.
+     */
+    zotero?: ZoteroDeps
+
 }
 
 /**
@@ -257,6 +265,11 @@ interface MCPServers {
      * health guard — it must answer even during an outage.
      */
     healthMcpServer?: McpServerConfig
+
+    /**
+     * Zotero MCP server for the shared group library, built when `options.zotero` is supplied.
+     */
+    zoteroMcpServer?: McpServerConfig
 }
 
 /**
@@ -301,6 +314,24 @@ export interface CreateMcpServerInstancesOptions {
 }
 
 /**
+ * The Zotero MCP server, whose URL fetches use the browser's own host policy and byte caps from the
+ * same options the browser server gets; skipped (with an error log) when those caps are missing.
+ */
+function buildZoteroMcpServer(zotero: ZoteroDeps, options: MCPServersOptions): McpServerConfig | undefined {
+    if(options.browserMaxTextBytes === undefined || options.browserMaxScreenshotBytes === undefined) {
+        logger.error('browserMaxTextBytes and browserMaxScreenshotBytes are required for the Zotero URL fetch caps; skipping zotero MCP server');
+        return undefined;
+    }
+    return createZoteroMCPServer({
+        ...zotero,
+        // Stryker disable next-line llm: browserPolicy is typed BrowserHostPolicy | undefined (object or nullish), so || and ?? select the same value.
+        hostPolicy:     options.browserPolicy ?? { allowlist: undefined },
+        maxHtmlBytes:   options.browserMaxTextBytes,
+        maxUrlPdfBytes: options.browserMaxScreenshotBytes,
+    });
+}
+
+/**
  * Builds the dependencies shared across every MCP server instance set for a
  * session's lifetime: singleton state (DMTracker, BskyCheckpointManager) that must
  * be constructed exactly once, plus the options every instance set is built from.
@@ -329,7 +360,7 @@ export function createMcpSharedDeps(options: MCPServersOptions): McpSharedDeps {
  * the perch session) must call this separately, passing the same {@link McpSharedDeps}
  * so singleton state (DMTracker, BskyCheckpointManager) is not reconstructed.
  *
- * This factory consolidates the creation of twelve MCP servers:
+ * This factory consolidates the creation of thirteen MCP servers:
  * 1. Memory MCP server - for deep memory access (view, store, search)
  * 2. Discord MCP server - for message history and sending messages
  * 3. Inbox MCP server - for unread message management
@@ -342,6 +373,7 @@ export function createMcpSharedDeps(options: MCPServersOptions): McpSharedDeps {
  * 10. Email MCP server - built from `params.emailServerFactory` when given (optional)
  * 11. Browser MCP server - for web browser automation; 'conversation' role only
  * 12. Health MCP server - read-only service-health reporting, built from `options.healthRegistry` when given (optional)
+ * 13. Zotero MCP server - the shared Zotero group library, built from `options.zotero` when given; every role (optional)
  *
  * @param shared - Dependencies shared across every instance set (see {@link createMcpSharedDeps})
  * @param params - Which role this instance set is for, and an optional email server factory
@@ -471,6 +503,8 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         }
     }
 
+    const zoteroMcpServer = options.zotero ? buildZoteroMcpServer(options.zotero, options) : undefined;
+
     return {
         memoryMcpServer,
         discordMcpServer,
@@ -484,5 +518,6 @@ export function createMcpServerInstances(shared: McpSharedDeps, params: CreateMc
         browserMcpServer,
         emailMcpServer,
         healthMcpServer,
+        zoteroMcpServer,
     };
 }
