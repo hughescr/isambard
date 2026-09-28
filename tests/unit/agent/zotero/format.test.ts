@@ -202,5 +202,31 @@ describe('zotero format', () => {
             expect(rows[0].numItems).toBe(0);
             expect(rows[0].numCollections).toBe(0);
         });
+
+        test('stops on a parent cycle that does not pass through the starting collection', () => {
+            // B and C name each other; A hangs off that loop. A bounded getter turns a walk that
+            // never ends into a failure instead of a hang.
+            let parentReads = 0;
+            const looped = (key: string, name: string, parent: string): ZoteroCollection => ({
+                key,
+                version: 1,
+                data:    {
+                    key,
+                    version: 1,
+                    name,
+                    get parentCollection(): string {
+                        parentReads++;
+                        if(parentReads > 100) {
+                            throw new Error('the parent walk did not stop');
+                        }
+                        return parent;
+                    },
+                },
+            });
+
+            const rows = collectionRows([looped('AAAA2345', 'A', 'BBBB2345'), looped('BBBB2345', 'B', 'CCCC2345'), looped('CCCC2345', 'C', 'BBBB2345')]);
+
+            expect(rows.map(row => row.path)).toEqual(['C / B / A', 'C / B', 'B / C']);
+        });
     });
 });

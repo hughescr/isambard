@@ -83,10 +83,11 @@ function errorMessage(error: unknown): string {
 
 /**
  * A DOI to look up. arXiv-minted DOIs (`10.48550/arXiv.<id>`) are DataCite DOIs that Crossref does
- * not know, so they go to arXiv instead.
+ * not know, so they go to arXiv instead. `doi` has been through `normalizeDoi` (no whitespace), so
+ * the capture runs to its end without a `$`.
  */
 function routeDoi(doi: string): { kind: 'doi', doi: string } | { kind: 'arxiv', arxiv: ArxivId } {
-    const minted = /^10\.48550\/arxiv\.(.+)$/i.exec(doi);
+    const minted = /^10\.48550\/arxiv\.(.+)/i.exec(doi);
     const arxiv = minted === null ? undefined : normalizeArxivId(minted[1]!);
     return arxiv === undefined ? { kind: 'doi', doi } : { kind: 'arxiv', arxiv };
 }
@@ -164,7 +165,13 @@ function arxivKey(arxiv: ArxivId): string {
 /** A PDF fetched by URL becomes a minimal `document`; updateItems can fill it in later. */
 function pdfDocument(finalUrl: string, accessDate: string): MappedItem {
     const title = lastPathSegment(finalUrl).replace(/\.pdf$/i, '');
-    return { itemType: 'document', fields: { title, url: finalUrl, accessDate }, creators: [], pdfCandidates: [] };
+    return {
+        itemType:      'document',
+        fields:        { title, url: finalUrl, accessDate },
+        creators:      [],
+        // Stryker disable next-line ArrayDeclaration: this resolution carries the fetched PDF's bytes, so attachFound never reads its candidates
+        pdfCandidates: [],
+    };
 }
 
 /** Round 1 (batched DOIs, arXiv ids, pages) and round 2 (identifiers the pages named), then one resolution per input. */
@@ -311,17 +318,17 @@ async function findPdf(deps: AddPapersDeps, candidates: string[]): Promise<{ byt
     if(candidates.length === 0) {
         return { pdf: 'no_candidate' };
     }
-    let lastError = '';
+    let lastError: unknown;
     for(const url of candidates) {
         try {
             // eslint-disable-next-line no-await-in-loop -- sequential by design: stop at the first candidate that is a PDF
             const fetched = await deps.fetchPdf(url);
             return { bytes: fetched.bytes, url: fetched.finalUrl };
         } catch (error) {
-            lastError = errorMessage(error);
+            lastError = error;
         }
     }
-    return { pdf: `failed: ${lastError}` };
+    return { pdf: `failed: ${errorMessage(lastError)}` };
 }
 
 async function attachFound(deps: AddPapersDeps, added: { index: number, key: string, resolution: Extract<Resolution, { mapped: MappedItem }> }[], results: PaperResult[]): Promise<void> {

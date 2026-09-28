@@ -150,11 +150,6 @@ describe('assertKey error text and defense-in-depth masking', () => {
 });
 
 describe('read-modify-write: strict field omission', () => {
-    // No test for usernameOf's `user !== null` branch (client.ts ~L158): `meta.lastModifiedByUser`
-    // is parsed through `userRefSchema` (a non-nullable z.looseObject) on every read, so a
-    // schema-valid response can never hand that branch a literal `null`; that mutant is left in
-    // notKilled as effectively unreachable through the client's public API.
-
     test('a conflict without a known editor strictly omits the lastModifiedBy field, not just as undefined', async () => {
         const { client } = setup((s) => {
             s.addItem({ key: 'EFGH6789', version: 3 });

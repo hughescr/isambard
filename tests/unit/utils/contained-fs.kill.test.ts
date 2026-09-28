@@ -74,6 +74,47 @@ function descriptorZero(wantZero: (name: string, nth: number) => boolean, log: s
     };
 }
 
+/**
+ * Wraps the real operations with `override`, which can tell each descriptor by what it was opened
+ * on (`nameOf`: `root`, `temp`, a segment, or `segment #n` for its n-th open).
+ */
+function tracked(override: (real: ContainedIo, nameOf: (fd: number) => string | undefined) => Partial<ContainedIo>): IoWrap {
+    return (real) => {
+        const names = new Map<number, string>();
+        const opens = new Map<string, number>();
+        const io: ContainedIo = {
+            ...real,
+            openat: (dirFd, name, flags, mode) => {
+                const fd = real.openat(dirFd, name, flags, mode);
+                const key = openedName(name);
+                const nth = (opens.get(key) ?? 0) + 1;
+                opens.set(key, nth);
+                names.set(fd, nth === 1 ? key : `${key} #${nth}`);
+                return fd;
+            },
+        };
+        return { ...io, ...override(io, fd => names.get(fd)) };
+    };
+}
+
+/** A close that really closes, then rejects for the descriptor named `failing`. */
+function closeFailingFor(failing: string, extra: (real: ContainedIo) => Partial<ContainedIo> = () => ({})): IoWrap {
+    return tracked((real, nameOf) => ({
+        ...extra(real),
+        close: async (fd) => {
+            const name = nameOf(fd);
+            await real.close(fd);
+            if(name === failing) {
+                throw new Error(`close failed: ${failing}`);
+            }
+        },
+    }));
+}
+
+function messageOf(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 let base = '';
 let counter = 0;
 
@@ -330,6 +371,161 @@ describe('descriptor 0 is a valid handle', () => {
         expect(result).toEqual({ path: 'd/p.pdf' });
         expect(fs.readFileSync(path.join(root, 'd', 'p.pdf'), 'utf8')).toBe('%PDF-1.7 hello');
         expect(log).toEqual([`0 is ${name} #${nth}`, '0 closed']);
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+});
+
+describe('every close is awaited, so a failed close is the outcome reported', () => {
+    test('a walked directory handle that fails to close is reported in place of not_directory', async () => {
+        const root = freshRoot();
+        fs.mkdirSync(path.join(root, 'a'));
+
+        const error = await caught(openContainedForRead(root, 'a/missing/c.pdf', 100, { io: closeFailingFor('a') }));
+
+        expect(messageOf(error)).toBe('close failed: a');
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test('a read whose file handle fails to close rejects rather than returning the bytes', async () => {
+        const root = freshRoot();
+        fs.writeFileSync(path.join(root, 'x.pdf'), PDF);
+
+        const error = await caught(openContainedForRead(root, 'x.pdf', 100, { io: closeFailingFor('x.pdf') }));
+
+        expect(messageOf(error)).toBe('close failed: x.pdf');
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test('a failed data write whose temp handle then fails to close reports the close', async () => {
+        const root = freshRoot();
+        const io = closeFailingFor('temp', () => ({
+            write: async () => {
+                throw new Error('write failed');
+            },
+        }));
+
+        const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io }));
+
+        expect(messageOf(error)).toBe('close failed: temp');
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test('a temp handle that fails to close after a good write stops the commit', async () => {
+        const root = freshRoot();
+
+        const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io: closeFailingFor('temp') }));
+
+        expect(messageOf(error)).toBe('close failed: temp');
+        expect(fs.existsSync(path.join(root, 'd', 'p.pdf'))).toBe(false);
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test('a re-walked directory handle that fails to close is reported after the commit', async () => {
+        const root = freshRoot();
+
+        const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io: closeFailingFor('d #2') }));
+
+        expect(messageOf(error)).toBe('close failed: d #2');
+        expect(fs.readFileSync(path.join(root, 'd', 'p.pdf'), 'utf8')).toBe('%PDF-1.7 hello');
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+});
+
+describe('results only the io seam produces on demand', () => {
+    test('a file that grew past the limit after fstat is refused, read one byte past the fstat size', async () => {
+        const root = freshRoot();
+        fs.writeFileSync(path.join(root, 'g.pdf'), '0123456789');
+        const readLengths: number[] = [];
+        const io = tracked((real, nameOf) => ({
+            fstat: async (fd) => {
+                const stat = await real.fstat(fd);
+                if(nameOf(fd) === 'g.pdf') {
+                    stat.size -= 1;
+                }
+                return stat;
+            },
+            read: async (fd, buffer, offset, length, position) => {
+                readLengths.push(length);
+                return real.read(fd, buffer, offset, length, position);
+            },
+        }));
+
+        const error = await caught(openContainedForRead(root, 'g.pdf', 9, { io }));
+
+        expect((error as PathSecurityError).message).toBe('File is larger than the 9-byte limit: g.pdf');
+        expect((error as PathSecurityError).context).toEqual({ path: 'g.pdf', reason: 'too_large' });
+        expect(readLengths).toEqual([10]);
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test('a short write continues from where it stopped with the remaining length', async () => {
+        const root = freshRoot();
+        const requests: [number, number][] = [];
+        const io = tracked(real => ({
+            write: async (fd, bytes, offset, length, position) => {
+                requests.push([offset, length]);
+                return real.write(fd, bytes, offset, requests.length === 1 ? 4 : length, position);
+            },
+        }));
+
+        await writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io });
+
+        expect(requests).toEqual([[0, PDF.length], [4, PDF.length - 4]]);
+        expect(fs.readFileSync(path.join(root, 'd', 'p.pdf'), 'utf8')).toBe('%PDF-1.7 hello');
+    });
+
+    test('a failed chmod of the temp file removes it before any byte is written', async () => {
+        const root = freshRoot();
+        const writes: number[] = [];
+        const io = tracked(real => ({
+            fchmod: async () => {
+                throw new Error('fchmod failed');
+            },
+            write: async (fd, bytes, offset, length, position) => {
+                writes.push(length);
+                return real.write(fd, bytes, offset, length, position);
+            },
+        }));
+
+        const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io }));
+
+        expect(messageOf(error)).toBe('fchmod failed');
+        expect(writes).toEqual([]);
+        expect(fs.readdirSync(path.join(root, 'd'))).toEqual([]);
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test('the temp file is created with mode 0600 requested', async () => {
+        const root = freshRoot();
+        const modes = new Map<string, number>();
+        const io: IoWrap = real => ({
+            ...real,
+            openat: (dirFd, name, flags, mode) => {
+                modes.set(openedName(name), mode);
+                return real.openat(dirFd, name, flags, mode);
+            },
+        });
+
+        await writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io });
+
+        expect(modes.get('temp')).toBe(0o600);
+    });
+
+    test('a re-walked directory with the same inode number on another device is a changed directory', async () => {
+        const root = freshRoot();
+        const io = tracked((real, nameOf) => ({
+            fstat: async (fd) => {
+                const stat = await real.fstat(fd);
+                if(nameOf(fd) === 'd #2') {
+                    stat.dev += 1;
+                }
+                return stat;
+            },
+        }));
+
+        const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io }));
+
+        expect((error as PathSecurityError).context.reason).toBe('changed_during_write');
         expect(fdsOpenUnder(root)).toEqual([]);
     });
 });

@@ -154,8 +154,7 @@ interface Versioned {
 
 /** `meta.<field>.username` when it is a string. */
 function usernameOf(meta: Record<string, unknown> | undefined, field: string): string | undefined {
-    const user = meta?.[field];
-    const username = typeof user === 'object' && user !== null ? (user as { username?: unknown }).username : undefined;
+    const username = (meta?.[field] as { username?: unknown } | null | undefined)?.username;
     return typeof username === 'string' ? username : undefined;
 }
 
