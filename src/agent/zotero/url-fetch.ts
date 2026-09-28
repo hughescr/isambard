@@ -96,6 +96,7 @@ function transportFailure(url: string, error: unknown): ZoteroError {
 
 /** The hop's single resolution, every answer checked; the first answer (canonical) is pinned. */
 async function pinHost(url: URL, options: UrlFetchOptions): Promise<Pinned> {
+    // Stryker disable next-line StringMethodArgSwap: URL parsing admits '[' in a hostname only as the opening bracket of a canonical IPv6 literal (see host-guard.ts's own forbidden-host-code-point note), so startsWith and includes agree for every hostname `new URL()` can produce
     const host = url.hostname.startsWith('[') ? url.hostname.slice(1, -1) : url.hostname;
     let answers: { address: string }[];
     if(isIP(host) === 0) {
@@ -133,6 +134,7 @@ async function send(url: URL, pinned: Pinned, options: UrlFetchOptions): Promise
         const answer: Parameters<LookupCallback> = lookupOptions?.all === true ? [null, [pinned]] : [null, pinned.address, pinned.family];
         callback(...answer);
     };
+    // Stryker disable next-line StringMethodArgSwap: URL parsing admits '[' in a hostname only as the opening bracket of a canonical IPv6 literal, so startsWith and includes agree for every hostname `new URL()` can produce
     const host = url.hostname.startsWith('[') ? url.hostname.slice(1, -1) : url.hostname;
     const requestOptions: https.RequestOptions = {
         method:  'GET',
@@ -153,6 +155,7 @@ function mediaType(header: string | undefined): string | undefined {
     if(header === undefined) {
         return undefined;
     }
+    // Stryker disable next-line StringLiteral: String.split(';') on a defined string always returns a non-empty array, so index 0 is never undefined; the ?? '' only satisfies noUncheckedIndexedAccess and can never itself execute
     const value = (header.split(';')[0] ?? '').trim().toLowerCase();
     return value === '' ? undefined : value;
 }
@@ -211,8 +214,12 @@ async function streamCapped(response: http.IncomingMessage, url: string, content
     for await (const chunk of response as AsyncIterable<Buffer>) {
         chunks.push(chunk);
         total += chunk.length;
-        if(kind === undefined && total >= PDF_MAGIC.length) {
-            kind = decideKind(Buffer.concat(chunks), contentType, url, options.accept);
+        if(total >= PDF_MAGIC.length) {
+            // decideKind only ever looks at the fixed-size magic prefix plus contentType/accept, all of
+            // which are invariant once total reaches PDF_MAGIC.length, so recomputing on every later chunk
+            // would always reassign the same kind; ??= keeps the one call the original explicit
+            // `kind === undefined` guard made, without a redundant second boolean condition.
+            kind ??= decideKind(Buffer.concat(chunks), contentType, url, options.accept);
         }
         if(kind === 'html' && total > options.maxHtmlBytes) {
             break;
