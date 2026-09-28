@@ -35,6 +35,9 @@ export {
     type PlaceholderOutcome
 } from './client';
 export { ZoteroRequester, type ZoteroRequestDeps, type ZoteroMethod, type ZoteroTarget } from './request';
+export { CrossrefResolver, CROSSREF_SELECT, type CrossrefDeps } from './crossref';
+export { ArxivResolver, type ArxivDeps } from './arxiv';
+export { createZoteroDeps, type ZoteroDeps, type ZoteroDepsOverrides, type ZoteroMetadataLookup } from './deps';
 export type {
     FetchLike,
     ZoteroItem,
