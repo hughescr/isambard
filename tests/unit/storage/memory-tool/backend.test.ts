@@ -9,6 +9,7 @@ import {
     UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { settleWithFakeTimers } from '../../../helpers/settle-with-fake-timers';
 import { mockLogger } from '../../../setup';
 import { ItemNotFoundError, ValidationError } from '@/errors/storage';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
@@ -33,6 +34,7 @@ describe('MemoryToolBackend', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         ddbMock.reset();
         if(dateNowSpy) {
             dateNowSpy.mockRestore();
@@ -468,12 +470,13 @@ describe('MemoryToolBackend', () => {
                     UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 123 } } }] },
                 });
 
-                const result = await backend.create({
+                jest.useFakeTimers();
+                const result = await settleWithFakeTimers(backend.create({
                     path:        testPath,
                     content:     'Body to preserve',
                     contentType: 'text/markdown',
                     tags:        new Set(['important']),
-                });
+                }));
 
                 expect(result.content).toBe('Body to preserve');
                 expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
@@ -645,7 +648,8 @@ describe('MemoryToolBackend', () => {
                     UnprocessedItems: { TestTable: [{ PutRequest: { Item: { PK: 123 } } }] },
                 });
 
-                const result = await backend.update(testPath, { tags: new Set(['newtag']) });
+                jest.useFakeTimers();
+                const result = await settleWithFakeTimers(backend.update(testPath, { tags: new Set(['newtag']) }));
 
                 expect(result.tags).toEqual(new Set(['newtag']));
                 expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
@@ -817,7 +821,8 @@ describe('MemoryToolBackend', () => {
                     UnprocessedItems: { TestTable: [{ DeleteRequest: { Key: { PK: 123 } } }] },
                 });
 
-                const result = await backend.delete(testPath);
+                jest.useFakeTimers();
+                const result = await settleWithFakeTimers(backend.delete(testPath));
 
                 expect(result?.path).toBe(testPath);
                 expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({

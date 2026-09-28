@@ -686,6 +686,10 @@ describe('processContacts', () => {
     // Spy on process.stdout.write to capture dry-run output without polluting test output.
     let stdoutSpy: ReturnType<typeof spyOn<NodeJS.WriteStream, 'write'>>;
 
+    // Tests issuing more than one UpdateCommand pass this instead of the default limiter, whose
+    // real 250ms spacing between writes is covered by the createUpdateRateLimiter tests.
+    const noPace = async (): Promise<void> => {};
+
     beforeEach(() => {
         mockLogger.debug.mockClear();
         mockLogger.warn.mockClear();
@@ -761,7 +765,7 @@ describe('processContacts', () => {
             { platform: 'discord', value: 'user-456' },
         ]);
 
-        const result = await processContacts([item], TABLE_NAME, docClient, false);
+        const result = await processContacts([item], TABLE_NAME, docClient, false, noPace);
 
         expect(result.updated).toBe(2);
         expect(result.errors).toBe(0);
@@ -847,7 +851,7 @@ describe('processContacts', () => {
             { platform: 'discord', value: 'user-789' },
         ]);
 
-        const result = await processContacts([item], TABLE_NAME, docClient, false);
+        const result = await processContacts([item], TABLE_NAME, docClient, false, noPace);
 
         expect(result.skipped).toBe(1);
         expect(result.updated).toBe(1);
@@ -912,7 +916,7 @@ describe('processContacts', () => {
             makeContact('bob-id', [{ platform: 'bsky', value: 'did:plc:abcdef' }]),
         ];
 
-        const result = await processContacts(items, TABLE_NAME, docClient, false);
+        const result = await processContacts(items, TABLE_NAME, docClient, false, noPace);
 
         expect(result.updated).toBe(2);
         expect(result.errors).toBe(0);
@@ -1007,7 +1011,7 @@ describe('processContacts', () => {
             },
         ];
 
-        const result = await processContacts(items, TABLE_NAME, docClient, false);
+        const result = await processContacts(items, TABLE_NAME, docClient, false, noPace);
 
         expect(result.updated).toBe(1);
         expect(result.skipped).toBe(1);

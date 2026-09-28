@@ -137,6 +137,7 @@ describe('video subprocess runners', () => {
     });
 
     it('kills a binary process on its configured timeout', async () => {
+        jest.useFakeTimers();
         let killed = 0;
         let finish!: (exitCode: number) => void;
         Bun.spawn = (() => ({
@@ -147,7 +148,11 @@ describe('video subprocess runners', () => {
                 finish(143);
             },
         })) as unknown as typeof Bun.spawn;
-        const result = await createBinarySpawnRunner()(['tool'], { timeout: 5 });
+        const task = createBinarySpawnRunner()(['tool'], { timeout: 5 });
+        jest.advanceTimersByTime(4);
+        expect(killed).toBe(0);
+        jest.advanceTimersByTime(1);
+        const result = await task;
         expect(result.exitCode).toBe(143);
         expect(killed).toBe(1);
     });

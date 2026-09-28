@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { BatchWriteCommand, DeleteCommand, DynamoDBDocumentClient, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import { settleWithFakeTimers } from '../../../helpers/settle-with-fake-timers';
 import { MemoryToolBackendTagIndex } from '@/storage/memory-tool/backend-tag-index';
 import { createIndexLayer, type MemoryPath } from '@/storage/memory-tool/types';
 import { epochSecondsSchema } from '@/storage/repositories/types';
@@ -31,7 +32,10 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
         backend = new MemoryToolBackendTagIndex(ddbMock as unknown as DynamoDBDocumentClient, 'TestTable');
     });
 
-    afterEach(() => ddbMock.reset());
+    afterEach(() => {
+        jest.useRealTimers();
+        ddbMock.reset();
+    });
 
     const batchSizes = () => ddbMock.commandCalls(BatchWriteCommand).map((call) => {
         const requests = call.args[0].input.RequestItems?.TestTable;
@@ -48,13 +52,14 @@ describe('MemoryToolBackendTagIndex mutation contracts', () => {
             },
         });
 
-        await expect(backend.createTagIndexItems(
+        jest.useFakeTimers();
+        await expect(settleWithFakeTimers(backend.createTagIndexItems(
             '/identity/value.md' as MemoryPath,
             new Set(['suffix']),
             '2026-01-01T00:00:00.000Z',
             'preview',
             IDENTITY
-        )).rejects.toThrow('without a TAG# key');
+        ))).rejects.toThrow('without a TAG# key');
         expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
     });
 
