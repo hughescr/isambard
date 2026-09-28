@@ -43,6 +43,7 @@ function readHead(html: string): { metas: Map<string, string[]>, title?: string 
             } else if(name === 'meta') {
                 const key = (attribs.name ?? attribs.property)?.toLowerCase();
                 const content = collapse(attribs.content ?? '');
+                // Stryker disable next-line ConditionalExpression: an undefined key can only reach Map.set under this guard's removal, and nothing ever reads metas.get(undefined), so the entry is unobservable.
                 if(key !== undefined && content !== '') {
                     metas.set(key, [...metas.get(key) ?? [], content]);
                 }
@@ -54,6 +55,7 @@ function readHead(html: string): { metas: Map<string, string[]>, title?: string 
             }
         },
         onclosetag(name) {
+            // Stryker disable next-line ConditionalExpression: <title> is HTML raw-text, so no other tag can close while titleText is set; name is always 'title' whenever titleText !== undefined, making the (name === 'title') half of this guard redundant on its own. (The EqualityOperator flip of the same comparison is NOT equivalent — see "pauses at </head> even without a wrapping <body> tag" below, which kills it.)
             if(name === 'title' && titleText !== undefined) {
                 title = collapse(titleText) || undefined;
                 titleText = undefined;
@@ -61,9 +63,12 @@ function readHead(html: string): { metas: Map<string, string[]>, title?: string 
                 parser.pause();
             }
         },
-    }, { decodeEntities: true });
+    },
+    // Stryker disable next-line ObjectLiteral: htmlparser2's Tokenizer defaults decodeEntities to true, so passing `{ decodeEntities: true }` or `{}` here is behaviourally identical.
+    { decodeEntities: true });
     parser.write(html);
     parser.end();
+    // Stryker disable next-line ConditionalExpression: title is destructured by callers as `const { title } = readHead(...)`, and an explicitly-undefined property reads back identically to an absent one, so always spreading `title` is unobservable.
     return title === undefined ? { metas } : { metas, title };
 }
 
@@ -85,7 +90,10 @@ function resolveUrl(value: string | undefined, base: string): string | undefined
     }
     try {
         return new URL(value, base).href;
-    } catch{
+    // eslint-disable-next-line @stylistic/brace-style -- `catch` deliberately on its own line, not `} catch{`: a Stryker `disable next-line` comment placed immediately before "} catch{" attaches to the try block's last statement, not to the catch clause (Babel comment-attachment), so it silently fails to suppress the mutant on the (equivalent) catch body below.
+    }
+    // Stryker disable next-line BlockStatement: emptying this catch drops only its explicit `return undefined;`; a non-returning function implicitly returns undefined at runtime, so the observable result is identical.
+    catch{
         return undefined;
     }
 }
