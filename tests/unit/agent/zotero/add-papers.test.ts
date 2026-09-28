@@ -326,9 +326,34 @@ describe('addPapers', () => {
             const [result] = await addPapers(deps, [{ url: 'https://files.test/My%20Paper.pdf' }], { attachPdf: true });
 
             expect(result).toMatchObject({ status: 'added', itemType: 'document', title: 'My Paper', pdf: 'attached' });
-            expect(creates(server)[0][0]).toMatchObject({ itemType: 'document', title: 'My Paper', url: 'https://files.test/My%20Paper.pdf', accessDate: '2026-09-27T00:00:00.000Z' });
+            expect(creates(server)[0][0]).toMatchObject({ itemType: 'document', title: 'My Paper', url: 'https://files.test/My%20Paper.pdf', accessDate: '2026-09-27 00:00:00' });
             expect(creates(server)[1][0]).toMatchObject({ itemType: 'attachment', parentItem: result.key, filename: 'My Paper.pdf', title: 'Full Text PDF' });
             expect(pdfCalls).toEqual([]);
+        });
+    });
+
+    describe('accessDate format', () => {
+        // Regression: a clock with milliseconds made toISOString() emit "...:51.133Z", which Zotero rejects
+        // ("'accessDate' must be in ISO 8601 or UTC 'YYYY-MM-DD[ hh:mm:ss]' format ..."). The fake library now
+        // enforces the same rule, so a bad format fails the add rather than passing silently.
+        const NOW_WITH_MS = Date.UTC(2026, 8, 28, 23, 15, 51, 133);
+
+        test('a page URL is added with a whole-second UTC accessDate', async () => {
+            const { server, deps } = setup({ pages: { 'https://pub.test/x': html('<meta name="citation_title" content="Page title">', 'https://pub.test/x') } });
+
+            const [result] = await addPapers({ ...deps, now: () => NOW_WITH_MS }, [{ url: 'https://pub.test/x' }], NO_PDF);
+
+            expect(result).toMatchObject({ status: 'added', title: 'Page title' });
+            expect(creates(server)[0][0]).toMatchObject({ accessDate: '2026-09-28 23:15:51' });
+        });
+
+        test('a PDF URL is added with a whole-second UTC accessDate', async () => {
+            const { server, deps } = setup({ pages: { 'https://files.test/a.pdf': { finalUrl: 'https://files.test/a.pdf', kind: 'pdf', bytes: PDF, truncated: false } } });
+
+            const [result] = await addPapers({ ...deps, now: () => NOW_WITH_MS }, [{ url: 'https://files.test/a.pdf' }], NO_PDF);
+
+            expect(result).toMatchObject({ status: 'added', itemType: 'document' });
+            expect(creates(server)[0][0]).toMatchObject({ accessDate: '2026-09-28 23:15:51' });
         });
     });
 

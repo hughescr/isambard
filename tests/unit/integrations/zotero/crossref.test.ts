@@ -7,7 +7,7 @@ import { ZoteroMetadataError } from '@/errors';
 import { CROSSREF_SELECT, CrossrefResolver } from '@/integrations/zotero/crossref';
 
 const NOW = Date.parse('2026-09-27T12:00:00.000Z');
-const ACCESSED = '2026-09-27T12:00:00.000Z';
+const ACCESSED = '2026-09-27 12:00:00';
 
 function setup(handler: FakeHandler, mailto?: string) {
     const { fetch, calls } = recordingFetch(handler);
@@ -79,6 +79,15 @@ describe('CrossrefResolver request', () => {
         expect(new URL(calls[0].url).searchParams.get('rows')).toBe('1');
     });
 
+    test('stamps accessDate in Zotero\'s form with the milliseconds dropped, never toISOString\'s', async () => {
+        const { fetch } = recordingFetch(() => worksResponse([work({})]));
+        const resolver = new CrossrefResolver({ fetch, now: () => Date.UTC(2026, 8, 28, 23, 15, 51, 133), timeoutSignal: () => new AbortController().signal });
+
+        const found = await resolver.lookupDois(['10.1234/x']);
+
+        expect(found.get('10.1234/x')?.fields.accessDate).toBe('2026-09-28 23:15:51');
+    });
+
     test('defaults to wall-clock access dates and a real abort signal', async () => {
         const { fetch, calls } = recordingFetch(() => worksResponse([work({})]));
         const resolver = new CrossrefResolver({ fetch });
@@ -86,7 +95,9 @@ describe('CrossrefResolver request', () => {
         const found = await resolver.lookupDois(['10.1234/x']);
 
         expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
-        const accessed = Date.parse(found.get('10.1234/x')?.fields.accessDate ?? '');
+        const accessDate = found.get('10.1234/x')?.fields.accessDate ?? '';
+        expect(accessDate).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+        const accessed = Date.parse(`${accessDate.replace(' ', 'T')}Z`);
         expect(Math.abs(accessed - Date.now())).toBeLessThan(60_000);
     });
 

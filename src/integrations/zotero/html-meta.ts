@@ -103,7 +103,7 @@ function resolveUrl(value: string | undefined, base: string): string | undefined
 
 /**
  * Reads citation metadata from an HTML prefix. `pageUrl` is the final URL of the page (used for
- * `url` and to resolve a relative `citation_pdf_url`); `accessDate` is an ISO timestamp.
+ * `url` and to resolve a relative `citation_pdf_url`); `accessDate` is a Zotero timestamp (`zoteroTimestamp`).
  */
 export function parseCitationMeta(html: string, pageUrl: string, accessDate: string): CitationMeta {
     const { metas, title } = readHead(html);

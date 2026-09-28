@@ -15,6 +15,7 @@ export {
     type IdentitySource
 } from './identifiers';
 export { textToNoteHtml } from './note-html';
+export { zoteroTimestamp } from './timestamp';
 export { fitToTemplate, type MappedCreator, type MappedItem, type NewItemData } from './item-fields';
 export { parseCitationMeta, type CitationMeta } from './html-meta';
 export {

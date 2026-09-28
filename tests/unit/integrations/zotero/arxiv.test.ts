@@ -117,7 +117,7 @@ describe('ArxivResolver', () => {
                 url:            'https://arxiv.org/abs/1706.03762',
                 DOI:            '10.48550/arXiv.1706.03762',
                 libraryCatalog: 'arXiv.org',
-                accessDate:     '2026-09-27T12:00:00.000Z',
+                accessDate:     '2026-09-27 12:00:00',
             },
             creators: [
                 { creatorType: 'author', firstName: 'Ashish', lastName: 'Vaswani' },
@@ -154,7 +154,7 @@ describe('ArxivResolver', () => {
                 url:            'https://arxiv.org/abs/2101.00001',
                 DOI:            '10.48550/arXiv.2101.00001',
                 libraryCatalog: 'arXiv.org',
-                accessDate:     '2026-09-27T12:00:00.000Z',
+                accessDate:     '2026-09-27 12:00:00',
                 extra:          'Journal ref: J 1',
             },
             creators:      [],
@@ -215,6 +215,15 @@ describe('ArxivResolver', () => {
         expect(error.message).toBe('arXiv lookup failed: socket closed');
     });
 
+    test('stamps accessDate in Zotero\'s form with the milliseconds dropped, never toISOString\'s', async () => {
+        const { resolver, clock } = setup(feed);
+        clock.advance(11_133);
+
+        const found = await resolver.lookupIds(['1706.03762']);
+
+        expect(found.get('1706.03762')?.fields.accessDate).toBe('2026-09-27 12:00:11');
+    });
+
     test('defaults to wall-clock time and a real abort signal', async () => {
         const { fetch, calls } = recordingFetch(feed);
         const resolver = new ArxivResolver({ fetch });
@@ -222,7 +231,9 @@ describe('ArxivResolver', () => {
         const found = await resolver.lookupIds(['1706.03762']);
 
         expect(calls[0].init.signal).toBeInstanceOf(AbortSignal);
-        const accessed = Date.parse(found.get('1706.03762')?.fields.accessDate ?? '');
+        const accessDate = found.get('1706.03762')?.fields.accessDate ?? '';
+        expect(accessDate).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+        const accessed = Date.parse(`${accessDate.replace(' ', 'T')}Z`);
         expect(Math.abs(accessed - Date.now())).toBeLessThan(60_000);
     });
 });

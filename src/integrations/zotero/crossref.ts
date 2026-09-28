@@ -8,6 +8,7 @@
 import { convert } from 'html-to-text';
 import { z } from 'zod';
 import type { MappedCreator, MappedItem } from './item-fields';
+import { zoteroTimestamp } from './timestamp';
 import type { FetchLike } from './types';
 import { ZoteroMetadataError } from '@/errors';
 
@@ -277,7 +278,7 @@ export class CrossrefResolver {
             throw new ZoteroMetadataError('unexpected Crossref response shape', { source: 'crossref' });
         }
 
-        const accessDate = new Date(this.#now()).toISOString();
+        const accessDate = zoteroTimestamp(this.#now());
         return new Map(parsed.data.message.items.map(work => [work.DOI.toLowerCase(), mapWork(work, accessDate)]));
     }
 }

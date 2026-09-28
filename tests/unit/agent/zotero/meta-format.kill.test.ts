@@ -10,7 +10,7 @@ import type { ZoteroItem } from '@/integrations/zotero';
 import { parseCitationMeta } from '@/integrations/zotero/html-meta';
 
 const PAGE = 'https://journal.example.org/articles/42';
-const ACCESSED = '2026-09-27T12:00:00.000Z';
+const ACCESSED = '2026-09-27 12:00:00';
 
 function page(head: string, body = ''): string {
     return `<!doctype html><html><head>${head}</head><body>${body}</body></html>`;

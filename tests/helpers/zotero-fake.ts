@@ -140,6 +140,26 @@ interface FakeWriteResult {
 /** Answers a call before the fake library does; `undefined` falls through to the library. */
 export type FakeOverride = (call: RecordedCall) => Response | Promise<Response | undefined> | undefined;
 
+// What Zotero accepts for accessDate: a plain date, a UTC "date time", ISO 8601 with no fractional seconds
+// (Zotero rejects `Date.toISOString()`'s milliseconds), or CURRENT_TIMESTAMP; an empty string clears the field.
+const ACCEPTED_ACCESS_DATE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2}Z?)?$/;
+
+function acceptedAccessDate(accessDate: unknown): boolean {
+    return typeof accessDate === 'string' && (accessDate === '' || accessDate === 'CURRENT_TIMESTAMP' || ACCEPTED_ACCESS_DATE.test(accessDate));
+}
+
+/** The failure Zotero reports for a badly formatted accessDate, or `undefined` when it is acceptable or absent. */
+function accessDateFailure(object: Record<string, unknown>): FakeWriteResult | undefined {
+    const { accessDate } = object;
+    if(accessDate === undefined || acceptedAccessDate(accessDate)) {
+        return undefined;
+    }
+    const key = typeof object.key === 'string' ? object.key : undefined;
+    const shown = typeof accessDate === 'string' ? accessDate : JSON.stringify(accessDate);
+    const message = `'accessDate' must be in ISO 8601 or UTC 'YYYY-MM-DD[ hh:mm:ss]' format or 'CURRENT_TIMESTAMP' (${shown})`;
+    return { kind: 'failed', key: key ?? '', value: { ...key === undefined ? {} : { key }, code: 400, message } };
+}
+
 function dateAddedOf(object: FakeObject): string {
     return typeof object.data.dateAdded === 'string' ? object.data.dateAdded : '';
 }
@@ -367,7 +387,7 @@ export class FakeZoteroServer {
         const unchanged: Record<string, string> = {};
         const failed: Record<string, unknown> = {};
         for(const [index, object] of objects.entries()) {
-            const result = this.#writeOne(object, store, isItems, newVersion);
+            const result = (isItems ? accessDateFailure(object) : undefined) ?? this.#writeOne(object, store, isItems, newVersion);
             if(result.kind === 'failed') {
                 failed[index] = result.value;
             } else if(result.kind === 'unchanged') {

@@ -23,6 +23,7 @@ import {
     normalizeDoi,
     parseCitationMeta,
     urlIdentityKey,
+    zoteroTimestamp,
     type ArxivId,
     type CitationMeta,
     type IdentitySource,
@@ -134,7 +135,7 @@ async function fetchPageFor(deps: AddPapersDeps, url: string): Promise<Page> {
         if(fetched.kind === 'pdf') {
             return { kind: 'pdf', finalUrl: fetched.finalUrl, bytes: fetched.bytes };
         }
-        const accessDate = new Date(deps.now()).toISOString();
+        const accessDate = zoteroTimestamp(deps.now());
         return { kind: 'html', finalUrl: fetched.finalUrl, meta: parseCitationMeta(new TextDecoder().decode(fetched.bytes), fetched.finalUrl, accessDate) };
     } catch (error) {
         return { kind: 'error', error: errorMessage(error) };
@@ -191,7 +192,7 @@ async function resolveAll(deps: AddPapersDeps, parsed: Parsed[]): Promise<Resolu
     const [doiRound2, arxivRound2] = await Promise.all([lookup(deps.metadata.lookupDois, pageDois), lookup(deps.metadata.lookupArxiv, pageArxiv)]);
     const doiResult = (doi: string) => fromLookup(dois.includes(doi) ? doiRound1 : doiRound2, doi, 'Crossref');
     const arxivResult = (id: string) => fromLookup(arxivIds.includes(id) ? arxivRound1 : arxivRound2, id, 'arXiv');
-    const accessDate = new Date(deps.now()).toISOString();
+    const accessDate = zoteroTimestamp(deps.now());
 
     const lookups: Lookups = { doi: doiResult, arxiv: arxivResult };
 

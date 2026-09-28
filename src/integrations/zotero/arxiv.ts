@@ -10,6 +10,7 @@
 import { Parser } from 'htmlparser2';
 import { normalizeArxivId } from './identifiers';
 import type { MappedCreator, MappedItem } from './item-fields';
+import { zoteroTimestamp } from './timestamp';
 import type { FetchLike } from './types';
 import { ZoteroMetadataError } from '@/errors';
 
@@ -208,7 +209,7 @@ export class ArxivResolver {
             throw new ZoteroMetadataError(`arXiv lookup failed (HTTP ${response.status})`, { source: 'arxiv', status: response.status });
         }
 
-        const accessDate = new Date(this.#now()).toISOString();
+        const accessDate = zoteroTimestamp(this.#now());
         const found = new Map<string, MappedItem>();
         for(const entry of parseFeed(await response.text())) {
             const arxiv = normalizeArxivId(entry.id);
