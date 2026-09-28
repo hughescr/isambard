@@ -47,9 +47,34 @@ export function platformSyscalls(platform: string): PlatformSyscalls | undefined
     return table ? { ...table } : undefined;
 }
 
-/** Test seam: `null` simulates an unsupported platform; a table with a bad libc simulates a failed bind. */
+interface Libc {
+    openat:   (dirFd: number, name: Buffer, flags: number, mode: number) => number
+    mkdirat:  (dirFd: number, name: Buffer, mode: number) => number
+    renameat: (fromDirFd: number, from: Buffer, toDirFd: number, to: Buffer) => number
+    unlinkat: (dirFd: number, name: Buffer, flags: number) => number
+}
+
+/** The async descriptor calls, over the callback forms of `node:fs`. */
+interface FdCalls {
+    fstat:     (fd: number) => Promise<fs.Stats>
+    read:      (fd: number, buffer: Buffer, offset: number, length: number, position: number) => Promise<{ bytesRead: number }>
+    write:     (fd: number, bytes: Uint8Array, offset: number, length: number, position: number) => Promise<{ bytesWritten: number }>
+    fdatasync: (fd: number) => Promise<void>
+    fchmod:    (fd: number, mode: number) => Promise<void>
+    close:     (fd: number) => Promise<void>
+}
+
+/** Every descriptor-level operation the helpers make: the four libc `*at` calls and the async fd calls. */
+export type ContainedIo = Libc & FdCalls;
+
+/**
+ * Test seams: `syscalls: null` simulates an unsupported platform, and a table with a bad libc a
+ * failed bind; `io` wraps the real operations so a test can produce descriptor numbers and results
+ * no real call gives it on demand (descriptor 0, a short write, a failed close).
+ */
 export interface ContainedFsOptions {
     syscalls?: PlatformSyscalls | null
+    io?:       (real: ContainedIo) => ContainedIo
 }
 
 /** Test-only hooks that run at the two points where a directory swap matters. */
@@ -58,15 +83,8 @@ export interface ContainedWriteOptions extends ContainedFsOptions {
     afterTempWritten?: (tempName: string) => void
 }
 
-interface Libc {
-    openat:   (dirFd: number, name: Buffer, flags: number, mode: number) => number
-    mkdirat:  (dirFd: number, name: Buffer, mode: number) => number
-    renameat: (fromDirFd: number, from: Buffer, toDirFd: number, to: Buffer) => number
-    unlinkat: (dirFd: number, name: Buffer, flags: number) => number
-}
-
 interface Bound {
-    libc:      Libc
+    io:        ContainedIo
     dirFlags:  number
     readFlags: number
     tempFlags: number
@@ -75,12 +93,14 @@ interface Bound {
 
 const boundLibcs = new Map<string, Libc>();
 
-const fstatAsync = promisify(fs.fstat);
-const readAsync = promisify(fs.read);
-const writeAsync = promisify(fs.write);
-const fdatasyncAsync = promisify(fs.fdatasync);
-const fchmodAsync = promisify(fs.fchmod);
-const closeAsync = promisify(fs.close);
+const FD_CALLS: FdCalls = {
+    fstat:     promisify(fs.fstat),
+    read:      promisify(fs.read),
+    write:     promisify(fs.write),
+    fdatasync: promisify(fs.fdatasync),
+    fchmod:    promisify(fs.fchmod),
+    close:     promisify(fs.close),
+};
 const realpathAsync = promisify(fs.realpath);
 const lstatAsync = promisify(fs.lstat);
 
@@ -107,10 +127,11 @@ function bind(options: ContainedFsOptions | undefined, target: string): Bound {
         }
         boundLibcs.set(table.libc, libc);
     }
+    const real: ContainedIo = { ...libc, ...FD_CALLS };
     const C = fs.constants;
     /* eslint-disable no-bitwise -- open(2) flags are a bit set by definition */
     return {
-        libc,
+        io:        options?.io ? options.io(real) : real,
         dirFlags:  C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW | C.O_NONBLOCK | table.O_CLOEXEC,
         readFlags: C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK | table.O_CLOEXEC,
         tempFlags: C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW | table.O_CLOEXEC,
@@ -136,8 +157,8 @@ function cSegment(segment: string): Buffer {
     return Buffer.from(`${segment}\0`);
 }
 
-async function closeAll(fds: number[]): Promise<void> {
-    await Promise.all(fds.map(fd => closeAsync(fd)));
+async function closeAll(io: ContainedIo, fds: number[]): Promise<void> {
+    await Promise.all(fds.map(fd => io.close(fd)));
 }
 
 /** Opens the root by its realpath. Its ancestors are outside Izzy's sandboxed write set, so the path is stable. */
@@ -149,7 +170,7 @@ async function openRoot(bound: Bound, root: string, target: string): Promise<{ f
         throw new PathSecurityError(`Root directory does not exist: ${root}`, target, 'not_found');
     }
     // Stryker disable next-line NumberLiteralValue: open(2) reads mode only with O_CREAT, which dirFlags never carries
-    const fd = bound.libc.openat(bound.atFdCwd, Buffer.from(`${real}\0`), bound.dirFlags, 0);
+    const fd = bound.io.openat(bound.atFdCwd, Buffer.from(`${real}\0`), bound.dirFlags, 0);
     if(fd < 0) {
         throw new PathSecurityError(`Root is not a directory: ${root}`, target, 'not_directory');
     }
@@ -167,13 +188,13 @@ async function walk(bound: Bound, parentFd: number, segments: string[], create: 
     for(const segment of segments) {
         const name = cSegment(segment);
         if(create) {
-            bound.libc.mkdirat(current, name, 0o700);
+            bound.io.mkdirat(current, name, 0o700);
         }
         // Stryker disable next-line NumberLiteralValue: open(2) reads mode only with O_CREAT, which dirFlags never carries
-        const fd = bound.libc.openat(current, name, bound.dirFlags, 0);
+        const fd = bound.io.openat(current, name, bound.dirFlags, 0);
         if(fd < 0) {
             // eslint-disable-next-line no-await-in-loop -- terminal: closes what was opened, then leaves the loop by throwing
-            await closeAll(fds);
+            await closeAll(bound.io, fds);
             throw new PathSecurityError(`Path component "${segment}" of ${target} is not a real directory (a symlink, a file or missing)`, target, 'not_directory');
         }
         fds.push(fd);
@@ -219,12 +240,12 @@ function tooLarge(relPath: string, maxBytes: number): PathSecurityError {
 }
 
 /** Reads at most `limit` bytes from the start of `fd`. */
-async function readUpTo(fd: number, limit: number): Promise<Uint8Array> {
+async function readUpTo(io: ContainedIo, fd: number, limit: number): Promise<Uint8Array> {
     const buffer = Buffer.alloc(limit);
     let total = 0;
     while(total < limit) {
         // eslint-disable-next-line no-await-in-loop -- sequential: each read continues where the previous one stopped
-        const { bytesRead } = await readAsync(fd, buffer, total, limit - total, total);
+        const { bytesRead } = await io.read(fd, buffer, total, limit - total, total);
         if(bytesRead === 0) {
             break;
         }
@@ -261,12 +282,12 @@ export async function openContainedForRead(
         const dirFd = heldFds.at(-1)!;
 
         // Stryker disable next-line NumberLiteralValue: open(2) reads mode only with O_CREAT, which readFlags never carries
-        const fileFd = bound.libc.openat(dirFd, cSegment(last), bound.readFlags, 0);
+        const fileFd = bound.io.openat(dirFd, cSegment(last), bound.readFlags, 0);
         if(fileFd < 0) {
             throw await openFailure(path.join(real, ...segments, last), relPath);
         }
         try {
-            const stat = await fstatAsync(fileFd);
+            const stat = await bound.io.fstat(fileFd);
             if(!stat.isFile()) {
                 throw new PathSecurityError(`Not a regular file: ${relPath}`, relPath, 'not_file');
             }
@@ -277,49 +298,49 @@ export async function openContainedForRead(
                 throw tooLarge(relPath, maxBytes);
             }
             // One byte past the size fstat reported detects a file that grew after the check.
-            const bytes = await readUpTo(fileFd, stat.size + 1);
+            const bytes = await readUpTo(bound.io, fileFd, stat.size + 1);
             if(bytes.length > maxBytes) {
                 throw tooLarge(relPath, maxBytes);
             }
             return { bytes, size: bytes.length };
         } finally {
-            await closeAsync(fileFd);
+            await bound.io.close(fileFd);
         }
     } finally {
-        await closeAll(heldFds);
+        await closeAll(bound.io, heldFds);
     }
 }
 
-async function writeAll(fd: number, bytes: Uint8Array): Promise<void> {
+async function writeAll(io: ContainedIo, fd: number, bytes: Uint8Array): Promise<void> {
     let offset = 0;
     while(offset < bytes.length) {
         // eslint-disable-next-line no-await-in-loop -- sequential: each write continues where the previous one stopped
-        const { bytesWritten } = await writeAsync(fd, bytes, offset, bytes.length - offset, offset);
+        const { bytesWritten } = await io.write(fd, bytes, offset, bytes.length - offset, offset);
         offset += bytesWritten;
     }
 }
 
 /** Writes the temp file's bytes; on any failure the temp file is unlinked through the held handle. */
 async function writeTemp(bound: Bound, dirFd: number, tempName: string, bytes: Uint8Array, target: string): Promise<void> {
-    const fd = bound.libc.openat(dirFd, cSegment(tempName), bound.tempFlags, 0o600);
+    const fd = bound.io.openat(dirFd, cSegment(tempName), bound.tempFlags, 0o600);
     if(fd < 0) {
         throw new PathSecurityError(`Could not create a temporary file next to ${target}`, target, 'not_directory');
     }
     try {
-        await fchmodAsync(fd, 0o600);
-        await writeAll(fd, bytes);
-        await fdatasyncAsync(fd);
+        await bound.io.fchmod(fd, 0o600);
+        await writeAll(bound.io, fd, bytes);
+        await bound.io.fdatasync(fd);
     } catch (error) {
-        await closeAsync(fd);
-        bound.libc.unlinkat(dirFd, cSegment(tempName), 0);
+        await bound.io.close(fd);
+        bound.io.unlinkat(dirFd, cSegment(tempName), 0);
         throw error;
     }
-    await closeAsync(fd);
+    await bound.io.close(fd);
 }
 
 /** True when the path from the root still names the directory the write went into. */
 async function stillSameDirectory(bound: Bound, rootFd: number, dirFd: number, dirSegments: string[], target: string): Promise<boolean> {
-    const held = await fstatAsync(dirFd);
+    const held = await bound.io.fstat(dirFd);
     let again: number[];
     try {
         again = await walk(bound, rootFd, dirSegments, false, target);
@@ -327,10 +348,10 @@ async function stillSameDirectory(bound: Bound, rootFd: number, dirFd: number, d
         return false;
     }
     try {
-        const now = await fstatAsync(again.at(-1) ?? rootFd);
+        const now = await bound.io.fstat(again.at(-1) ?? rootFd);
         return now.dev === held.dev && now.ino === held.ino;
     } finally {
-        await closeAll(again);
+        await closeAll(bound.io, again);
     }
 }
 
@@ -371,8 +392,8 @@ export async function writeContainedAtomic(
         await writeTemp(bound, dirFd, tempName, bytes, target);
         options?.afterTempWritten?.(tempName);
 
-        if(bound.libc.renameat(dirFd, cSegment(tempName), dirFd, cSegment(name)) !== 0) {
-            bound.libc.unlinkat(dirFd, cSegment(tempName), 0);
+        if(bound.io.renameat(dirFd, cSegment(tempName), dirFd, cSegment(name)) !== 0) {
+            bound.io.unlinkat(dirFd, cSegment(tempName), 0);
             throw new PathSecurityError(`Could not replace ${target}: it is not a regular file`, target, 'not_file');
         }
 
@@ -385,6 +406,6 @@ export async function writeContainedAtomic(
         }
         return { path: target };
     } finally {
-        await closeAll(heldFds);
+        await closeAll(bound.io, heldFds);
     }
 }

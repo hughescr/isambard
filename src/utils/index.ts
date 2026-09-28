@@ -36,6 +36,7 @@ export {
     platformSyscalls,
     type PlatformSyscalls,
     type ContainedFsOptions,
+    type ContainedIo,
     type ContainedWriteOptions
 } from './contained-fs';
 

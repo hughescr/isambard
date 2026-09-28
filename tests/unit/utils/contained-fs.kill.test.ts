@@ -4,36 +4,81 @@
  * the libc bind cache, segment validation on the read path, exact error wording, the size check
  * that runs before any buffer is allocated, descriptor 0 as a valid handle, and that every
  * descriptor opened is closed (and a failed close is reported) before a call settles.
- * Real syscalls throughout; descriptors are observed through /dev/fd (or /proc/self/fd).
+ * Real syscalls throughout; descriptors are observed through /dev/fd (or /proc/self/fd). Results no
+ * real call gives on demand (descriptor 0, a failed close, a short write) come from the `io` seam,
+ * which wraps the real operations; the process's own descriptors are never touched (#172).
  */
-import * as ffi from 'bun:ffi';
-import { afterAll, afterEach, beforeAll, describe, expect, jest, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { constants as bufferConstants } from 'node:buffer';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { InvariantViolationError, PathSecurityError, type PathSecurityReason } from '@/errors';
-import { openContainedForRead, platformSyscalls, writeContainedAtomic } from '@/utils/contained-fs';
+import { type ContainedIo, openContainedForRead, writeContainedAtomic } from '@/utils/contained-fs';
 
 const FD_DIR = process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd';
 const PDF = new TextEncoder().encode('%PDF-1.7 hello');
 
-// Raw libc calls for descriptor 0: Bun's fs layer treats 0-2 specially (an internal open that lands on 0, such as realpath's, is never closed).
-const sys = ffi.dlopen(platformSyscalls(process.platform)?.libc ?? 'libc.so.6', {
-    dup:   { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
-    dup2:  { args: [ffi.FFIType.i32, ffi.FFIType.i32], returns: ffi.FFIType.i32 },
-    close: { args: [ffi.FFIType.i32], returns: ffi.FFIType.i32 },
-}).symbols;
+type IoWrap = (real: ContainedIo) => ContainedIo;
+
+/** What an `*at` call opened, as the tests name it: `root` for the absolute root path, `temp` for a temp file, else the segment. */
+function openedName(name: Buffer): string {
+    const text = name.toString('utf8', 0, name.length - 1);
+    if(path.isAbsolute(text)) {
+        return 'root';
+    }
+    return text.endsWith('.part') ? 'temp' : text;
+}
+
+/**
+ * Hands out descriptor 0 for the first open `wantZero` picks while 0 is free, and stands the real
+ * descriptor in for it in every later call, so the code under test sees a 0 handle while the
+ * process's own descriptor 0 is never touched. `log` records when 0 is handed out and closed.
+ */
+function descriptorZero(wantZero: (name: string, nth: number) => boolean, log: string[]): IoWrap {
+    return (real) => {
+        let behindZero: number | undefined;
+        const opens = new Map<string, number>();
+        const actual = (fd: number): number => (fd === 0 ? behindZero ?? Number.NaN : fd);
+        return {
+            openat: (dirFd, name, flags, mode) => {
+                const fd = real.openat(actual(dirFd), name, flags, mode);
+                expect(fd).not.toBe(0);
+                const key = openedName(name);
+                const nth = (opens.get(key) ?? 0) + 1;
+                opens.set(key, nth);
+                if(fd > 0 && behindZero === undefined && wantZero(key, nth)) {
+                    behindZero = fd;
+                    log.push(`0 is ${key} #${nth}`);
+                    return 0;
+                }
+                return fd;
+            },
+            mkdirat:   (dirFd, name, mode) => real.mkdirat(actual(dirFd), name, mode),
+            renameat:  (fromDirFd, from, toDirFd, to) => real.renameat(actual(fromDirFd), from, actual(toDirFd), to),
+            unlinkat:  (dirFd, name, flags) => real.unlinkat(actual(dirFd), name, flags),
+            fstat:     async fd => real.fstat(actual(fd)),
+            read:      async (fd, buffer, offset, length, position) => real.read(actual(fd), buffer, offset, length, position),
+            write:     async (fd, bytes, offset, length, position) => real.write(actual(fd), bytes, offset, length, position),
+            fdatasync: async fd => real.fdatasync(actual(fd)),
+            fchmod:    async (fd, mode) => real.fchmod(actual(fd), mode),
+            close:     async (fd) => {
+                const underlying = actual(fd);
+                if(fd === 0) {
+                    behindZero = undefined;
+                    log.push('0 closed');
+                }
+                await real.close(underlying);
+            },
+        };
+    };
+}
 
 let base = '';
 let counter = 0;
 
 beforeAll(() => {
     base = fs.mkdtempSync(path.join(os.tmpdir(), 'contained-fs-kill-'));
-});
-
-afterEach(() => {
-    jest.restoreAllMocks();
 });
 
 afterAll(() => {
@@ -94,23 +139,6 @@ function fdOn(target: string): number {
     return matches[0] ?? -1;
 }
 
-/**
- * Runs `run` with stdin saved; `free()` closes descriptor 0 so the next open(2) returns 0.
- * Only raw syscalls may run between `free()` and the open under test. Stdin is restored afterwards.
- */
-async function withDescriptorZeroFree<T>(run: (free: () => void) => Promise<T>): Promise<T> {
-    const saved = sys.dup(0);
-    expect(saved).toBeGreaterThan(0);
-    try {
-        return await run(() => {
-            expect(sys.close(0)).toBe(0);
-        });
-    } finally {
-        sys.dup2(saved, 0);
-        sys.close(saved);
-    }
-}
-
 async function caught(promise: Promise<unknown>): Promise<unknown> {
     try {
         await promise;
@@ -124,12 +152,17 @@ describe('libc binding', () => {
     test('binds a libc once and reuses it on later calls', async () => {
         const root = freshRoot();
         fs.writeFileSync(path.join(root, 'x.pdf'), PDF);
-        await openContainedForRead(root, 'x.pdf', 100);
-        const dlopen = spyOn(ffi, 'dlopen');
+        const bound: ContainedIo['openat'][] = [];
+        const io: IoWrap = (real) => {
+            bound.push(real.openat);
+            return real;
+        };
 
-        await openContainedForRead(root, 'x.pdf', 100);
+        await openContainedForRead(root, 'x.pdf', 100, { io });
+        await openContainedForRead(root, 'x.pdf', 100, { io });
 
-        expect(dlopen).not.toHaveBeenCalled();
+        expect(bound).toHaveLength(2);
+        expect(bound[1]).toBe(bound[0]);
     });
 });
 
@@ -265,20 +298,38 @@ describe('writeContainedAtomic', () => {
     });
 });
 
-describe('descriptor 0', () => {
-    test('is a valid temp-file handle and a valid re-walk handle', async () => {
+describe('descriptor 0 is a valid handle', () => {
+    test.each<[string, string, number]>([
+        ['the root', 'root', 1],
+        ['a directory', 'a', 1],
+        ['the file', 'b.pdf', 1],
+    ])('a read with %s on descriptor 0 reads the file and closes 0', async (_label, name, nth) => {
         const root = freshRoot();
-        const zeroOpenAfterTemp: boolean[] = [];
+        fs.mkdirSync(path.join(root, 'a'));
+        fs.writeFileSync(path.join(root, 'a', 'b.pdf'), PDF);
+        const log: string[] = [];
 
-        const result = await withDescriptorZeroFree(async free => writeContainedAtomic(root, ['d'], 'p.pdf', PDF, {
-            afterDirsOpened:  free,
-            afterTempWritten: () => {
-                zeroOpenAfterTemp.push(isOpen(0));
-            },
-        }));
+        const result = await openContainedForRead(root, 'a/b.pdf', 100, { io: descriptorZero((key, n) => key === name && n === nth, log) });
 
-        expect(zeroOpenAfterTemp).toEqual([false]);
+        expect(new TextDecoder().decode(result.bytes)).toBe('%PDF-1.7 hello');
+        expect(log).toEqual([`0 is ${name} #${nth}`, '0 closed']);
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test.each<[string, string, number]>([
+        ['the root', 'root', 1],
+        ['the directory', 'd', 1],
+        ['the temp file', 'temp', 1],
+        ['the re-walked directory', 'd', 2],
+    ])('a write with %s on descriptor 0 commits and closes 0', async (_label, name, nth) => {
+        const root = freshRoot();
+        const log: string[] = [];
+
+        const result = await writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io: descriptorZero((key, n) => key === name && n === nth, log) });
+
         expect(result).toEqual({ path: 'd/p.pdf' });
         expect(fs.readFileSync(path.join(root, 'd', 'p.pdf'), 'utf8')).toBe('%PDF-1.7 hello');
+        expect(log).toEqual([`0 is ${name} #${nth}`, '0 closed']);
+        expect(fdsOpenUnder(root)).toEqual([]);
     });
 });
