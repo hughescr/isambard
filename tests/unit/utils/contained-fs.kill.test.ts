@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { InvariantViolationError, PathSecurityError, type PathSecurityReason } from '@/errors';
-import { type ContainedIo, openContainedForRead, writeContainedAtomic } from '@/utils/contained-fs';
+import { type ContainedIo, openContainedForRead, platformSyscalls, writeContainedAtomic } from '@/utils/contained-fs';
 
 const FD_DIR = process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd';
 const PDF = new TextEncoder().encode('%PDF-1.7 hello');
@@ -223,18 +223,37 @@ async function caught(promise: Promise<unknown>): Promise<unknown> {
     throw new Error('expected a rejection');
 }
 
+/**
+ * A spelling of this platform's libc that the process has not bound before (`/./` in its path), so
+ * the first call through it must reach the bind itself instead of finding a table another test
+ * left in the cache: the bind runs once per libc name for the life of the process, so which test
+ * reaches it under the default name depends on test order.
+ */
+function unboundLibcName(): string {
+    let home = '/usr/lib/libc.dylib';
+    if(process.platform === 'linux') {
+        const mapped = fs.readFileSync('/proc/self/maps', 'utf8').split('\n').find(line => line.endsWith('/libc.so.6'));
+        if(mapped === undefined) {
+            throw new Error('could not find the loaded libc to spell another way');
+        }
+        home = mapped.slice(mapped.indexOf('/'));
+    }
+    return `${path.dirname(home)}/./${path.basename(home)}`;
+}
+
 describe('libc binding', () => {
     test('binds a libc once and reuses it on later calls', async () => {
         const root = freshRoot();
         fs.writeFileSync(path.join(root, 'x.pdf'), PDF);
+        const syscalls = { ...platformSyscalls(process.platform)!, libc: unboundLibcName() };
         const bound: ContainedIo['openat'][] = [];
         const io: IoWrap = (real) => {
             bound.push(real.openat);
             return real;
         };
 
-        await openContainedForRead(root, 'x.pdf', 100, { io });
-        await openContainedForRead(root, 'x.pdf', 100, { io });
+        await openContainedForRead(root, 'x.pdf', 100, { syscalls, io });
+        await openContainedForRead(root, 'x.pdf', 100, { syscalls, io });
 
         expect(bound).toHaveLength(2);
         expect(bound[1]).toBe(bound[0]);
@@ -417,6 +436,36 @@ describe('every close is awaited, so a failed close is the outcome reported', ()
         const error = await caught(openContainedForRead(root, 'a/missing/c.pdf', 100, { io: closeFailingFor('a') }));
 
         expect(messageOf(error)).toBe('close failed: a');
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test('a read whose held directory handle fails to close rejects rather than returning the bytes', async () => {
+        const root = freshRoot();
+        fs.mkdirSync(path.join(root, 'a'));
+        fs.writeFileSync(path.join(root, 'a', 'x.pdf'), PDF);
+
+        const error = await caught(openContainedForRead(root, 'a/x.pdf', 100, { io: closeFailingFor('a') }));
+
+        expect(messageOf(error)).toBe('close failed: a');
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test('a data sync that rejects is the write failure: the temp file is removed and nothing is committed', async () => {
+        const root = freshRoot();
+        const io: IoWrap = real => ({
+            ...real,
+            // Already handled, so a mutant that drops the await cannot leak an unhandled rejection into another test.
+            fdatasync: (_fd) => {
+                const rejected = Promise.reject(new Error('fdatasync failed'));
+                rejected.catch(() => undefined);
+                return rejected;
+            },
+        });
+
+        const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io }));
+
+        expect(messageOf(error)).toBe('fdatasync failed');
+        expect(fs.readdirSync(path.join(root, 'd'))).toEqual([]);
         expect(fdsOpenUnder(root)).toEqual([]);
     });
 
