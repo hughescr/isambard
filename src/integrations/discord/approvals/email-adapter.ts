@@ -32,6 +32,12 @@ const CARD_UNREADABLE = 'Couldn\'t read this approval card from Discord — noth
 const ALREADY_DECIDED = 'This draft was already approved or rejected.';
 /** Discord's limit on a message's content. */
 const CONTENT_MAX = 2000;
+/** Discord's limit on the options of one string select menu. */
+const SELECT_MENU_MAX_OPTIONS = 25;
+
+function tooManyToAllowlist(count: number): string {
+    return `This draft has ${count} recipients, more than the ${SELECT_MENU_MAX_OPTIONS} a Discord menu can offer, so they can't be allowlisted from this card — nothing was approved. Use Approve, or allowlist them another way first.`;
+}
 
 /**
  * Discord adapter for the outbound email approval card: turns button/modal/select-menu
@@ -275,6 +281,11 @@ export class EmailApprovalInteractionAdapter extends DiscordOutboundApprovalInte
             // Stryker disable next-line llm: an array length is never negative, so === 0, <= 0 and < 1 are the same condition
             if(recipients.length === 0) {
                 return false;
+            }
+            if(recipients.length > SELECT_MENU_MAX_OPTIONS) {
+                // Discord rejects a menu of more options; refuse the route and leave the card's controls alone.
+                await this.replyPrivately(interaction, tooManyToAllowlist(recipients.length));
+                return true;
             }
 
             const menu = new StringSelectMenuBuilder()

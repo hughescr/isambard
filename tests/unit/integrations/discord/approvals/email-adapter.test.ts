@@ -817,6 +817,40 @@ describe('EmailApprovalInteractionAdapter', () => {
                 expect(options.map(option => option.data.value)).toEqual(['to1@example.com', 'to2@example.com', 'cc1@example.com']);
             });
 
+            test('offers all 25 recipients when the draft has exactly Discord\'s select-menu maximum', async () => {
+                const deps = makeDeps();
+                const to = Array.from({ length: 25 }, (_, i) => ({ address: `r${i}@example.com` }));
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({ to, cc: [] }));
+                const handler = makeAdapter(deps);
+                const { interaction, editReply, followUp } = makeButtonInteraction('email-send-approveallowlist:42');
+
+                await handler.handleButton(interaction);
+
+                expect(followUp).not.toHaveBeenCalled();
+                const replyArg = editReply.mock.calls[0]?.[0] as { components: { components: { data: { max_values: number }, options: unknown[] }[] }[] };
+                expect(replyArg.components[0].components[0].data.max_values).toBe(25);
+                expect(replyArg.components[0].components[0].options).toHaveLength(25);
+            });
+
+            test('refuses the allowlist route privately, leaving the card untouched, when the draft has more than 25 recipients', async () => {
+                const deps = makeDeps();
+                const to = Array.from({ length: 20 }, (_, i) => ({ address: `to${i}@example.com` }));
+                const cc = Array.from({ length: 6 }, (_, i) => ({ address: `cc${i}@example.com` }));
+                (deps.wildDuckClient.getMessage as ReturnType<typeof mock>).mockResolvedValue(storedDraft({ to, cc }));
+                const handler = makeAdapter(deps);
+                const { interaction, editReply, followUp } = makeButtonInteraction('email-send-approveallowlist:42');
+
+                await handler.handleButton(interaction);
+
+                expect(editReply).not.toHaveBeenCalled();
+                expect(deps.sagaBackend.create).not.toHaveBeenCalled();
+                expect(deps.wildDuckClient.updateMessageMetadata).not.toHaveBeenCalled();
+                expect(followUp.mock.calls).toEqual([[{
+                    content: 'This draft has 26 recipients, more than the 25 a Discord menu can offer, so they can\'t be allowlisted from this card — nothing was approved. Use Approve, or allowlist them another way first.',
+                    flags:   MessageFlags.Ephemeral,
+                }]]);
+            });
+
             test('refuses privately, reading nothing, when the card no longer acts on the uid', async () => {
                 const deps = makeDeps();
                 const handler = makeAdapter(deps);
