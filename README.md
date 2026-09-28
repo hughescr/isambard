@@ -49,7 +49,7 @@ The per-turn provider line combines Codex and DeepSeek data from utraque's provi
 
 ## Email draft preview
 
-Outbound email approval cards link to a full preview of the draft. Izzy serves it on `127.0.0.1` and, at startup, publishes it to your tailnet itself with `tailscale serve` at `https://<mac-name>.<tailnet>.ts.net/izzy-preview`, admitting only your own Tailscale login. Your only steps: install Tailscale on the Mac and your phone, sign both in to the same tailnet, and turn on MagicDNS and HTTPS Certificates in the admin console. If Tailscale isn't ready (or Funnel is on for the Mac), Izzy logs one line saying why and cards just have no preview button.
+Outbound email approval cards link to a full preview of the draft. Izzy serves it on `127.0.0.1` and, at startup, publishes it to your tailnet itself with `tailscale serve` at `https://<mac-name>.<tailnet>.ts.net/izzy-preview-<port>` (`/izzy-preview-8787` by default; the port in the path keeps two copies of Izzy on one Mac apart), admitting only your own Tailscale login. Your only steps: install Tailscale on the Mac and your phone, sign both in to the same tailnet, and turn on MagicDNS and HTTPS Certificates in the admin console. If Tailscale isn't ready (or Funnel is on for the Mac, or something that isn't Izzy already answers at its path), Izzy logs one line saying why and cards just have no preview button.
 
 Every setting is optional:
 
