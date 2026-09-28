@@ -98,6 +98,7 @@ describe('Vector feature wiring', () => {
                 BskyHandle:            { value: undefined },
                 BskyAppPassword:       { value: undefined },
                 TypesafeApiKey:        { value: undefined },
+                ZoteroApiKey:          { value: undefined },
             };
 
             const cfg = configLoaderModule.loadConfig(resources);

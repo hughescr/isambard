@@ -37,6 +37,11 @@ function nonEmptyEnv(name: string): string | undefined {
     return value === '' ? undefined : value;
 }
 
+/** A positive-integer env var, with an empty string counted as unset (env-var throws on ''). */
+function positiveIntEnv(name: string): number | undefined {
+    return nonEmptyEnv(name) === undefined ? undefined : env.get(name).asIntPositive();
+}
+
 /**
  * The raw draft preview settings (#158). Every one is optional, an empty value counts as unset,
  * and the schema supplies the defaults: automatic Tailscale setup on port 8787.
@@ -147,6 +152,16 @@ export function loadConfig(resources: SstResources = Resource): Config {
         typesafe: resources.TypesafeApiKey.value
             ? { apiKey: resources.TypesafeApiKey.value }
             : undefined,
+        // Zotero (#157): an empty/unset key means "not configured", so no client or MCP server is built.
+        zotero: resources.ZoteroApiKey.value
+            ? {
+                apiKey:             resources.ZoteroApiKey.value,
+                groupId:            positiveIntEnv('ZOTERO_GROUP_ID'),
+                userId:             positiveIntEnv('ZOTERO_USER_ID'),
+                maxStoredFileBytes: positiveIntEnv('ZOTERO_MAX_STORED_FILE_BYTES'),
+                crossrefMailto:     nonEmptyEnv('ZOTERO_CROSSREF_MAILTO'),
+            }
+            : undefined,
         // Browser config: unconditionally provide an empty object so Zod fills in all defaults.
         // Feature gating is done at runtime (process.platform === 'darwin') in src/index.ts.
         browser:     {},
@@ -172,11 +187,11 @@ export function loadConfig(resources: SstResources = Resource): Config {
     const result = configSchema.safeParse(rawConfig);
 
     if(!result.success) {
-        const sensitiveFields = ['password', 'token', 'secret'];
+        const sensitiveFields = ['password', 'token', 'secret', 'apikey'];
         const safeErrors = result.error.issues.map((issue) => {
             const path = issue.path.join('.');
             const isSensitive = issue.path.some(p =>
-                // Stryker disable next-line StringMethodArgSwap,llm: all sensitive-bearing config-schema keys end with password, token, or secret, so includes and endsWith are equivalent through loadConfig
+                // Stryker disable next-line StringMethodArgSwap,llm: all sensitive-bearing config-schema keys end with password, token, secret, or apikey, so includes and endsWith are equivalent through loadConfig
                 sensitiveFields.some(sf => String(p).toLowerCase().includes(sf)));
             return {
                 path,

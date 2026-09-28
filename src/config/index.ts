@@ -17,6 +17,7 @@ export {
     type TaskBoardConfig,
     type VectorIndexConfig,
     type SessionConfig,
+    type ZoteroConfig,
     type Config,
     idleSignalsConfigSchema,
     type IdleSignalsConfig

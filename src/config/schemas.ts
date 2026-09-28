@@ -231,6 +231,21 @@ export const typesafeConfigSchema = z.object({
     apiKey: z.string().min(1),
 });
 
+// Zotero (shared group library "Izzy-Craig Collab", #157) config
+export const zoteroConfigSchema = z.object({
+    apiKey:             z.string().min(1),
+    /** The one group library the client may address. Public id, so it defaults to the live value. */
+    groupId:            z.number().int().positive().default(6_692_257),
+    /** Izzy's own Zotero account; labels authorship in tool output. */
+    userId:             z.number().int().positive().default(21_862_647),
+    /** Zotero-storage downloads and local-file uploads ONLY. URL fetches use the browser caps. */
+    maxStoredFileBytes: z.number().int().positive().default(50 * 1024 * 1024),
+    /** Sent in the Crossref User-Agent for the polite pool. */
+    crossrefMailto:     z.email().optional(),
+});
+
+export type ZoteroConfig = z.infer<typeof zoteroConfigSchema>;
+
 // DynamoDB config
 export const dynamoDBConfigSchema = z.object({
     tableName: z.string().min(1),
@@ -319,6 +334,7 @@ export const configSchema = z.object({
     email:                 emailConfigSchema.optional(),
     bsky:                  bskyConfigSchema.optional(),
     typesafe:              typesafeConfigSchema.optional(),
+    zotero:                zoteroConfigSchema.optional(),
     browser:               browserConfigSchema.optional(),
     vectorIndex:           vectorIndexConfigSchema.optional(),
 });

@@ -78,6 +78,10 @@ declare module "sst" {
       "type": "sst.sst.Secret"
       "value": string
     }
+    "ZoteroApiKey": {
+      "type": "sst.sst.Secret"
+      "value": string
+    }
   }
 }
 

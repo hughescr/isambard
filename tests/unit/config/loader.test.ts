@@ -34,6 +34,8 @@ function createMockResources(
         BskyAppPassword:       { value: undefined },
         // Typesafe secret defaults to undefined (typesafe config is optional)
         TypesafeApiKey:        { value: undefined },
+        // Zotero secret defaults to undefined (zotero config is optional)
+        ZoteroApiKey:          { value: undefined },
         // Planned integrations (not yet implemented):
         // CaldavUrl:          { value: 'https://caldav.example.com' },
         // CaldavUsername:     { value: 'user' },
@@ -838,6 +840,90 @@ describe.concurrent('loadConfig - Typesafe Config', () => {
 
         expect(config.typesafe).toBeDefined();
         expect(config.typesafe?.apiKey).toBe('test-typesafe-key');
+    });
+});
+
+// Sequential (not concurrent) because these mutate process.env.
+describe('loadConfig - Zotero Config', () => {
+    const ZOTERO_KEYS = ['ZOTERO_GROUP_ID', 'ZOTERO_USER_ID', 'ZOTERO_MAX_STORED_FILE_BYTES', 'ZOTERO_CROSSREF_MAILTO'];
+    const zoteroResources = () => createMockResources({ ZoteroApiKey: { value: 'test-zotero-key' } });
+
+    afterEach(() => {
+        for(const key of ZOTERO_KEYS) {
+            delete process.env[key];
+        }
+    });
+
+    test('returns zotero = undefined when ZoteroApiKey is not set', () => {
+        expect(loadConfig(createMockResources()).zotero).toBeUndefined();
+    });
+
+    test('returns zotero = undefined when ZoteroApiKey is an empty string', () => {
+        expect(loadConfig(createMockResources({ ZoteroApiKey: { value: '' } })).zotero).toBeUndefined();
+    });
+
+    test('defaults the shared group, Izzy account and stored-file cap when only the key is set', () => {
+        expect(loadConfig(zoteroResources()).zotero).toEqual({
+            apiKey:             'test-zotero-key',
+            groupId:            6_692_257,
+            userId:             21_862_647,
+            maxStoredFileBytes: 50 * 1024 * 1024,
+        });
+    });
+
+    test('treats empty env overrides as unset', () => {
+        for(const key of ZOTERO_KEYS) {
+            process.env[key] = '';
+        }
+
+        expect(loadConfig(zoteroResources()).zotero).toEqual({
+            apiKey:             'test-zotero-key',
+            groupId:            6_692_257,
+            userId:             21_862_647,
+            maxStoredFileBytes: 50 * 1024 * 1024,
+        });
+    });
+
+    test('applies every env override', () => {
+        process.env.ZOTERO_GROUP_ID = '42';
+        process.env.ZOTERO_USER_ID = '43';
+        process.env.ZOTERO_MAX_STORED_FILE_BYTES = '1000';
+        process.env.ZOTERO_CROSSREF_MAILTO = 'izzy@example.com';
+
+        expect(loadConfig(zoteroResources()).zotero).toEqual({
+            apiKey:             'test-zotero-key',
+            groupId:            42,
+            userId:             43,
+            maxStoredFileBytes: 1000,
+            crossrefMailto:     'izzy@example.com',
+        });
+    });
+
+    test.each(['ZOTERO_GROUP_ID', 'ZOTERO_USER_ID', 'ZOTERO_MAX_STORED_FILE_BYTES'])('rejects a non-positive %s', (key) => {
+        process.env[key] = '-5';
+
+        expect(() => loadConfig(zoteroResources())).toThrow();
+    });
+
+    test('rejects an invalid crossref mailto, naming the setting', () => {
+        process.env.ZOTERO_CROSSREF_MAILTO = 'not-an-email';
+
+        expect(() => loadConfig(zoteroResources())).toThrow(ConfigValidationError);
+        expect(() => loadConfig(zoteroResources())).toThrow(/zotero\.crossrefMailto/);
+    });
+
+    test('redacts an apiKey validation issue', () => {
+        const resources = createMockResources({ ZoteroApiKey: { value: 123 as unknown as string } });
+
+        try {
+            loadConfig(resources);
+            expect.unreachable('Should have thrown an error');
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            expect(errorMessage).toContain('zotero.apiKey');
+            expect(errorMessage).toContain('[REDACTED]');
+            expect(errorMessage).not.toMatch(/expected string/i);
+        }
     });
 });
 
