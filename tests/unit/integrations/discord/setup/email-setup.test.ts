@@ -206,6 +206,23 @@ describe('setupEmail — isSendableChannel type guard', () => {
         expect(approvalCardEditGate.pendingEdit('card-5')).toBeUndefined();
     });
 
+    it('deletes a draft on the process-wide gate\'s draft key, so it waits for an admin decision in flight', async () => {
+        const getMessage = mock(async () => ({ id: 8, draft: true, metaData: {} }));
+        const deleteMessage = mock(async (_folder: string, _uid: number) => undefined);
+        options.wildDuckClient = { ...options.wildDuckClient, getMessage, deleteMessage } as unknown as WildDuckClient;
+        const result = await setupEmail(options);
+        const releaseDraft = approvalCardEditGate.hold('email-draft:8');
+
+        const deleting = getToolHandler(result, 'deleteDraft')({ message: 'Drafts:8' });
+        await drainMicrotasks(50);
+        expect(getMessage).not.toHaveBeenCalled();
+
+        releaseDraft();
+        const response = await deleting;
+        expect(deleteMessage.mock.calls).toEqual([['Drafts', 8]]);
+        expect((response.content[0] as { text: string }).text).toBe('Draft Drafts:8 deleted.');
+    });
+
     it('reads the approved-action row through the configured reader, refusing a click on a completed approval', async () => {
         const getMessage = mock(async () => ({ id: 6, draft: true, messageId: '<m@x>', date: '2026-09-27T00:00:00.000Z', metaData: { approval: { actionId: 'act-6', at: 'x' } } }));
         const get = mock(async (_id: string) => ({ id: 'act-6' }));

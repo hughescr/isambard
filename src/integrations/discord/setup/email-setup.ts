@@ -346,6 +346,7 @@ export async function setupEmail(options: EmailSetupOptions): Promise<EmailSetup
         rateLimiter,
         allowlist,
         approvalCards,
+        draftLocks:       approvalCardEditGate,
         healthRegistry:   options.healthRegistry,
         reconnectionLoop: options.reconnectionLoop,
     });

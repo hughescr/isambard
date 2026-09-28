@@ -3287,6 +3287,93 @@ describe('createEmailMCPServer', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'deleteDraft' }), 'MCP tool error');
         });
 
+        describe('under the draft lock', () => {
+            let events: string[];
+            let draftLocks: { acquire: ReturnType<typeof mock> };
+
+            beforeEach(() => {
+                events = [];
+                draftLocks = {
+                    acquire: mock(async (key: string) => {
+                        events.push(`acquire ${key}`);
+                        return () => {
+                            events.push(`release ${key}`);
+                        };
+                    }),
+                };
+                mockGetMessageDelete.mockImplementation(async (_folder: string, uid: number) => {
+                    events.push('read');
+                    return { id: uid, draft: true, metaData: LINKED_META };
+                });
+                mockDeleteMessage.mockImplementation(async () => {
+                    events.push('delete');
+                });
+            });
+
+            test('reads, checks and deletes holding email-draft:<uid>, releasing it before the card is marked', async () => {
+                const markDeleted = mock(async () => {
+                    events.push('markDeleted');
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete, draftLocks, approvalCards: cardPort(mock(async () => 'posted'), { markDeleted }) });
+
+                const result = await getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' });
+
+                expect(getText(result)).toBe('Draft Drafts:42 deleted. The admin\'s approval card was marked deleted.');
+                expect(events).toEqual(['acquire email-draft:42', 'read', 'delete', 'release email-draft:42', 'markDeleted']);
+            });
+
+            test.each([
+                ['an approved draft', async () => ({ id: 42, draft: true, metaData: { approval: { actionId: 'a', at: 'b' } } }), ['acquire email-draft:42', 'release email-draft:42']],
+                ['a missing draft', async () => null, ['acquire email-draft:42', 'release email-draft:42']],
+            ])('releases the lock after refusing %s', async (_label, read, expected) => {
+                mockGetMessageDelete.mockImplementation(read);
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete, draftLocks });
+
+                const result = await getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' });
+
+                expect(result.isError).toBe(true);
+                expect(events).toEqual(expected);
+            });
+
+            test('releases the lock when the delete throws', async () => {
+                mockDeleteMessage.mockImplementation(async () => {
+                    events.push('delete');
+                    throw new Error('WildDuck delete failed');
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete, draftLocks });
+
+                const result = await getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' });
+
+                expect(result.isError).toBe(true);
+                expect(events).toEqual(['acquire email-draft:42', 'read', 'delete', 'release email-draft:42']);
+            });
+
+            test('an approval recorded while the delete waited for the lock is seen, and the draft is kept', async () => {
+                let metaData: Record<string, unknown> = { ...LINKED_META };
+                mockGetMessageDelete.mockImplementation(async () => ({ id: 42, draft: true, metaData }));
+                let releaseApprove!: () => void;
+                const approveHeld = new Promise<void>((resolve) => {
+                    releaseApprove = resolve;
+                });
+                draftLocks.acquire.mockImplementation(async () => {
+                    await approveHeld;
+                    return () => { /* intentionally empty */ };
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete, draftLocks });
+
+                const deleting = getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' });
+                await drainMicrotasks(50);
+                expect(draftLocks.acquire.mock.calls).toEqual([['email-draft:42']]);
+                expect(mockGetMessageDelete).not.toHaveBeenCalled();
+                metaData = { ...LINKED_META, approval: { actionId: 'act', at: 'now' } };
+                releaseApprove();
+                const result = await deleting;
+
+                expect(getText(result)).toBe('Draft Drafts:42 has an admin approval recorded; it can\'t be deleted.');
+                expect(mockDeleteMessage).not.toHaveBeenCalled();
+            });
+        });
+
         test('should have destructiveHint: true annotation', () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuckDelete });
             const toolDef = (server.instance as unknown as RegisteredToolInstance)._registeredTools.deleteDraft;

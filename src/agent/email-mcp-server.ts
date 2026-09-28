@@ -11,7 +11,7 @@ import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthG
 import { EmailFolder } from '@/config';
 import { EmailProcessingError, WildDuckError } from '@/errors';
 // eslint-disable-next-line boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { amendedDraftMeta, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage } from '@/integrations/email';
+import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
@@ -101,6 +101,8 @@ interface EmailMCPServerOptions {
     approvalCards?:         EmailApprovalCardPort
     /** Marks an amended draft's old UID superseded when no approval cards are configured (EmailOutboundApprovals.markSuperseded) */
     markSuperseded?:        (oldUid: number, newUid: number) => Promise<boolean>
+    /** The process-wide approval card gate; deleteDraft holds `email-draft:<uid>` on it so it cannot race an admin decision */
+    draftLocks?:            DraftLocks
     /** Optional service health registry for fast-fail guards */
     healthRegistry?:        ServiceHealthRegistry
     /** Optional reconnection loop to trigger on health check failure */
@@ -402,6 +404,16 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
     /** Whether a reply goes out without approval: never for replyAll (its Cc included), else when the replied-to address is allowlisted. */
     function isReplyAllowed(mode: 'reply' | 'replyAll', primaryTo: string): boolean {
         return mode !== 'replyAll' && (allowlist?.isAllowed('email', primaryTo) ?? false);
+    }
+
+    /** Run `fn` holding draft `uid`'s key when a gate is configured (released on every path), else directly. */
+    async function withDraftLock<T>(uid: number, fn: () => Promise<T>): Promise<T> {
+        const release = await options.draftLocks?.acquire(draftLockKey(uid));
+        try {
+            return await fn();
+        } finally {
+            release?.();
+        }
     }
 
     /**
@@ -748,16 +760,25 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     withToolErrorHandling('deleteDraft', async (args): Promise<CallToolResult> => {
                         const { uid } = args.message;
                         const draftRef = formatMailboxMessageRef(args.message);
-                        // Read first: the card is marked from this read, and an approved draft is left alone.
-                        const draft = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
-                        if(!draft) {
-                            return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found.` }], isError: true };
+                        // Read, check and delete holding the draft's key, so an approval recorded
+                        // meanwhile is seen and its draft kept; the card is marked from this read
+                        // after the key is released (lock order is card key, then draft key).
+                        const deletion = await withDraftLock(uid, async (): Promise<{ draft: WildDuckMessage, meta: DraftApprovalMeta } | CallToolResult> => {
+                            const draft = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
+                            if(!draft) {
+                                return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found.` }], isError: true };
+                            }
+                            const meta = readDraftApprovalMeta(draft.metaData);
+                            if(meta.approval !== undefined) {
+                                return { content: [{ type: 'text' as const, text: `Draft ${draftRef} has an admin approval recorded; it can't be deleted.` }], isError: true };
+                            }
+                            await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid);
+                            return { draft, meta };
+                        });
+                        if('content' in deletion) {
+                            return deletion;
                         }
-                        const meta = readDraftApprovalMeta(draft.metaData);
-                        if(meta.approval !== undefined) {
-                            return { content: [{ type: 'text' as const, text: `Draft ${draftRef} has an admin approval recorded; it can't be deleted.` }], isError: true };
-                        }
-                        await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid);
+                        const { draft, meta } = deletion;
                         await approvalCards?.markDeleted(draft, uid);
                         const cardNote = approvalCards && meta.card && !hasDecisionMarker(meta) ? ' The admin\'s approval card was marked deleted.' : '';
                         return mcpTextResult(`Draft ${draftRef} deleted.${cardNote}`);
