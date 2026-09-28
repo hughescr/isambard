@@ -415,10 +415,10 @@ async function createAndAttach(deps: AddPapersDeps, toCreate: ToCreate, options:
         }
         return [{ ...entry, item: item.item }];
     });
-    if(creatable.length === 0) {
-        return;
-    }
 
+    // No early `creatable.length === 0` guard: an empty batch already no-ops all the way down
+    // (`ZoteroClient#create` chunks nothing and sends no request, and `storePdfs` returns early
+    // too), so the guard was a pure micro-optimisation with no observable effect to test.
     const created = await deps.client.createItems(creatable.map(entry => entry.item));
     for(const failure of created.failed) {
         results[creatable[failure.index]!.index]!.error = failure.message;
