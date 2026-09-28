@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -243,6 +243,47 @@ function extractTitle(call2Args: string[]): string | null {
     return titleRaw.slice(1, -1);
 }
 
+/** Resume index past a string literal or comment starting at `i`, or `i` itself when neither starts there. */
+function skipStringOrComment(src: string, i: number): number {
+    if(QUOTES.has(src[i])) {
+        return skipString(src, i);
+    }
+    if(src[i] === '/' && src[i + 1] === '/') {
+        return skipLineComment(src, i);
+    }
+    if(src[i] === '/' && src[i + 1] === '*') {
+        return skipBlockComment(src, i);
+    }
+    return i;
+}
+
+/**
+ * The trimmed text of the first argument of the call whose `(` is at `openIdx`, or null if the
+ * call is unterminated. Stops at the first top-level `,` so the test body (often the bulk of the
+ * file) is never walked.
+ */
+function firstArgument(src: string, openIdx: number): string | null {
+    let depth = 0;
+    let i = openIdx + 1;
+    while(i < src.length) {
+        const skipped = skipStringOrComment(src, i);
+        if(skipped !== i) {
+            i = skipped;
+            continue;
+        }
+        const c = src[i];
+        if(c === '(' || c === '[' || c === '{') {
+            depth++;
+        } else if((c === ')' || c === ']' || c === '}') && depth > 0) {
+            depth--;
+        } else if((c === ',' || c === ')') && depth === 0) {
+            return src.slice(openIdx + 1, i).trim();
+        }
+        i++;
+    }
+    return null;
+}
+
 interface EachCall {
     dataText: string
     title:    string
@@ -264,11 +305,11 @@ function extractEachCall(source: string, openIdx: number): EachCall | null {
         return null;
     }
 
-    const call2Close = findMatch(source, j);
-    if(call2Close === -1) {
+    const titleText = firstArgument(source, j);
+    if(titleText === null) {
         return null;
     }
-    const title = extractTitle(splitTopLevel(source.slice(j + 1, call2Close)));
+    const title = extractTitle(titleText === '' ? [] : [titleText]);
     if(title === null) {
         return null;
     }
@@ -286,39 +327,41 @@ function scanFile(file: string, source: string): Risk[] {
         if(call === null) {
             continue;
         }
+        const details = risksForCall(call.dataText, call.title);
+        if(details.length === 0) {
+            continue;
+        }
+        // Counted only on a hit: slicing and splitting the file prefix for every `.each` call dominated this scan.
         const line = source.slice(0, openIdx).split('\n').length;
-        for(const detail of risksForCall(call.dataText, call.title)) {
+        for(const detail of details) {
             risks.push({ file, line, detail });
         }
     }
     return risks;
 }
 
-/** Every `.test.ts` file under `tests/`, recursively. */
+/** Every `.test.ts` file under `dir`, recursively, as absolute paths. */
 function testFiles(dir: string): string[] {
-    const files: string[] = [];
-    // eslint-disable-next-line n/no-sync -- one-shot repo scan at test-collection time, not a hot path
-    for(const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if(entry.isDirectory()) {
-            files.push(...testFiles(full));
-        } else if(entry.isFile() && entry.name.endsWith('.test.ts')) {
-            files.push(full);
-        }
-    }
-    return files;
+    // eslint-disable-next-line n/no-sync -- one directory listing; the file reads below are batched and async
+    const entries = readdirSync(dir, { recursive: true, encoding: 'utf8' });
+    return entries.filter(entry => entry.endsWith('.test.ts')).map(entry => path.join(dir, entry));
 }
 
+const EACH = Buffer.from('.each');
+
 describe('test.each title safety', () => {
-    test('no %p/%o title argument is an object or array, and no %s argument is a control-character string', () => {
+    test('no %p/%o title argument is an object or array, and no %s argument is a control-character string', async () => {
         const root = path.join(import.meta.dir, '../../..');
         const files = testFiles(path.join(root, 'tests'));
-        const risks = files.flatMap((file) => {
-            // eslint-disable-next-line n/no-sync -- one-shot repo scan at test-collection time, not a hot path
-            const source = readFileSync(file, 'utf8');
-            return scanFile(path.relative(root, file), source);
+        // One concurrent batch of reads (~10 MB of test source); only files that mention `.each` are decoded and scanned.
+        const contents = await Promise.all(files.map(async file => Buffer.from(await Bun.file(file).arrayBuffer())));
+        const decoder = new TextDecoder();
+        const risks = files.flatMap((file, index) => {
+            const bytes = contents[index];
+            return bytes.includes(EACH) ? scanFile(path.relative(root, file), decoder.decode(bytes)) : [];
         });
 
+        expect(files.length).toBeGreaterThan(100);
         expect(risks).toEqual([]);
     });
 });
