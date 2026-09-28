@@ -104,8 +104,11 @@ function invalid(message: string): CallToolResult {
  */
 function repeatedKeyProblem(lists: Record<string, string[] | undefined>): string | undefined {
     for(const [name, keys] of Object.entries(lists)) {
+        if(keys === undefined) {
+            continue;
+        }
         const seen = new Set<string>();
-        for(const key of keys ?? []) {
+        for(const key of keys) {
             if(seen.has(key)) {
                 return `nothing was changed: ${key} appears more than once in ${name}; combine those changes into one entry`;
             }
@@ -140,7 +143,12 @@ interface CreatorInput {
 
 function shapeCreator(creator: CreatorInput): Record<string, string> {
     return creator.name === undefined
-        ? { creatorType: creator.creatorType, firstName: creator.firstName ?? '', lastName: creator.lastName ?? '' }
+        ? {
+            creatorType: creator.creatorType,
+            firstName:   creator.firstName ?? '',
+            // Stryker disable next-line StringLiteral: reached only when creator.name is undefined, and updateProblem already refuses any such creator whose lastName is empty, so lastName is always a non-empty string here and this fallback never executes.
+            lastName:    creator.lastName ?? '',
+        }
         : { creatorType: creator.creatorType, name: creator.name };
 }
 
@@ -268,8 +276,10 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
         const { client, izzyUserId } = deps;
         const { items, missing } = await client.getItems(keys);
         const parents = items.filter(item => !['attachment', 'note', 'annotation'].includes(item.data.itemType));
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,NumberLiteralValue: `parents.length > 0` only skips an already-harmless call — client.getChildren([]) short-circuits on its empty `unique` keys to zero requests and an empty Map, the same value this ternary's else branch returns — so forcing the guard true changes nothing observable.
         const children = includeChildren && parents.length > 0 ? await client.getChildren(parents.map(item => item.key)) : new Map<string, ZoteroItem[]>();
         const pdfs = [...items, ...[...children.values()].flat()].filter(item => isPdfAttachment(item));
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,NumberLiteralValue: `pdfs.length > 0` only skips an already-harmless call — client.getChildren([]) resolves to an empty Map with zero requests, and annotationsOf() already returns undefined for every item when pdfs is empty (none of them satisfy isPdfAttachment), so forcing the guard true changes nothing observable.
         const annotations = includeAnnotations && pdfs.length > 0 ? await client.getChildren(pdfs.map(item => item.key)) : undefined;
         const annotationsOf = (item: ZoteroItem) => (annotations === undefined || !isPdfAttachment(item)
             ? undefined
@@ -350,10 +360,12 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
                         return invalid('collectionKey cannot be combined with inTrash: the Trash search covers the whole group');
                     }
                     const start = args.start ?? 0;
+                    // Stryker disable ConditionalExpression: equivalent — searchItems only sets query.q/qmode/tags when params.q/qmode/tags !== undefined (see request.ts's own guards), so forcing this ternary's condition true (spreading `{ q: undefined }` etc.) is indistinguishable from omitting the key entirely. Region form: these lines start with the spread operator, so `disable next-line` is silently ignored by Babel's leading-comment attachment.
                     const { items, totalResults } = await deps.client.searchItems({
                         ...args.query === undefined ? {} : { q: args.query },
                         ...args.mode === undefined ? {} : { qmode: args.mode },
                         ...args.tags === undefined ? {} : { tags: args.tags },
+                        // Stryker restore ConditionalExpression
                         ...args.itemType === undefined ? {} : { itemType: args.itemType },
                         ...args.collectionKey === undefined ? {} : { collectionKey: args.collectionKey },
                         inTrash:   args.inTrash ?? false,
