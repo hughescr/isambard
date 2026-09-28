@@ -488,9 +488,9 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
                         return invalid(`nothing was changed: ${problems.join('; ')}`);
                     }
                     const outcomes = await deps.client.modifyItems(args.updates.map(update => ({
-                        key:   update.key,
-                        ...update.version === undefined ? {} : { expectedVersion: update.version },
-                        apply: current => applyUpdate(update, current),
+                        key:             update.key,
+                        expectedVersion: update.version,
+                        apply:           current => applyUpdate(update, current),
                     })));
                     return mcpJsonResult({ results: outcomes.map(outcome => outcomeRow(outcome)) });
                 }),
@@ -528,7 +528,7 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
                             tags:        (note.tags ?? []).map(tag => ({ tag })),
                             collections: [],
                             relations:   {},
-                            ...note.parentKey === undefined ? {} : { parentItem: note.parentKey },
+                            parentItem:  note.parentKey,
                         }))));
                     const done = created === undefined ? {} : { created };
                     const edits = args.edit;
