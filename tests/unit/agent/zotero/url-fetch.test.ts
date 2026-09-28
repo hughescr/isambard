@@ -409,6 +409,14 @@ describe('fetchUnderHostPolicy', () => {
             expect((error as ZoteroUrlFetchError).context).toEqual({ url: 'https://a.test/x', reason: 'unsupported content-type (none)' });
         });
 
+        test('refuses a response with an empty content type that is not a PDF', async () => {
+            const { request } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': '' }, chunks: ['hi'] }));
+
+            const error = await fetchError('https://a.test/x', baseOptions({ resolve, request }));
+
+            expect((error as ZoteroUrlFetchError).context).toEqual({ url: 'https://a.test/x', reason: 'unsupported content-type (none)' });
+        });
+
         test('refuses HTML when only a PDF is acceptable', async () => {
             const { request } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'text/html' }, chunks: ['<html>paywall</html>'] }));
 

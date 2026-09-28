@@ -150,7 +150,10 @@ async function send(url: URL, pinned: Pinned, options: UrlFetchOptions): Promise
 }
 
 function mediaType(header: string | undefined): string | undefined {
-    const value = header?.split(';')[0]!.trim().toLowerCase();
+    if(header === undefined) {
+        return undefined;
+    }
+    const value = (header.split(';')[0] ?? '').trim().toLowerCase();
     return value === '' ? undefined : value;
 }
 
