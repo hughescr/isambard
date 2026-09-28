@@ -276,11 +276,10 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
         const { client, izzyUserId } = deps;
         const { items, missing } = await client.getItems(keys);
         const parents = items.filter(item => !['attachment', 'note', 'annotation'].includes(item.data.itemType));
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,NumberLiteralValue: `parents.length > 0` only skips an already-harmless call — client.getChildren([]) short-circuits on its empty `unique` keys to zero requests and an empty Map, the same value this ternary's else branch returns — so forcing the guard true changes nothing observable.
-        const children = includeChildren && parents.length > 0 ? await client.getChildren(parents.map(item => item.key)) : new Map<string, ZoteroItem[]>();
+        // No empty-list guards: getChildren([]) makes no request and resolves to an empty Map.
+        const children = includeChildren ? await client.getChildren(parents.map(item => item.key)) : new Map<string, ZoteroItem[]>();
         const pdfs = [...items, ...[...children.values()].flat()].filter(item => isPdfAttachment(item));
-        // Stryker disable next-line ConditionalExpression,EqualityOperator,NumberLiteralValue: `pdfs.length > 0` only skips an already-harmless call — client.getChildren([]) resolves to an empty Map with zero requests, and annotationsOf() already returns undefined for every item when pdfs is empty (none of them satisfy isPdfAttachment), so forcing the guard true changes nothing observable.
-        const annotations = includeAnnotations && pdfs.length > 0 ? await client.getChildren(pdfs.map(item => item.key)) : undefined;
+        const annotations = includeAnnotations ? await client.getChildren(pdfs.map(item => item.key)) : undefined;
         const annotationsOf = (item: ZoteroItem) => (annotations === undefined || !isPdfAttachment(item)
             ? undefined
             : (annotations.get(item.key) ?? []).filter(child => child.data.itemType === 'annotation'));

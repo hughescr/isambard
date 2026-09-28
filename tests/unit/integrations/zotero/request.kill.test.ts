@@ -75,6 +75,15 @@ describe('intHeader', () => {
         expect(intHeader(headers, 'X-Plain')).toBe(0);
         expect(intHeader(headers, 'X-Missing')).toBeUndefined();
     });
+
+    // Kill-review follow-up: digit strings read as decimal, leading zeros included.
+    test('reads a digit string as a decimal number, leading zeros and all', () => {
+        const headers = new Headers({ 'X-Nine': '9', 'X-Padded': '0099', 'X-Big': '1234567' });
+
+        expect(intHeader(headers, 'X-Nine')).toBe(9);
+        expect(intHeader(headers, 'X-Padded')).toBe(99);
+        expect(intHeader(headers, 'X-Big')).toBe(1_234_567);
+    });
 });
 
 describe('ZoteroRequester invariant messages', () => {

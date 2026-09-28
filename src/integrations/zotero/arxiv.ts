@@ -52,8 +52,15 @@ function parseFeed(xml: string): ArxivEntry[] {
         onopentag(name, attribs) {
             text = '';
             if(name === 'entry') {
-                // Stryker disable next-line StringLiteral: `id`/`published` only surface via normalizeArxivId()/the `\d{4}-\d{2}-\d{2}` regex in mapEntry, and every placeholder here (this one included) fails both the same way an empty entry does — observable only if the feed omits the tag entirely, which real arXiv responses never do
-                entry = { id: '', title: '', summary: '', published: '', authors: [] };
+                entry = {
+                    // Stryker disable next-line StringLiteral: an id placeholder only reaches normalizeArxivId(), which rejects any non-id text exactly as it rejects '' — the entry is dropped either way
+                    id:        '',
+                    title:     '',
+                    summary:   '',
+                    // Stryker disable next-line StringLiteral: a published placeholder only reaches mapEntry's `^\d{4}-\d{2}-\d{2}` date regex, which any non-date text fails exactly as '' does
+                    published: '',
+                    authors:   [],
+                };
             } else if(entry !== undefined && name === 'link' && attribs.title === 'pdf') {
                 entry.pdfUrl = attribs.href;
             }

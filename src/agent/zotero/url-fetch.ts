@@ -13,7 +13,7 @@
 import { lookup as dnsLookup } from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import { isIP } from 'node:net';
+import { isIP, isIPv6 } from 'node:net';
 import { checkResolvedAddress, validateUrl, type BrowserHostPolicy } from '../browser';
 import { ZoteroError, ZoteroFileError, ZoteroUrlFetchError } from '@/errors';
 
@@ -94,10 +94,19 @@ function transportFailure(url: string, error: unknown): ZoteroError {
     return failed(url, timedOut ? 'timed out' : errorMessage(error));
 }
 
+/**
+ * The URL's host without an IPv6 literal's brackets (`new URL()` keeps them in `hostname`). A
+ * hostname is a bracketed literal exactly when what lies between its first and last characters is
+ * an IPv6 address; any other hostname cannot contain ':' and is returned as written.
+ */
+function bareHost(url: URL): string {
+    const inner = url.hostname.slice(1, -1);
+    return isIPv6(inner) ? inner : url.hostname;
+}
+
 /** The hop's single resolution, every answer checked; the first answer (canonical) is pinned. */
 async function pinHost(url: URL, options: UrlFetchOptions): Promise<Pinned> {
-    // Stryker disable next-line StringMethodArgSwap: URL parsing admits '[' in a hostname only as the opening bracket of a canonical IPv6 literal (see host-guard.ts's own forbidden-host-code-point note), so startsWith and includes agree for every hostname `new URL()` can produce
-    const host = url.hostname.startsWith('[') ? url.hostname.slice(1, -1) : url.hostname;
+    const host = bareHost(url);
     let answers: { address: string }[];
     if(isIP(host) === 0) {
         try {
@@ -134,8 +143,7 @@ async function send(url: URL, pinned: Pinned, options: UrlFetchOptions): Promise
         const answer: Parameters<LookupCallback> = lookupOptions?.all === true ? [null, [pinned]] : [null, pinned.address, pinned.family];
         callback(...answer);
     };
-    // Stryker disable next-line StringMethodArgSwap: URL parsing admits '[' in a hostname only as the opening bracket of a canonical IPv6 literal, so startsWith and includes agree for every hostname `new URL()` can produce
-    const host = url.hostname.startsWith('[') ? url.hostname.slice(1, -1) : url.hostname;
+    const host = bareHost(url);
     const requestOptions: https.RequestOptions = {
         method:  'GET',
         agent:   false,

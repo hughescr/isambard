@@ -41,10 +41,10 @@ function readHead(html: string): { metas: Map<string, string[]>, title?: string 
             } else if(name === 'title' && title === undefined) {
                 titleText = '';
             } else if(name === 'meta') {
-                const key = (attribs.name ?? attribs.property)?.toLowerCase();
+                const metaName = attribs.name ?? attribs.property;
                 const content = collapse(attribs.content ?? '');
-                // Stryker disable next-line ConditionalExpression: an undefined key can only reach Map.set under this guard's removal, and nothing ever reads metas.get(undefined), so the entry is unobservable.
-                if(key !== undefined && content !== '') {
+                if(metaName !== undefined && content !== '') {
+                    const key = metaName.toLowerCase();
                     metas.set(key, [...metas.get(key) ?? [], content]);
                 }
             }
@@ -55,10 +55,13 @@ function readHead(html: string): { metas: Map<string, string[]>, title?: string 
             }
         },
         onclosetag(name) {
-            // Stryker disable next-line ConditionalExpression: <title> is HTML raw-text, so no other tag can close while titleText is set; name is always 'title' whenever titleText !== undefined, making the (name === 'title') half of this guard redundant on its own. (The EqualityOperator flip of the same comparison is NOT equivalent — see "pauses at </head> even without a wrapping <body> tag" below, which kills it.)
-            if(name === 'title' && titleText !== undefined) {
-                title = collapse(titleText) || undefined;
-                titleText = undefined;
+            // Nested rather than `name === 'title' && titleText !== undefined`: a </title> with no title
+            // being captured (a later <title>) is ignored, and only a non-title close can be </head>.
+            if(name === 'title') {
+                if(titleText !== undefined) {
+                    title = collapse(titleText) || undefined;
+                    titleText = undefined;
+                }
             } else if(name === 'head') {
                 parser.pause();
             }

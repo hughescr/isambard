@@ -37,8 +37,7 @@ function optional<T>(name: string, value: T | undefined): Record<string, T> {
 }
 
 function initials(firstName: string): string {
-    // Stryker disable next-line Regex: splitting on \s vs \s+ only changes how many empty tokens a run of whitespace yields, and .filter(part => part !== '') already discards every empty token, so the joined result is identical.
-    return firstName.split(/\s+/).filter(part => part !== '').map(part => `${part[0]}.`).join(' ');
+    return (firstName.match(/\S+/g) ?? []).map(part => `${part[0]}.`).join(' ');
 }
 
 /** "Last, F. M.; Organisation; Editor, E. (editor)". */
@@ -47,7 +46,6 @@ export function formatCreators(creators: unknown): string {
         return '';
     }
     return creators.flatMap((creator: unknown) => {
-        // Stryker disable next-line ConditionalExpression: a non-null, non-object creator (string/number/boolean) has none of creatorType/firstName/lastName/name as own properties, so it destructures to all-undefined below and is filtered out by the label === '' check regardless of this guard.
         if(typeof creator !== 'object' || creator === null) {
             return [];
         }

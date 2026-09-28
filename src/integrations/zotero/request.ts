@@ -108,11 +108,9 @@ async function realSleep(ms: number): Promise<void> {
 /** A non-negative integer header value, or undefined. */
 export function intHeader(headers: Headers, name: string): number | undefined {
     const value = headers.get(name);
-    // The /^\d+$/ guard admits only digit strings, for which parseInt(value, 10) and parseInt(value, 0) are
-    // provably identical (radix 0 auto-detects decimal unless the string starts with "0x", which no all-digit
-    // string does), so 0 is an equivalent replacement for 10 here.
-    // Stryker disable next-line NumberLiteralValue: 0 and 10 are equivalent radixes for an all-digit string (see above)
-    return value !== null && /^\d+$/.test(value) ? Number.parseInt(value, 10) : undefined;
+    // The /^\d+$/ guard admits only ASCII digit strings, which Number() reads as decimal (leading zeros
+    // included) exactly as parseInt(value, 10) would, without a radix literal to mutate.
+    return value !== null && /^\d+$/.test(value) ? Number(value) : undefined;
 }
 
 async function bodyText(response: Response): Promise<string> {

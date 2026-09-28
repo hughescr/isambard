@@ -97,15 +97,16 @@ const PUBLISHER_FIELD = new Map<string, string>([
 
 /** The parsed body, or undefined for a body that is not JSON (an error page, say). */
 function parseJson(text: string): unknown {
-    // Stryker disable BlockStatement: an empty catch still falls off the end of the function, which implicitly returns undefined — identical to `return undefined`
     try {
         return JSON.parse(text) as unknown;
-    } catch{
+    // eslint-disable-next-line @stylistic/brace-style -- `catch` on its own line so the Stryker directive below attaches to the catch clause alone (a comment before "} catch{" attaches to the try block's last statement instead)
+    }
+    // Stryker disable next-line BlockStatement: an empty catch still falls off the end of the function, which implicitly returns undefined — identical to `return undefined`
+    catch{
         return undefined;
     }
 }
 
-// Stryker restore BlockStatement
 /** Crossref's rejection message for a failed request, or undefined when the body is not a rejection. */
 function rejectionReason(body: unknown): string | undefined {
     if(typeof body !== 'object' || body === null) {
@@ -189,8 +190,9 @@ function setTypeFields(itemType: string, work: CrossrefWork, set: FieldSetter): 
 }
 
 function mapWork(work: CrossrefWork, accessDate: string): MappedItem {
-    // Stryker disable next-line StringLiteral: the fallback only feeds ITEM_TYPES.get(), whose keys are all fixed known strings — any non-key placeholder here (this one included) misses the map the same way and falls to the `?? 'document'` after it
-    const itemType = ITEM_TYPES.get(work.type ?? '') ?? 'document';
+    // Stryker disable next-line StringLiteral: this placeholder only feeds ITEM_TYPES.get(), whose keys are all fixed Crossref type names — any non-key text misses the map exactly as '' does
+    const crossrefType = work.type ?? '';
+    const itemType = ITEM_TYPES.get(crossrefType) ?? 'document';
     const fields: Record<string, string> = {};
     const set: FieldSetter = (field, value) => {
         if(value) {

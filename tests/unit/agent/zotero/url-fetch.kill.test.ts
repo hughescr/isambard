@@ -209,6 +209,44 @@ describe('fetchUnderHostPolicy (mutant kills)', () => {
 
             expect(calls[0].options.servername).toBeUndefined();
         });
+
+        // Kill-review follow-up: the bracket-stripping must yield exactly the address inside the
+        // brackets (a trimmed or bracketed host would check and pin a different address, or none).
+        test('checks and pins exactly the address inside the brackets', async () => {
+            const { request, calls } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: [PDF] }));
+            const checked: string[] = [];
+            const checkAddress: NonNullable<UrlFetchOptions['checkAddress']> = (address) => {
+                checked.push(address);
+                return { ok: true, address, family: 6 };
+            };
+            const neverResolve = async (): Promise<never> => {
+                throw new Error('must not resolve an IP literal');
+            };
+
+            await fetchUnderHostPolicy('https://[2001:db8::12]/a.pdf', baseOptions({ resolve: neverResolve, request, checkAddress }));
+
+            expect(checked).toEqual(['2001:db8::12']);
+            const answers: unknown[][] = [];
+            calls[0].options.lookup?.('2001:db8::12', { all: false }, (...answer: unknown[]) => answers.push(answer));
+            expect(answers).toEqual([[null, '2001:db8::12', 6]]);
+            expect(calls[0].options.servername).toBeUndefined();
+        });
+
+        // Kill-review follow-up: an ordinary name is resolved and used for SNI as written, not trimmed
+        // as if it were a bracketed literal.
+        test('resolves an ordinary hostname untouched and uses it as the servername', async () => {
+            const { request, calls } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: [PDF] }));
+            const resolved: string[] = [];
+            const resolveHost: NonNullable<UrlFetchOptions['resolve']> = async (host) => {
+                resolved.push(host);
+                return [{ address: '93.184.216.34', family: 4 }];
+            };
+
+            await fetchUnderHostPolicy('https://papers.test/a.pdf', baseOptions({ resolve: resolveHost, request }));
+
+            expect(resolved).toEqual(['papers.test']);
+            expect(calls[0].options.servername).toBe('papers.test');
+        });
     });
 
     describe('default timeout', () => {

@@ -95,6 +95,22 @@ describe('parseCitationMeta (html-meta.ts)', () => {
 
         expect(Object.keys(meta)).toEqual(['item']);
     });
+
+    // Kill-review follow-up: an empty citation meta is not recorded, so it cannot shadow a later
+    // non-empty value of the same name.
+    test('skips an empty citation meta so a later value of the same name is read', () => {
+        const meta = parseCitationMeta(page('<meta name="citation_title" content="  "><meta name="citation_title" content="Real title">'), PAGE, ACCESSED);
+
+        expect(meta.item.fields.title).toBe('Real title');
+    });
+
+    // Kill-review follow-up: a <meta> with content but neither name nor property (http-equiv, say) is
+    // ignored rather than recorded under no key or tripping the parse.
+    test('ignores a meta with content but no name or property', () => {
+        const meta = parseCitationMeta(page('<meta http-equiv="refresh" content="5"><meta property="citation_doi" content="10.1038/prop">'), PAGE, ACCESSED);
+
+        expect(meta.doi).toBe('10.1038/prop');
+    });
 });
 
 describe('itemFields (format.ts)', () => {
@@ -137,6 +153,25 @@ describe('formatCreators (format.ts)', () => {
     // creatorType at all must render as a bare label, not "label (undefined)".
     test('renders a creator with no creatorType as a bare label', () => {
         expect(formatCreators([{ firstName: 'Ada', lastName: 'Lovelace' }])).toBe('Lovelace, A.');
+    });
+
+    // Kill-review follow-up: a null creator is dropped (not destructured, which would throw), and so is
+    // any non-object, including a function whose own `name` property would otherwise become a label.
+    test('drops null, primitive and function creators', () => {
+        function Smith(): void {
+            // A creator that is not a plain object.
+        }
+        expect(formatCreators([null, 'Jones', 7, true, Smith, { lastName: 'Doe' }])).toBe('Doe');
+    });
+
+    // Kill-review follow-up: initials come from each whitespace-separated token, however much
+    // whitespace separates them, and an all-whitespace first name gives no initials at all.
+    test('takes one initial per whitespace-separated first-name token', () => {
+        expect(formatCreators([
+            { firstName: '  John \t Ronald  Reuel ', lastName: 'Tolkien' },
+            { firstName: '   ', lastName: 'Curie' },
+            { firstName: '', lastName: 'Noether' },
+        ])).toBe('Tolkien, J. R. R.; Curie; Noether');
     });
 });
 

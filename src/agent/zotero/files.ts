@@ -118,10 +118,18 @@ export async function storePdfs(client: ZoteroClient, pdfs: PdfToStore[], now: (
     for(const failure of created.failed) {
         results[failure.index] = { pdf: `failed: ${failure.message}` };
     }
+    // Zotero's write response is keyed by batch position and is not range-checked by the client; a
+    // stray index has no PDF to upload and no result slot, so refuse before any upload starts.
+    const stray = created.successful.find(success => pdfs[success.index] === undefined);
+    if(stray !== undefined) {
+        throw new ZoteroFileError(
+            `Zotero reported attachment ${stray.key} created at index ${stray.index}, outside the batch of ${pdfs.length}; nothing was uploaded`,
+            { reason: 'upload_failed', key: stray.key }
+        );
+    }
 
     const limit = pLimit(2);
     const failedUploads: (PlaceholderCheck & { index: number, error: string })[] = [];
-    // Stryker disable next-line PromiseCombinatorSwap: every mapped task catches its own error below and always resolves, so Promise.all and Promise.allSettled observe the same settled array here
     await Promise.all(created.successful.map(async success => limit(async () => {
         const pdf = pdfs[success.index]!;
         try {
@@ -219,11 +227,10 @@ interface DownloadTarget {
 /** Why an attachment cannot be downloaded, or undefined when it can. */
 function ineligible(item: ZoteroItem, maxBytes: number): string | undefined {
     const { data } = item;
-    // Stryker disable ConditionalExpression,StringLiteral,BlockStatement: ineligible's only two callers (resolveTargets and addChildTargets, below) already narrow to itemType === 'attachment' before calling it, so this guard and its body never run and any mutation here is unobservable
     if(data.itemType !== 'attachment') {
+        // Stryker disable next-line StringLiteral: this reason is only ever tested against undefined (addChildTargets filters on it; resolveTargets narrows to attachments first and writes its own reason), so any defined text is equivalent
         return `not an attachment (${data.itemType})`;
     }
-    // Stryker restore ConditionalExpression,StringLiteral,BlockStatement
     if(!STORED_LINK_MODES.has(String(data.linkMode))) {
         return 'no_stored_file: linked files and links are not stored in Zotero';
     }
@@ -270,8 +277,8 @@ async function resolveTargets(deps: ZoteroFileDeps, keys: string[]): Promise<{ t
 async function addChildTargets(deps: ZoteroFileDeps, parents: ZoteroItem[], targets: Map<string, DownloadTarget>, skipped: SkippedDownload[]): Promise<void> {
     const children = await deps.client.getChildren(parents.map(parent => parent.key));
     for(const parent of parents) {
-        // Stryker disable next-line ConditionalExpression: forcing this to true only lets a non-attachment child reach ineligible(), whose own itemType !== 'attachment' guard (above) returns a defined reason for it regardless, so the filtered set is identical either way
-        const eligible = (children.get(parent.key) ?? []).filter(child => child.data.itemType === 'attachment' && ineligible(child, deps.maxStoredFileBytes) === undefined);
+        // ineligible() refuses a non-attachment child itself, so no separate itemType check here.
+        const eligible = (children.get(parent.key) ?? []).filter(child => ineligible(child, deps.maxStoredFileBytes) === undefined);
         if(eligible.length === 0) {
             skipped.push({ key: parent.key, reason: 'no_stored_file: no stored PDF, HTML or text attachment within the size limit' });
         }
@@ -285,16 +292,17 @@ async function cachedCopy(deps: ZoteroFileDeps, relPath: string, md5: unknown): 
     if(typeof md5 !== 'string') {
         return undefined;
     }
-    // Stryker disable BlockStatement: the catch block below is the async function's last statement; emptying it still falls off the end and implicitly returns undefined, identical to the explicit return it has today
     try {
         const { bytes } = await openContainedForRead(deps.root, relPath, deps.maxStoredFileBytes);
         return md5Hex(bytes) === md5 ? bytes : undefined;
-    } catch{
+    // eslint-disable-next-line @stylistic/brace-style -- `catch` on its own line so the Stryker directive below attaches to the catch clause alone (a comment before "} catch{" attaches to the try block's last statement instead)
+    }
+    // Stryker disable next-line BlockStatement: the catch is the function's last statement; emptying it falls off the end and implicitly returns undefined, identical to the explicit return
+    catch{
         // A symlink, hard link, missing file or anything else is simply "not cached"; it is replaced below.
         return undefined;
     }
 }
-// Stryker restore BlockStatement
 
 async function downloadOne(deps: ZoteroFileDeps, target: DownloadTarget): Promise<DownloadedFile> {
     const { attachment } = target;

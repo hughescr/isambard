@@ -21,6 +21,7 @@ import {
     type ZoteroFileDeps
 } from '../../../../src/agent/zotero/files';
 import type { UrlFetchResult } from '../../../../src/agent/zotero/url-fetch';
+import { ZoteroFileError } from '../../../../src/errors';
 import * as zoteroUtils from '../../../../src/utils';
 import { FakeZoteroServer, STORAGE, clientFor, json, status, type RecordedCall } from '../../../helpers/zotero-fake';
 
@@ -235,6 +236,88 @@ describe('storePdfs via a stub client', () => {
         expect(results).toHaveLength(4);
         expect(maxActive).toBe(2);
     });
+
+    // Kill-review follow-up: Promise.all → Promise.race would return as soon as the first upload
+    // finished, leaving the second PDF's result at its 'failed: not created' default.
+    test('waits for every upload before returning', async () => {
+        const releases: (() => void)[] = [];
+        let uploads = 0;
+        const client = {
+            createItems:          async (items: unknown[]) => ({ successful: items.map((_, index) => ({ index, key: `STUB${index}`, version: 1 })), unchanged: [], failed: [] }),
+            uploadAttachmentFile: async () => {
+                uploads++;
+                if(uploads === 2) {
+                    await gate(releases);
+                }
+                return 'uploaded' as const;
+            },
+            cleanupPlaceholders: async () => [],
+        } as unknown as Parameters<typeof storePdfs>[0];
+        let settled = false;
+
+        const promise = storePdfs(client, [
+            { parentKey: PARENT, title: 'A', filename: 'a.pdf', bytes: PDF },
+            { parentKey: PARENT, title: 'B', filename: 'b.pdf', bytes: PDF },
+        ], () => 0).then((results) => {
+            settled = true;
+            return results;
+        });
+        await pumpUntil(() => settled);
+
+        expect(settled).toBe(false);
+        expect(releases).toHaveLength(1);
+        releaseAll(releases);
+        expect(await promise).toEqual([
+            { pdf: 'attached', attachmentKey: 'STUB0' },
+            { pdf: 'attached', attachmentKey: 'STUB1' },
+        ]);
+    });
+
+    // Kill-review follow-up: Promise.all → Promise.allSettled would swallow a failure the upload task's
+    // own catch cannot absorb (here errorMessage's String() of a prototype-less object throws), leaving
+    // an orphan placeholder reported as 'failed: not created' and never cleaned up.
+    test('propagates a failure the upload task cannot handle instead of swallowing it', async () => {
+        const client = {
+            createItems:          async (items: unknown[]) => ({ successful: items.map((_, index) => ({ index, key: `STUB${index}`, version: 1 })), unchanged: [], failed: [] }),
+            // The point of the test: a rejection value that cannot even be stringified.
+            uploadAttachmentFile: async () => {
+                throw Object.create(null);
+            },
+            cleanupPlaceholders: async () => [],
+        } as unknown as Parameters<typeof storePdfs>[0];
+
+        await expect(storePdfs(client, [{ parentKey: PARENT, title: 'T', filename: 'a.pdf', bytes: PDF }], () => 0)).rejects.toThrow(TypeError);
+    });
+
+    // Kill-review follow-up: a successful index outside the batch (an unvalidated Zotero response) is
+    // refused before any upload starts, with the stray key named.
+    test('refuses a create result whose successful index is outside the batch, before uploading anything', async () => {
+        const uploaded: string[] = [];
+        const client = {
+            createItems: async () => ({
+                successful: [{ index: 0, key: 'STUB0', version: 1 }, { index: 1, key: 'STRAY', version: 1 }],
+                unchanged:  [],
+                failed:     [],
+            }),
+            uploadAttachmentFile: async (key: string) => {
+                uploaded.push(key);
+                return 'uploaded' as const;
+            },
+            cleanupPlaceholders: async () => [],
+        } as unknown as Parameters<typeof storePdfs>[0];
+
+        let error: unknown;
+        try {
+            await storePdfs(client, [{ parentKey: PARENT, title: 'T', filename: 'a.pdf', bytes: PDF }], () => 0);
+        } catch (error_) {
+            error = error_;
+        }
+
+        expect(error).toBeInstanceOf(ZoteroFileError);
+        expect((error as ZoteroFileError).message).toBe('Zotero reported attachment STRAY created at index 1, outside the batch of 1; nothing was uploaded');
+        expect((error as ZoteroFileError).context).toEqual({ reason: 'upload_failed', key: 'STRAY' });
+        expect(uploaded).toEqual([]);
+    });
 });
 
 describe('attachPdfs', () => {
@@ -366,6 +449,20 @@ describe('downloadAttachments: parent handling', () => {
 
         expect(result.files).toHaveLength(1);
         expect(childrenCalls).toBe(0);
+    });
+
+    // Kill-review follow-up: only attachment children are downloadable. A non-attachment child that
+    // otherwise looks like a stored PDF must be rejected by ineligible()'s own itemType guard.
+    test('never downloads a non-attachment child, even one carrying stored-file fields', async () => {
+        const { deps } = setup((s) => {
+            s.addItem({ key: 'NTEK2345', itemType: 'note', parentItem: PARENT, note: '<p>n</p>', linkMode: 'imported_file', contentType: 'application/pdf', filename: 'paper.pdf', md5: null });
+            s.storeFile('NTEK2345', PDF);
+        });
+
+        const result = await downloadAttachments(deps, [PARENT]);
+
+        expect(result.files).toEqual([]);
+        expect(result.skipped).toEqual([{ key: PARENT, reason: 'no_stored_file: no stored PDF, HTML or text attachment within the size limit' }]);
     });
 });
 

@@ -236,6 +236,20 @@ describe('arxiv.ts link-detection survivors', () => {
         expect(found.get('1706.03762')?.fields.title).toBe('T');
     });
 
+    // Kill-review follow-up: the entry initializer's title/summary placeholders are empty strings, so
+    // an entry whose feed omits <title> or <summary> carries no title or abstract rather than a
+    // fabricated one.
+    test('an entry with no <title> or <summary> has no title or abstractNote field', async () => {
+        const resolver = arxivSetup(() => feedWith('<entry><id>http://arxiv.org/abs/1706.03762</id><published>2017-06-12T17:57:34Z</published></entry>'));
+
+        const found = await resolver.lookupIds(['1706.03762']);
+
+        const fields = found.get('1706.03762')?.fields;
+        expect(fields?.date).toBe('2017-06-12');
+        expect(fields).not.toHaveProperty('title');
+        expect(fields).not.toHaveProperty('abstractNote');
+    });
+
     // arxiv.ts:129 Regex → `/\d{4}-\d{2}-\d{2}/` (drops the `^` anchor), so a date-shaped substring
     // anywhere in <published> would be picked up, not only one at the very start.
     test('the published date is only read from the very start of the field', async () => {
