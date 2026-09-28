@@ -2896,7 +2896,16 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive' }));
 
-            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckError);
+            let thrown: unknown;
+            try {
+                await client.moveMessage('CleanInbox', 42, 'Archive');
+                throw new Error('expected moveMessage to throw');
+            } catch (err) {
+                thrown = err;
+            }
+            expect(thrown).toBeInstanceOf(WildDuckError);
+            expect((thrown as WildDuckError).message).toBe('WildDuck move response missing destination uid for source uid 42');
+            expect((thrown as WildDuckError).context).toEqual({ sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
         });
 
         test('throws WildDuckError when no pair matches the source uid', async () => {
@@ -2904,7 +2913,16 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[7, 1000]] }));
 
-            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckError);
+            let thrown: unknown;
+            try {
+                await client.moveMessage('CleanInbox', 42, 'Archive');
+                throw new Error('expected moveMessage to throw');
+            } catch (err) {
+                thrown = err;
+            }
+            expect(thrown).toBeInstanceOf(WildDuckError);
+            expect((thrown as WildDuckError).message).toBe('WildDuck move response missing destination uid for source uid 42');
+            expect((thrown as WildDuckError).context).toEqual({ sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
         });
 
         test('throws WildDuckError when the destination uid is not a number', async () => {
@@ -2912,7 +2930,16 @@ describe('WildDuckClient', () => {
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, mailbox: 'mbx-archive', id: [[42, null]] }));
 
-            await expect(client.moveMessage('CleanInbox', 42, 'Archive')).rejects.toThrow(WildDuckError);
+            let thrown: unknown;
+            try {
+                await client.moveMessage('CleanInbox', 42, 'Archive');
+                throw new Error('expected moveMessage to throw');
+            } catch (err) {
+                thrown = err;
+            }
+            expect(thrown).toBeInstanceOf(WildDuckError);
+            expect((thrown as WildDuckError).message).toBe('WildDuck move response missing destination uid for source uid 42');
+            expect((thrown as WildDuckError).context).toEqual({ sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
         });
 
         test('throws WildDuckError when source mailbox not in map', async () => {
