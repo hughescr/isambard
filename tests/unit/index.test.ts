@@ -1569,6 +1569,21 @@ describe('createApp', () => {
             expect(emailOptions.wildDuckClient).toBe(deps.wildDuckClient);
         });
 
+        test('hands setupEmail no preview URL builder when the draft preview is off or failed to bind (#158)', async () => {
+            const { emailSetupSpy } = wireHappyPath(spies);
+            spies.push(spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
+                conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
+            }));
+            const startPreviewSpy = spyOn(staticWildDuckClientModule, 'startDraftPreview').mockReturnValue(undefined);
+            spies.push(startPreviewSpy);
+
+            await staticIndexModule.createApp();
+
+            expect(startPreviewSpy).toHaveBeenCalledTimes(1);
+            const emailOptions = emailSetupSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+            expect(emailOptions).toHaveProperty('previewUrlFor', undefined);
+        });
+
         test('starts the dmPoller during app.start() and stops it during app.stop() (Q8)', async () => {
             const { dmPollerStart, dmPollerStop } = wireHappyPath(spies, {}, {}, true);
             // app.start() fires real healthRegistry.sendEvent transitions, which independently wake
