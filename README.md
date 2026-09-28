@@ -47,18 +47,21 @@ Isambard sets `_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=1` itself so proxied Cla
 
 The per-turn provider line combines Codex and DeepSeek data from utraque's provider report (schema 2, served at `/utraque/providers/v2`) with Anthropic windows emitted by the Claude Agent SDK. Isambard deliberately omits its Claude OAuth bearer from the provider-report request, so utraque skips the separate Anthropic usage lookup. SDK quota events arrive only while Izzy is active and cannot observe Craig's external Claude spend while Izzy is idle; the existing pause guard retains its prior peak until another SDK event arrives. Percentages are 0–100 values. When local history and models.dev reference prices are available, each five-hour or weekly bucket can include a rough `estimate_tokens_remaining` normalized to the cheapest currently routed model; its basis, sample token mix, period, and price timestamp stay beside the estimate. DeepSeek balance estimates remain per model. Quota, monetary balances, spend limits, source timestamps, scopes, cache state and failures remain distinct; local history's calculated API-reference cost is neither an invoice nor a subscription quota weight. See the provider terms for [Claude Max](https://support.claude.com/en/articles/11049741-what-is-the-max-plan), [Codex](https://learn.chatgpt.com/docs/pricing), and [DeepSeek API pricing](https://api-docs.deepseek.com/quick_start/pricing/).
 
-## Email draft preview (optional)
+## Email draft preview
 
-Outbound email approval cards can link to a full preview of the draft, served on `127.0.0.1` and exposed to your tailnet with `tailscale serve`. It is off unless both of the first two variables are set:
+Outbound email approval cards link to a full preview of the draft. Izzy serves it on `127.0.0.1` and, at startup, publishes it to your tailnet itself with `tailscale serve` at `https://<mac-name>.<tailnet>.ts.net/izzy-preview`, admitting only your own Tailscale login. Your only steps: install Tailscale on the Mac and your phone, sign both in to the same tailnet, and turn on MagicDNS and HTTPS Certificates in the admin console. If Tailscale isn't ready (or Funnel is on for the Mac), Izzy logs one line saying why and cards just have no preview button.
+
+Every setting is optional:
 
 ```bash
-EMAIL_PREVIEW_PORT=8791
-EMAIL_PREVIEW_PUBLIC_BASE_URL=https://<mac-name>.<tailnet>.ts.net
-EMAIL_PREVIEW_TTL_HOURS=168                     # optional, default 168
-EMAIL_PREVIEW_ALLOWED_LOGINS=you@example.com    # optional, comma-separated Tailscale logins
+EMAIL_PREVIEW=off                               # turn the preview off entirely (default auto)
+EMAIL_PREVIEW_PORT=8787                         # local port, default 8787
+EMAIL_PREVIEW_ALLOWED_LOGINS=you@example.com    # comma-separated Tailscale logins; default is the Mac owner's
+EMAIL_PREVIEW_TTL_HOURS=168                     # link lifetime, default 168
+EMAIL_PREVIEW_PUBLIC_BASE_URL=https://…         # manual mode: you run tailscale serve, Izzy runs no Tailscale commands
 ```
 
-See [docs/email-preview.md](docs/email-preview.md) for the Tailscale setup and when links stop working.
+See [docs/email-preview.md](docs/email-preview.md) for exactly what Izzy does with Tailscale, manual mode, when links stop working, and the security notes.
 
 ## Tech Stack
 
