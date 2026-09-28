@@ -2,11 +2,27 @@
  * Test doubles for the Zotero client (#157): a recording fetch, response builders and a fake
  * clock whose sleep advances time instantly. No network, no real timers.
  */
+import { createHash } from 'node:crypto';
+import { ZoteroClient } from '@/integrations/zotero/client';
 import type { FetchLike } from '@/integrations/zotero/types';
 
 export const TEST_API_KEY = 'test-zotero-api-key-0123456789abcdef';
 export const API = 'https://api.zotero.org';
 export const LIBRARY = `${API}/groups/6692257`;
+/** The fake storage host the fake library uploads to and downloads from. */
+export const STORAGE = 'https://storage.test';
+
+/** A real client talking to `server` with the fake clock. */
+export function clientFor(server: FakeZoteroServer): ZoteroClient {
+    return new ZoteroClient({
+        apiKey:        TEST_API_KEY,
+        groupId:       6_692_257,
+        fetch:         server.fetch,
+        sleep:         server.clock.sleep,
+        now:           server.clock.now,
+        timeoutSignal: () => new AbortController().signal,
+    });
+}
 
 /** One request the fake fetch saw. */
 export interface RecordedCall {
@@ -148,6 +164,9 @@ export class FakeZoteroServer {
     libraryVersion = 1;
     writeTokens: string[] = [];
     override:    FakeOverride | undefined;
+    /** Stored attachment files by attachment key. */
+    files = new Map<string, Uint8Array>();
+    #uploads = new Map<string, { md5: string, bytes?: Uint8Array }>();
     #created = 0;
 
     readonly clock = fakeClock();
@@ -183,12 +202,24 @@ export class FakeZoteroServer {
         if(overridden) {
             return overridden;
         }
+        return this.respond(call);
+    }
+
+    /** Answers `call` as the library would, bypassing `override` (so an override can delegate and then fault). */
+    respond(call: RecordedCall): Response {
+        if(call.url.startsWith(`${STORAGE}/`)) {
+            return this.#storage(call);
+        }
         const url = new URL(call.url);
         if(url.pathname === '/items/new') {
             const template = this.templates.get(url.searchParams.get('itemType') ?? '');
             return template ? json(template) : status(400, 'Invalid item type');
         }
         const path = url.pathname.replace('/groups/6692257', '');
+        const file = /^\/items\/([^/]+)\/file$/.exec(path);
+        if(file) {
+            return this.#file(call, file[1]);
+        }
         if(call.method === 'POST' && (path === '/items' || path === '/collections')) {
             return this.#write(call, path === '/items' ? this.items : this.collections, path === '/items');
         }
@@ -196,6 +227,62 @@ export class FakeZoteroServer {
             return status(405);
         }
         return this.#read(path, url.searchParams);
+    }
+
+    /** Stores a file for an existing attachment item, as if it had been uploaded, and sets its md5. */
+    storeFile(key: string, bytes: Uint8Array): void {
+        const item = this.items.get(key)!;
+        this.files.set(key, bytes);
+        // eslint-disable-next-line sonarjs/hashing -- the md5 Zotero's file protocol uses as a content identity
+        item.data.md5 = createHash('md5').update(bytes).digest('hex');
+    }
+
+    /** `/items/<key>/file`: GET redirects to storage; POST authorises (If-None-Match: *) or registers an upload. */
+    #file(call: RecordedCall, key: string): Response {
+        const item = this.items.get(key);
+        if(!item) {
+            return status(404, 'Item not found');
+        }
+        if(call.method === 'GET') {
+            return this.files.has(key) ? status(302, '', { Location: `${STORAGE}/download/${key}` }) : status(404, 'File not found');
+        }
+        const form = new URLSearchParams(call.bodyText);
+        const uploadKey = form.get('upload');
+        if(uploadKey !== null) {
+            const pending = this.#uploads.get(uploadKey);
+            if(pending?.bytes === undefined) {
+                return status(400, 'Upload not found');
+            }
+            this.libraryVersion++;
+            this.files.set(key, pending.bytes);
+            item.version = this.libraryVersion;
+            item.data = { ...item.data, md5: pending.md5, version: this.libraryVersion };
+            return status(204);
+        }
+        if(typeof item.data.md5 === 'string') {
+            return status(412, 'If-None-Match: * set but file exists');
+        }
+        const newUploadKey = `UP${key}`;
+        this.#uploads.set(newUploadKey, { md5: form.get('md5') ?? '' });
+        return json({ url: `${STORAGE}/upload/${newUploadKey}`, contentType: 'application/pdf', prefix: '', suffix: '', uploadKey: newUploadKey });
+    }
+
+    #storage(call: RecordedCall): Response {
+        const [, kind, id] = new URL(call.url).pathname.split('/');
+        if(kind === 'upload' && call.method === 'POST') {
+            const pending = this.#uploads.get(id);
+            if(pending === undefined) {
+                return status(404);
+            }
+            pending.bytes = call.bodyBytes;
+            return status(201);
+        }
+        const bytes = this.files.get(id);
+        if(kind !== 'download' || bytes === undefined) {
+            return status(404);
+        }
+        const contentType = this.items.get(id)?.data.contentType;
+        return new Response(bytes as Uint8Array<ArrayBuffer>, { status: 200, headers: { 'Content-Type': typeof contentType === 'string' ? contentType : 'application/octet-stream' } });
     }
 
     #page(objects: FakeObject[], params: URLSearchParams): Response {

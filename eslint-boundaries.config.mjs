@@ -33,7 +33,8 @@ import boundariesPlugin from 'eslint-plugin-boundaries';
  *                 (fileQuotaWindow, hasQuotaWindow, unifiedAnthropicQuotaId), never app, never
  *                 the utraque integration
  *    zotero     - Zotero Web API v3 client pinned to the shared group library, plus Crossref/arXiv/
- *                 HTML metadata (#157); reaches only utils, errors and config, never agent
+ *                 HTML metadata (#157); reaches only utils, errors and config, never agent. One-way
+ *                 like caldav: agent (the zotero MCP server) and app may import zotero
  * 7. app        - Composition root (src/index.ts + src/app/**), wires everything together;
  *                 imports utraque and anthropic directly (src/app/quota-poller.ts)
  *
@@ -86,7 +87,7 @@ const elementDescriptors = boundaryElements.map(element => (
 const ENTRY_POINT_CATEGORY = 'entrypoint';
 
 // What the composition root may reach: everything except itself.
-const APP_MAY_IMPORT = ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'utraque', 'anthropic'];
+const APP_MAY_IMPORT = ['utils', 'errors', 'config', 'storage', 'services', 'agent', 'discord', 'email', 'bsky', 'caldav', 'utraque', 'anthropic', 'zotero'];
 
 export const boundariesConfig = {
     files:   ['src/**/*.ts', 'src/**/*.tsx'],
@@ -122,7 +123,7 @@ export const boundariesConfig = {
                 { from: { element: { type: 'storage' } },  allow: { to: { element: { type: ['utils', 'errors', 'config'] } } } },
                 { from: { element: { type: 'services' } }, allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage'] } } } },
                 { from: { element: { type: 'agent' } }, dependency: { kind: 'type' }, allow: { to: { element: { type: ['email'] } } } },
-                { from: { element: { type: 'agent' } },    allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'bsky', 'caldav'] } } } },
+                { from: { element: { type: 'agent' } },    allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'bsky', 'caldav', 'zotero'] } } } },
                 { from: { element: { type: 'email' } }, dependency: { kind: 'type' }, allow: { to: { element: { type: ['agent'] } } } },
                 { from: { element: { type: 'email' } },   allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services'] } } } },
                 { from: { element: { type: 'bsky' } },    allow: { to: { element: { type: ['utils', 'errors', 'config', 'storage', 'services', 'agent'] } } } },
