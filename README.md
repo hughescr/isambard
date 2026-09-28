@@ -154,9 +154,10 @@ See [docs/email-preview.md](docs/email-preview.md) for exactly what Izzy does wi
    ```
 
    **Zotero secret (optional):** when set, both sessions get the `zotero` MCP server for the shared
-   group library; unset, there is no Zotero client or tool. See [docs/zotero.md](docs/zotero.md).
+   group library; unset (its placeholder is empty), there is no Zotero client or tool. Pipe the key
+   on stdin so it stays out of the process list. See [docs/zotero.md](docs/zotero.md).
    ```bash
-   bunx sst secret set ZoteroApiKey "$(op read 'op://Private/z3okqvyyusudopgkwoezdfkn24/API Key for user 21862647')"
+   op read 'op://Private/z3okqvyyusudopgkwoezdfkn24/API Key for user 21862647' | bunx sst secret set ZoteroApiKey
    ```
 
    **CalDAV calendar** credentials are managed per-user via Discord `/calendar` slash commands (stored in DynamoDB calendar-registry), not SST secrets.

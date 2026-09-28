@@ -4,15 +4,15 @@ Izzy works in one Zotero library: the shared group **"Izzy-Craig Collab"** (grou
 
 ## Turning it on
 
-The integration is off until the `ZoteroApiKey` SST secret is set. Set it from the checkout Izzy runs from, on the stage it runs under (add `--stage <stage>` if that is not your default stage):
+The integration is off until the `ZoteroApiKey` SST secret is set. Set it from the checkout Izzy runs from, on the stage it runs under (add `--stage <stage>` if that is not your default stage). Pipe the key in on stdin, so it never appears in a process's command line where `ps` could see it:
 
 ```bash
-bunx sst secret set ZoteroApiKey "$(op read 'op://Private/z3okqvyyusudopgkwoezdfkn24/API Key for user 21862647')"
+op read 'op://Private/z3okqvyyusudopgkwoezdfkn24/API Key for user 21862647' | bunx sst secret set ZoteroApiKey
 ```
 
 Then restart Izzy. Both the conversation and perch sessions get the `zotero` MCP server and `mcp__zotero__*` in their allowed tools. Startup makes no Zotero call, so a Zotero outage never blocks startup.
 
-To turn it off, remove the secret (`bunx sst secret remove ZoteroApiKey`) and restart. An empty value counts as unset.
+To turn it off, remove the secret (`bunx sst secret remove ZoteroApiKey`) and restart. The secret has an empty placeholder in `sst/secrets.ts`, so an unset or removed secret is an empty value, which counts as off; SST does not refuse to start.
 
 The key never appears in logs, error messages or tool output, and it is only ever sent to `api.zotero.org`. Uploads to and downloads from Zotero's storage host carry no Zotero header.
 

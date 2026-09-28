@@ -43,12 +43,13 @@ export const bskyAppPassword = new sst.Secret('BskyAppPassword');
 // and the classifier falls back to the deterministic "retry" policy.
 export const typesafeApiKey = new sst.Secret('TypesafeApiKey');
 
-// Zotero Web API key for Izzy's own account (#157). No default: same optional-secret shape as
-// BskyHandle/BskyAppPassword above — loadConfig treats an empty/unset value as "not configured",
-// so no Zotero client or MCP server is built. The client only ever addresses the shared group
-// library (ZOTERO_GROUP_ID, default 6692257), never /users/.... Craig sets it with
-// `bunx sst secret set ZoteroApiKey <key>`.
-export const zoteroApiKey = new sst.Secret('ZoteroApiKey');
+// Zotero Web API key for Izzy's own account (#157). The empty placeholder matters: an sst.Secret
+// with no placeholder throws SecretMissingError when unset, which stops `sst dev`/`sst shell`/
+// `sst deploy`. With it, an unset (or removed) secret resolves to '', which loadConfig treats as
+// "not configured", so no Zotero client or MCP server is built. The client only ever addresses
+// the shared group library (ZOTERO_GROUP_ID, default 6692257), never /users/.... Craig sets it by
+// piping the key on stdin (see docs/zotero.md), so it never appears in a process's argv.
+export const zoteroApiKey = new sst.Secret('ZoteroApiKey', '');
 
 // // Box
 // export const boxClientId = new sst.Secret('BoxClientId');
