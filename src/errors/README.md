@@ -60,6 +60,17 @@ classDiagram
     CaldavError <|-- CaldavTimeoutError
     CaldavError <|-- AmbiguousCalendarMatchError
 
+    IsambardError <|-- ZoteroError
+    ZoteroError <|-- ZoteroAuthError
+    ZoteroError <|-- ZoteroNotFoundError
+    ZoteroError <|-- ZoteroVersionConflictError
+    ZoteroError <|-- ZoteroRateLimitError
+    ZoteroError <|-- ZoteroServerError
+    ZoteroError <|-- ZoteroQuotaError
+    ZoteroError <|-- ZoteroFileError
+    ZoteroError <|-- ZoteroUrlFetchError
+    ZoteroError <|-- ZoteroMetadataError
+
     IsambardError <|-- MemoryVecError
     MemoryVecError <|-- ModelFileNotFoundError
     MemoryVecError <|-- IncompatibleLlamaCppError
@@ -110,6 +121,20 @@ classDiagram
         +context?: Record~string, unknown~
     }
 
+    class ZoteroError {
+        +code: ErrorCode
+        +context?: Record~string, unknown~
+    }
+
+    class ZoteroRateLimitError {
+        +retryAfterMs: number
+        +overBudget: boolean
+    }
+
+    class ZoteroFileError {
+        +reason: ZoteroFileErrorReason
+    }
+
     class VectorIndexError {
         +code: ErrorCode
         +context?: Record~string, unknown~
@@ -141,7 +166,7 @@ classDiagram
     }
 ```
 
-> **Note:** All error classes are defined in `src/errors/` (e.g., email errors in `src/errors/email.ts`, Bluesky errors in `src/errors/bsky.ts`, CalDAV errors in `src/errors/caldav.ts`, media/path errors in `src/errors/utils.ts`, config errors in `src/errors/config.ts`, browser errors in `src/errors/browser.ts`, memory-vec embedding errors in `src/errors/memory-vec.ts`, vector index errors in `src/errors/vector-index.ts`) and exported from the `@/errors` barrel. Integration barrels (e.g., `@/integrations/email`, `@/storage`) re-export them for convenience.
+> **Note:** All error classes are defined in `src/errors/` (e.g., email errors in `src/errors/email.ts`, Bluesky errors in `src/errors/bsky.ts`, CalDAV errors in `src/errors/caldav.ts`, Zotero errors in `src/errors/zotero.ts`, media/path errors in `src/errors/utils.ts`, config errors in `src/errors/config.ts`, browser errors in `src/errors/browser.ts`, memory-vec embedding errors in `src/errors/memory-vec.ts`, vector index errors in `src/errors/vector-index.ts`) and exported from the `@/errors` barrel. Integration barrels (e.g., `@/integrations/email`, `@/storage`) re-export them for convenience.
 
 ## When to Create vs Reuse Errors
 
@@ -164,6 +189,7 @@ classDiagram
    - Email operations → extend `EmailError`
    - Bluesky operations → extend `BskyError`
    - CalDAV operations → extend `CaldavError`
+   - Zotero library, file and metadata operations → extend `ZoteroError`
    - Browser automation → extend `BrowserError`
    - Vector index operations (SQLite-backed semantic search) → extend `VectorIndexError`
    - Media processing (video, audio, image conversion) → extend `MediaProcessingError` (extends `IsambardError` directly — media is cross-cutting, not a domain service)

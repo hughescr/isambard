@@ -66,6 +66,20 @@ export {
 } from './caldav';
 
 export {
+    ZoteroError,
+    ZoteroAuthError,
+    ZoteroNotFoundError,
+    ZoteroVersionConflictError,
+    ZoteroRateLimitError,
+    ZoteroServerError,
+    ZoteroQuotaError,
+    ZoteroFileError,
+    ZoteroUrlFetchError,
+    ZoteroMetadataError
+} from './zotero';
+export type { ZoteroFileErrorReason } from './zotero';
+
+export {
     MemoryVecError,
     ModelFileNotFoundError,
     IncompatibleLlamaCppError,
