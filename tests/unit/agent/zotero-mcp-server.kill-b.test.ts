@@ -224,9 +224,9 @@ describe('createZoteroMCPServer — mcp-b (lines 357-457)', () => {
     describe('addPapers options passthrough', () => {
         test('passes collectionKeys and tags to addPapers only when given, alongside attachPdf', async () => {
             const { deps } = baseDeps();
-            const captured: unknown[] = [];
+            const captured: Record<string, unknown>[] = [];
             const spy = spyOn(zoteroAgentModule, 'addPapers').mockImplementation(async (_addPapersDeps, _papers, options) => {
-                captured.push(options);
+                captured.push(options as unknown as Record<string, unknown>);
                 return [];
             });
             const mcp = createZoteroMCPServer(deps);
@@ -237,8 +237,14 @@ describe('createZoteroMCPServer — mcp-b (lines 357-457)', () => {
 
             spy.mockRestore();
 
+            // `toEqual` alone would not catch a mutant that always spreads `{ collectionKeys: args.collectionKeys }`
+            // (or `{ tags: ... }`) even when the arg is absent: `toEqual` treats an own key with value `undefined`
+            // as equal to a missing key, so the exact own-key set is checked separately from the exact values.
+            expect(Object.keys(captured[0]).toSorted((a, b) => a.localeCompare(b))).toEqual(['attachPdf']);
             expect(captured[0]).toEqual({ attachPdf: true });
+            expect(Object.keys(captured[1]).toSorted((a, b) => a.localeCompare(b))).toEqual(['attachPdf', 'collectionKeys']);
             expect(captured[1]).toEqual({ collectionKeys: ['CLLN2345'], attachPdf: true });
+            expect(Object.keys(captured[2]).toSorted((a, b) => a.localeCompare(b))).toEqual(['attachPdf', 'tags']);
             expect(captured[2]).toEqual({ tags: ['new'], attachPdf: true });
         });
     });
