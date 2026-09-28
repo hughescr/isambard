@@ -261,7 +261,9 @@ async function readUpTo(io: ContainedIo, fd: number, limit: number): Promise<Uin
  * Rejects (`PathSecurityError`): a path outside the root (`outside_cwd`), a symlinked, missing or
  * non-directory ancestor (`not_directory`), a final symlink (`is_symlink`), a missing file
  * (`not_found`), a directory/FIFO/device (`not_file`), a hard link (`hardlinked`: it may name a file
- * outside the root), and a file larger than `maxBytes` (`too_large`).
+ * outside the root), a file larger than `maxBytes` (`too_large`), and a file whose length on reading
+ * differs from the size fstat reported, because it grew or shrank during the call
+ * (`changed_during_read`).
  */
 export async function openContainedForRead(
     root: string,
@@ -302,6 +304,10 @@ export async function openContainedForRead(
             if(bytes.length > maxBytes) {
                 throw tooLarge(relPath, maxBytes);
             }
+            // A file still being written (or truncated) would otherwise come back cut short as a success.
+            if(bytes.length !== stat.size) {
+                throw new PathSecurityError(`File changed while it was being read: ${relPath}`, relPath, 'changed_during_read');
+            }
             return { bytes, size: bytes.length };
         } finally {
             await bound.io.close(fileFd);
@@ -320,22 +326,33 @@ async function writeAll(io: ContainedIo, fd: number, bytes: Uint8Array): Promise
     }
 }
 
-/** Writes the temp file's bytes; on any failure the temp file is unlinked through the held handle. */
+/**
+ * Writes the temp file's bytes. If the write or the close fails, the temp file is unlinked through
+ * the held handle and the first failure is thrown. Close is tried once, never again: after a failed
+ * close the descriptor may already have been released and its number reused.
+ */
 async function writeTemp(bound: Bound, dirFd: number, tempName: string, bytes: Uint8Array, target: string): Promise<void> {
     const fd = bound.io.openat(dirFd, cSegment(tempName), bound.tempFlags, 0o600);
     if(fd < 0) {
         throw new PathSecurityError(`Could not create a temporary file next to ${target}`, target, 'not_directory');
     }
+    let failure: { error: unknown } | undefined;
     try {
         await bound.io.fchmod(fd, 0o600);
         await writeAll(bound.io, fd, bytes);
         await bound.io.fdatasync(fd);
     } catch (error) {
-        await bound.io.close(fd);
-        bound.io.unlinkat(dirFd, cSegment(tempName), 0);
-        throw error;
+        failure = { error };
     }
-    await bound.io.close(fd);
+    try {
+        await bound.io.close(fd);
+    } catch (error) {
+        failure ??= { error };
+    }
+    if(failure) {
+        bound.io.unlinkat(dirFd, cSegment(tempName), 0);
+        throw failure.error;
+    }
 }
 
 /** True when the path from the root still names the directory the write went into. */

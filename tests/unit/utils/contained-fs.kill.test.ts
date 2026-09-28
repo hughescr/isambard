@@ -111,6 +111,40 @@ function closeFailingFor(failing: string, extra: (real: ContainedIo) => Partial<
     }));
 }
 
+/**
+ * A close that rejects once for the temp file, either after releasing its descriptor or, as a
+ * failed close may, leaving it open; `closes` records each temp descriptor close was called on.
+ */
+function tempCloseRejecting(releases: boolean, closes: number[], extra: (real: ContainedIo) => Partial<ContainedIo> = () => ({})): IoWrap {
+    return tracked((real, nameOf) => ({
+        ...extra(real),
+        close: async (fd) => {
+            if(nameOf(fd) !== 'temp') {
+                await real.close(fd);
+                return;
+            }
+            closes.push(fd);
+            if(releases) {
+                await real.close(fd);
+            }
+            throw new Error('close failed: temp');
+        },
+    }));
+}
+
+/** Runs `change` on the real file just after fstat reports the size of the descriptor named `name`, so the read that follows sees another size. */
+function changeAfterFstat(name: string, change: () => void): IoWrap {
+    return tracked((real, nameOf) => ({
+        fstat: async (fd) => {
+            const stat = await real.fstat(fd);
+            if(nameOf(fd) === name) {
+                change();
+            }
+            return stat;
+        },
+    }));
+}
+
 function messageOf(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
@@ -396,27 +430,44 @@ describe('every close is awaited, so a failed close is the outcome reported', ()
         expect(fdsOpenUnder(root)).toEqual([]);
     });
 
-    test('a failed data write whose temp handle then fails to close reports the close', async () => {
+    test.each([
+        ['released', true],
+        ['left open', false],
+    ])('a failed data write whose temp close then rejects (descriptor %s) reports the write and removes the temp file', async (_label, releases) => {
         const root = freshRoot();
-        const io = closeFailingFor('temp', () => ({
+        const closes: number[] = [];
+        const io = tempCloseRejecting(releases, closes, () => ({
             write: async () => {
                 throw new Error('write failed');
             },
         }));
 
         const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io }));
+        for(const fd of releases ? [] : closes) {
+            fs.closeSync(fd);
+        }
 
-        expect(messageOf(error)).toBe('close failed: temp');
+        expect(messageOf(error)).toBe('write failed');
+        expect(closes).toHaveLength(1);
+        expect(fs.readdirSync(path.join(root, 'd'))).toEqual([]);
         expect(fdsOpenUnder(root)).toEqual([]);
     });
 
-    test('a temp handle that fails to close after a good write stops the commit', async () => {
+    test.each([
+        ['released', true],
+        ['left open', false],
+    ])('a temp close that rejects after a good write (descriptor %s) stops the commit and removes the temp file', async (_label, releases) => {
         const root = freshRoot();
+        const closes: number[] = [];
 
-        const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io: closeFailingFor('temp') }));
+        const error = await caught(writeContainedAtomic(root, ['d'], 'p.pdf', PDF, { io: tempCloseRejecting(releases, closes) }));
+        for(const fd of releases ? [] : closes) {
+            fs.closeSync(fd);
+        }
 
         expect(messageOf(error)).toBe('close failed: temp');
-        expect(fs.existsSync(path.join(root, 'd', 'p.pdf'))).toBe(false);
+        expect(closes).toHaveLength(1);
+        expect(fs.readdirSync(path.join(root, 'd'))).toEqual([]);
         expect(fdsOpenUnder(root)).toEqual([]);
     });
 
@@ -455,6 +506,22 @@ describe('results only the io seam produces on demand', () => {
         expect((error as PathSecurityError).message).toBe('File is larger than the 9-byte limit: g.pdf');
         expect((error as PathSecurityError).context).toEqual({ path: 'g.pdf', reason: 'too_large' });
         expect(readLengths).toEqual([10]);
+        expect(fdsOpenUnder(root)).toEqual([]);
+    });
+
+    test.each([
+        ['grows', (file: string) => fs.appendFileSync(file, 'abcdef')],
+        ['shrinks', (file: string) => fs.truncateSync(file, 4)],
+    ])('a file that %s under the limit after fstat is refused as changed_during_read, not returned cut short', async (_label, change) => {
+        const root = freshRoot();
+        const file = path.join(root, 'g.pdf');
+        fs.writeFileSync(file, '0123456789');
+
+        const error = await caught(openContainedForRead(root, 'g.pdf', 1000, { io: changeAfterFstat('g.pdf', () => change(file)) }));
+
+        expect(error).toBeInstanceOf(PathSecurityError);
+        expect((error as PathSecurityError).message).toBe('File changed while it was being read: g.pdf');
+        expect((error as PathSecurityError).context).toEqual({ path: 'g.pdf', reason: 'changed_during_read' });
         expect(fdsOpenUnder(root)).toEqual([]);
     });
 

@@ -10,7 +10,7 @@
 /* eslint-disable n/no-sync -- real filesystem fixtures: node:fs/promises is globally mocked in tests/setup.ts, and these tests exercise real syscalls */
 import { afterAll, afterEach, beforeAll, describe, expect, jest, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -24,6 +24,9 @@ import type { UrlFetchResult } from '../../../../src/agent/zotero/url-fetch';
 import { ZoteroFileError } from '../../../../src/errors';
 import * as zoteroUtils from '../../../../src/utils';
 import { FakeZoteroServer, STORAGE, clientFor, json, status, type RecordedCall } from '../../../helpers/zotero-fake';
+
+// Taken at load, before any spy: a spy on the barrel also rebinds the module's own export.
+const realOpenContainedForRead = zoteroUtils.openContainedForRead;
 
 const PDF = new TextEncoder().encode('%PDF-1.7 kill bytes');
 const PARENT = 'PRNT9999';
@@ -321,6 +324,29 @@ describe('storePdfs via a stub client', () => {
 });
 
 describe('attachPdfs', () => {
+    test('a local PDF that grows while it is read is refused, and nothing is created or uploaded', async () => {
+        const { server, deps } = setup();
+        const file = path.join(deps.root, 'growing.pdf');
+        writeFileSync(file, PDF);
+        // The real read, with the file appended to on disk just after its size is taken, as a PDF still being written would be.
+        spyOn(zoteroUtils, 'openContainedForRead').mockImplementation(async (root, rel, maxBytes) => realOpenContainedForRead(root, rel, maxBytes, {
+            io: real => ({
+                ...real,
+                fstat: async (fd) => {
+                    const stat = await real.fstat(fd);
+                    appendFileSync(file, ' the rest of the paper');
+                    return stat;
+                },
+            }),
+        }));
+
+        const results = await attachPdfs(deps, [{ parentKey: PARENT, source: { path: 'growing.pdf' } }]);
+
+        expect(results).toEqual([{ parentKey: PARENT, pdf: 'failed: File changed while it was being read: growing.pdf' }]);
+        expect(server.calls).toEqual([]);
+        expect(server.files.size).toBe(0);
+    });
+
     test('derives the filename from the last path segment and forces a .pdf extension', async () => {
         const { server, deps } = setup();
         mkdirSync(path.join(deps.root, 'papers', 'sub'), { recursive: true });

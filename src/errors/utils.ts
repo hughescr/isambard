@@ -8,11 +8,12 @@ import { IsambardError } from './base';
 import { ErrorCode } from './codes';
 
 /**
- * Why a path was refused. The last five come from `utils/contained-fs.ts` (#157): a hard-linked
- * file, a symlinked or non-directory ancestor, a directory moved during a write, a file over the
- * caller's byte cap, and a platform without the libc bindings it needs.
+ * Why a path was refused. The last six come from `utils/contained-fs.ts` (#157): a hard-linked
+ * file, a symlinked or non-directory ancestor, a directory moved during a write, a file that grew or
+ * shrank during a read, a file over the caller's byte cap, and a platform without the libc bindings
+ * it needs.
  */
-export type PathSecurityReason = 'outside_cwd' | 'is_symlink' | 'not_found' | 'not_file' | 'hardlinked' | 'not_directory' | 'changed_during_write' | 'too_large' | 'unsupported_platform';
+export type PathSecurityReason = 'outside_cwd' | 'is_symlink' | 'not_found' | 'not_file' | 'hardlinked' | 'not_directory' | 'changed_during_write' | 'changed_during_read' | 'too_large' | 'unsupported_platform';
 
 /**
  * Error thrown when a file path fails security validation.
