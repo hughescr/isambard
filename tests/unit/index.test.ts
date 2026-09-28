@@ -1554,7 +1554,7 @@ describe('createApp', () => {
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             }));
             const previewUrlFor = (uid: number, token: string): string => `https://mac.ts.net/d/${uid}/${token}`;
-            const startPreviewSpy = spyOn(staticWildDuckClientModule, 'startDraftPreview').mockReturnValue(previewUrlFor);
+            const startPreviewSpy = spyOn(staticWildDuckClientModule, 'startDraftPreview').mockReturnValue({ urlFor: previewUrlFor, ready: Promise.resolve(true) });
             spies.push(startPreviewSpy);
 
             await staticIndexModule.createApp();
@@ -1564,6 +1564,10 @@ describe('createApp', () => {
             expect(deps.wildDuckClient).toBeDefined();
             expect(typeof deps.serve).toBe('function');
             expect(typeof deps.registerCleanup).toBe('function');
+            expect(typeof deps.tailscale.run).toBe('function');
+            expect(typeof deps.tailscale.which).toBe('function');
+            expect(typeof deps.tailscale.fileExists).toBe('function');
+            expect(deps.tailscale.timeoutMs).toBe(5000);
             const emailOptions = emailSetupSpy.mock.calls[0]?.[0] as { wildDuckClient?: unknown, previewUrlFor?: unknown };
             expect(emailOptions.previewUrlFor).toBe(previewUrlFor);
             expect(emailOptions.wildDuckClient).toBe(deps.wildDuckClient);

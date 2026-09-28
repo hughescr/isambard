@@ -38,8 +38,11 @@ export interface EmailApprovalCardPresenterDeps {
     reply:          (card: { channelId: string, messageId: string }, text: string) => Promise<void>
     /** Orders card repaints against clicks on the same card; the process-wide gate when omitted. */
     cardEdits?:     ApprovalCardEditGate
-    /** The preview page URL for a draft and its token; set only while the preview server is running. */
-    previewUrlFor?: (uid: number, token: string) => string
+    /**
+     * The preview page URL for a draft and its token; absent when the preview is off, and
+     * answering undefined while it is not published on the tailnet.
+     */
+    previewUrlFor?: (uid: number, token: string) => string | undefined
 }
 
 /**

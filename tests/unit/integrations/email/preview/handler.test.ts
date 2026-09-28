@@ -38,6 +38,7 @@ function harness(draft: WildDuckMessage | null = stored(), overrides: Partial<Dr
     const handle = createDraftPreviewHandler({
         wildDuckClient: { getMessage, openAttachmentStream: openStream },
         ttlMs:          TTL_MS,
+        mountPath:      '/',
         now:            () => NOW,
         ...overrides,
     });
@@ -179,6 +180,44 @@ describe('createDraftPreviewHandler', () => {
 
             expect(await statusOf(h.handle(get(`/d/1234567890/${token}`)))).toBe(200);
             expect(h.getMessage.mock.calls[0][1]).toBe(1_234_567_890);
+        });
+
+        describe('under a mount path', () => {
+            test.each([
+                ['the page', `/d/42/${TOKEN}`, 'text/html; charset=utf-8'],
+                ['the body', `/d/42/${TOKEN}/body`, 'text/html; charset=utf-8'],
+                ['an attachment', `/d/42/${TOKEN}/a/ATT00001`, 'application/pdf'],
+            ])('serves %s whether or not the proxy stripped the mount', async (_label, path, contentType) => {
+                const h = harness(stored(), { mountPath: '/izzy-preview' });
+
+                const responses = await Promise.all([path, `/izzy-preview${path}`].map(async requested => h.handle(get(requested))));
+
+                expect(responses.map(response => [response.status, response.headers.get('content-type')])).toEqual([[200, contentType], [200, contentType]]);
+            });
+
+            test('resolves the page\'s relative body and attachment links under the mount', async () => {
+                const h = harness(stored(), { mountPath: '/izzy-preview' });
+                const pageUrl = `https://mac.tailnet.ts.net/izzy-preview/d/42/${TOKEN}`;
+                const response = await h.handle(get(`/d/42/${TOKEN}`));
+                const page = await response.text();
+                const links = [...page.matchAll(/(?:src|href)="([^"]+)"/gu)].map(([, link]) => new URL(link, pageUrl).pathname);
+
+                expect(links).toEqual([`/izzy-preview/d/42/${TOKEN}/body`, `/izzy-preview/d/42/${TOKEN}/a/ATT00001`]);
+                expect(await Promise.all(links.map(async link => statusOf(h.handle(get(link)))))).toEqual([200, 200]);
+            });
+
+            test.each([
+                '/izzy-preview',
+                '/izzy-preview/',
+                `/izzy-previewd/42/${TOKEN}`,
+                `/izzy-preview/izzy-preview/d/42/${TOKEN}`,
+                `/other/d/42/${TOKEN}`,
+            ])('refuses %s with 404', async (path) => {
+                const h = harness(stored(), { mountPath: '/izzy-preview' });
+
+                expect(await summarise(await h.handle(get(path)))).toEqual(plain(404, 'Not found.'));
+                expect(h.getMessage).not.toHaveBeenCalled();
+            });
         });
     });
 

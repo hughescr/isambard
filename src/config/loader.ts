@@ -38,20 +38,15 @@ function nonEmptyEnv(name: string): string | undefined {
 }
 
 /**
- * The raw draft preview settings (#158), or undefined — preview disabled — when neither
- * EMAIL_PREVIEW_PORT nor EMAIL_PREVIEW_PUBLIC_BASE_URL is set. Setting only one of them passes
- * the other through as undefined, which the schema rejects.
+ * The raw draft preview settings (#158). Every one is optional, an empty value counts as unset,
+ * and the schema supplies the defaults: automatic Tailscale setup on port 8787.
  */
-function rawEmailPreviewConfig(): Record<string, unknown> | undefined {
-    const port = nonEmptyEnv('EMAIL_PREVIEW_PORT');
-    const publicBaseUrl = nonEmptyEnv('EMAIL_PREVIEW_PUBLIC_BASE_URL');
-    if(port === undefined && publicBaseUrl === undefined) {
-        return undefined;
-    }
+function rawEmailPreviewConfig(): Record<string, unknown> {
     const allowedLogins = env.get('EMAIL_PREVIEW_ALLOWED_LOGINS').asArray();
     return {
-        port,
-        publicBaseUrl,
+        mode:          nonEmptyEnv('EMAIL_PREVIEW'),
+        port:          nonEmptyEnv('EMAIL_PREVIEW_PORT'),
+        publicBaseUrl: nonEmptyEnv('EMAIL_PREVIEW_PUBLIC_BASE_URL'),
         ttlHours:      nonEmptyEnv('EMAIL_PREVIEW_TTL_HOURS'),
         allowedLogins: allowedLogins?.length ? allowedLogins : undefined,
     };

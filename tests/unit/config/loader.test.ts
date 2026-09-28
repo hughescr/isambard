@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { channelIdSchema } from '@/config/discord-ids';
 import { loadConfig, loadDynamoDBConfig, type SstResources, type DynamoDBResources } from '@/config/loader';
+import type { EmailPreviewConfig } from '@/config/schemas';
 import { ConfigValidationError } from '@/errors/config';
 import { resolveTimezone } from '@/utils/time';
 
@@ -402,7 +403,7 @@ describe.concurrent('loadConfig', () => {
 
 // Sequential (not concurrent) because these mutate process.env.
 describe('loadConfig - email preview', () => {
-    const PREVIEW_KEYS = ['EMAIL_PREVIEW_PORT', 'EMAIL_PREVIEW_PUBLIC_BASE_URL', 'EMAIL_PREVIEW_TTL_HOURS', 'EMAIL_PREVIEW_ALLOWED_LOGINS'];
+    const PREVIEW_KEYS = ['EMAIL_PREVIEW', 'EMAIL_PREVIEW_PORT', 'EMAIL_PREVIEW_PUBLIC_BASE_URL', 'EMAIL_PREVIEW_TTL_HOURS', 'EMAIL_PREVIEW_ALLOWED_LOGINS'];
 
     afterEach(() => {
         for(const key of PREVIEW_KEYS) {
@@ -410,27 +411,33 @@ describe('loadConfig - email preview', () => {
         }
     });
 
-    test('leaves preview disabled when neither port nor base URL is set', () => {
-        process.env.EMAIL_PREVIEW_TTL_HOURS = '12';
-        process.env.EMAIL_PREVIEW_ALLOWED_LOGINS = 'craig@example.com';
-
-        expect(loadConfig(emailResources()).email?.preview).toBeUndefined();
+    test('sets the preview up automatically on port 8787 when nothing is configured', () => {
+        expect(loadConfig(emailResources()).email?.preview).toEqual({ mode: 'auto', port: 8787, ttlHours: 168 });
     });
 
-    test('treats empty port and base URL values as unset', () => {
-        process.env.EMAIL_PREVIEW_PORT = '';
-        process.env.EMAIL_PREVIEW_PUBLIC_BASE_URL = '';
+    test('treats empty values as unset', () => {
+        for(const key of PREVIEW_KEYS) {
+            process.env[key] = '';
+        }
 
-        expect(loadConfig(emailResources()).email?.preview).toBeUndefined();
+        expect(loadConfig(emailResources()).email?.preview).toEqual({ mode: 'auto', port: 8787, ttlHours: 168 });
+    });
+
+    test('turns the preview off with EMAIL_PREVIEW=off', () => {
+        process.env.EMAIL_PREVIEW = 'off';
+
+        expect(loadConfig(emailResources()).email?.preview?.mode).toBe('off');
     });
 
     test('loads every preview setting', () => {
+        process.env.EMAIL_PREVIEW = 'auto';
         process.env.EMAIL_PREVIEW_PORT = '8791';
         process.env.EMAIL_PREVIEW_PUBLIC_BASE_URL = 'https://mac.tailnet.ts.net/';
         process.env.EMAIL_PREVIEW_TTL_HOURS = '24';
         process.env.EMAIL_PREVIEW_ALLOWED_LOGINS = 'craig@example.com, other@example.com';
 
         expect(loadConfig(emailResources()).email?.preview).toEqual({
+            mode:          'auto',
             port:          8791,
             publicBaseUrl: 'https://mac.tailnet.ts.net',
             ttlHours:      24,
@@ -438,19 +445,18 @@ describe('loadConfig - email preview', () => {
         });
     });
 
-    test('defaults the TTL and leaves the login allowlist unset when an empty list is given', () => {
-        process.env.EMAIL_PREVIEW_PORT = '8791';
-        process.env.EMAIL_PREVIEW_PUBLIC_BASE_URL = 'https://mac.tailnet.ts.net';
-        process.env.EMAIL_PREVIEW_ALLOWED_LOGINS = '';
+    test.each<[string, string, string, EmailPreviewConfig]>([
+        ['only the port', 'EMAIL_PREVIEW_PORT', '8791', { mode: 'auto', port: 8791, ttlHours: 168 }],
+        ['only the base URL', 'EMAIL_PREVIEW_PUBLIC_BASE_URL', 'https://mac.tailnet.ts.net', { mode: 'auto', port: 8787, publicBaseUrl: 'https://mac.tailnet.ts.net', ttlHours: 168 }],
+        ['only the logins', 'EMAIL_PREVIEW_ALLOWED_LOGINS', 'craig@example.com', { mode: 'auto', port: 8787, ttlHours: 168, allowedLogins: ['craig@example.com'] }],
+    ])('accepts %s, defaulting the rest', (_label, key, value, expected) => {
+        process.env[key] = value;
 
-        expect(loadConfig(emailResources()).email?.preview).toEqual({ port: 8791, publicBaseUrl: 'https://mac.tailnet.ts.net', ttlHours: 168 });
+        expect(loadConfig(emailResources()).email?.preview).toEqual(expected);
     });
 
-    test.each([
-        ['only the port', 'EMAIL_PREVIEW_PORT', '8791', /email\.preview\.publicBaseUrl/],
-        ['only the base URL', 'EMAIL_PREVIEW_PUBLIC_BASE_URL', 'https://mac.tailnet.ts.net', /email\.preview\.port/],
-    ])('fails validation when %s is set', (_label, key, value, path) => {
-        process.env[key] = value;
+    test('fails validation for an unknown EMAIL_PREVIEW value, naming the setting', () => {
+        process.env.EMAIL_PREVIEW = 'on';
 
         let caught: unknown;
         try {
@@ -459,7 +465,7 @@ describe('loadConfig - email preview', () => {
             caught = err;
         }
         expect(caught).toBeInstanceOf(ConfigValidationError);
-        expect(JSON.stringify((caught as ConfigValidationError).context)).toMatch(path);
+        expect(JSON.stringify((caught as ConfigValidationError).context)).toMatch(/email\.preview\.mode/);
     });
 
     test('fails validation for an http base URL', () => {

@@ -94,10 +94,10 @@ export interface EmailSetupOptions {
      */
     notify:                      NotifyFn
     /**
-     * Builds a draft's preview page URL (#158); passed only while the draft preview server is
-     * running, so cards carry an "Open full preview" link only then.
+     * Builds a draft's preview page URL (#158); absent when the preview is off, and answering
+     * undefined while it is not published, so cards carry an "Open full preview" link only then.
      */
-    previewUrlFor?:              (uid: number, token: string) => string
+    previewUrlFor?:              (uid: number, token: string) => string | undefined
 }
 
 export interface EmailSetupResult {

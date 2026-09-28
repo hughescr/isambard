@@ -55,12 +55,23 @@ export const agentConfigSchema = z.object({
  * coerced so the loader can pass the env-var strings verbatim.
  */
 export const emailPreviewConfigSchema = z.object({
-    port:          z.coerce.number().int().min(1).max(65_535),
-    /** The tailnet HTTPS origin (and optional path) links point at, without a trailing slash. */
-    publicBaseUrl: z.url({ protocol: /^https$/u }).transform(url => url.replace(/\/$/u, '')),
+    /**
+     * `auto` publishes the server on the tailnet itself with `tailscale serve` (unless
+     * `publicBaseUrl` is set); `off` disables the preview.
+     */
+    mode:          z.enum(['auto', 'off']).default('auto'),
+    port:          z.coerce.number().int().min(1).max(65_535).default(8787),
+    /**
+     * Manual mode: the tailnet HTTPS origin (and optional path) links point at, without a trailing
+     * slash, published by the admin's own `tailscale serve`. Isambard then runs no Tailscale command.
+     */
+    publicBaseUrl: z.url({ protocol: /^https$/u }).transform(url => url.replace(/\/$/u, '')).optional(),
     /** How long after the draft's Date a preview link keeps working. */
     ttlHours:      z.coerce.number().int().positive().default(168),
-    /** When set, only these `Tailscale-User-Login` values may open a preview (compared lower-cased). */
+    /**
+     * When set, only these `Tailscale-User-Login` values may open a preview (compared lower-cased).
+     * Unset in auto mode means the Mac's own Tailscale login; in manual mode, anyone on the tailnet.
+     */
     allowedLogins: z.array(z.string().trim().toLowerCase().min(1)).min(1).optional(),
 });
 

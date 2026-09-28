@@ -34,7 +34,19 @@ export interface DraftPreviewHandlerDeps {
     ttlMs:          number
     /** When set, only these `Tailscale-User-Login` values (lower-cased) are admitted. */
     allowedLogins?: readonly string[]
+    /**
+     * The path the preview is published under on the tailnet: `/izzy-preview`, or `/` at the
+     * root. `tailscale serve` strips it before proxying, but a request that still carries it is
+     * served the same, so the handler works either way.
+     */
+    mountPath:      string
     now:            () => number
+}
+
+/** `pathname` without a leading `mountPath` segment, when it has one. */
+function withoutMount(pathname: string, mountPath: string): string {
+    const prefix = mountPath.replace(/\/?$/u, '/');
+    return pathname.startsWith(prefix) ? pathname.slice(prefix.length - 1) : pathname;
 }
 
 function respond(status: number, body: BodyInit | null, headers: Record<string, string>): Response {
@@ -80,7 +92,7 @@ function expired(draft: WildDuckMessage, ttlMs: number, now: number): boolean {
  * HTML body or an attachment stream. Logs carry the uid and status, never the token.
  */
 export function createDraftPreviewHandler(deps: DraftPreviewHandlerDeps): (request: Request) => Promise<Response> {
-    const { wildDuckClient, ttlMs, allowedLogins, now } = deps;
+    const { wildDuckClient, ttlMs, allowedLogins, mountPath, now } = deps;
 
     async function route(request: Request, uid: number, token: string, subpath: string | undefined, attachmentId: string | undefined): Promise<Response> {
         let draft: WildDuckMessage | null;
@@ -144,7 +156,7 @@ export function createDraftPreviewHandler(deps: DraftPreviewHandlerDeps): (reque
         if(allowedLogins !== undefined && (login === null || !allowedLogins.includes(login.toLowerCase()))) {
             return text(403, 'Forbidden.');
         }
-        const match = PREVIEW_PATH.exec(new URL(request.url).pathname);
+        const match = PREVIEW_PATH.exec(withoutMount(new URL(request.url).pathname, mountPath));
         if(match === null) {
             return text(404, NOT_FOUND);
         }

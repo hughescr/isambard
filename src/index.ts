@@ -22,11 +22,11 @@ import {
 } from '@/integrations/bsky';
 import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createOutboxDiscardReporter, createApprovedActionOutcomeDelivery, ApprovedActionEscalationHandler, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
-import { EmailHistoryProvider, EmailFolder, WildDuckClient, checkEmailSendDelivery, emailSendParamsSchema, startDraftPreview } from '@/integrations/email';
+import { EmailHistoryProvider, EmailFolder, TAILSCALE_COMMAND_TIMEOUT_MS, WildDuckClient, checkEmailSendDelivery, emailSendParamsSchema, startDraftPreview } from '@/integrations/email';
 import { createJevOutboxFailureClassifier } from '@/integrations/typesafe/jev-outbox-failure-classifier';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, createOutboxDrainListener, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
 import { PersonAllowlist, probeDynamoDB, createDynamoDBClient, setDynamoHealthNotifier, runDynamoDBProbe, loadEmbedder, type ContactChangeRequest, type EmbedderLike } from '@/storage';
-import { resolveTimezone } from '@/utils';
+import { createSpawnRunner, resolveTimezone } from '@/utils';
 
 export interface App {
     /**
@@ -484,15 +484,23 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             // Construction rollback remains fatal; only graceful shutdown is best-effort.
             registerCleanup({ name: 'WildDuck client', run: shutdownEmailClient });
 
-            // Draft preview server (#158): off unless EMAIL_PREVIEW_* is configured; bound to
-            // 127.0.0.1 and exposed to the admin's devices only by their own `tailscale serve`.
+            // Draft preview server (#158, docs/email-preview.md): bound to 127.0.0.1 and, unless
+            // EMAIL_PREVIEW=off or a manual EMAIL_PREVIEW_PUBLIC_BASE_URL is set, published at
+            // /izzy-preview on the Mac's tailnet host by `tailscale serve` in the background —
+            // startup never waits for it, and any failure just leaves cards without the link.
             // Registered after the client, so shutdown stops it first. Requests before WildDuck
             // init finishes answer 502.
             const previewUrlFor = startDraftPreview(config.email.preview, {
                 wildDuckClient: stableWildDuckClient,
                 serve:          options => Bun.serve(options),
                 registerCleanup,
-            });
+                tailscale:      {
+                    run:        createSpawnRunner(),
+                    which:      command => Bun.which(command),
+                    fileExists: async file => Bun.file(file).exists(),
+                    timeoutMs:  TAILSCALE_COMMAND_TIMEOUT_MS,
+                },
+            })?.urlFor;
 
             // Create reconnection loop eagerly so post-connect drops are also handled.
             emailReconnectionLoop = createReconnectionLoop({

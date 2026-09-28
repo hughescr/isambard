@@ -1548,8 +1548,17 @@ describe('sessionConfigSchema', () => {
 describe('emailPreviewConfigSchema', () => {
     const base = { port: 8791, publicBaseUrl: 'https://mac.tailnet.ts.net' };
 
-    test('applies the 168-hour TTL default and leaves allowedLogins unset', () => {
-        expect(emailPreviewConfigSchema.parse(base)).toEqual({ port: 8791, publicBaseUrl: 'https://mac.tailnet.ts.net', ttlHours: 168 });
+    test('defaults to automatic Tailscale setup on port 8787 with the 168-hour TTL', () => {
+        expect(emailPreviewConfigSchema.parse({})).toEqual({ mode: 'auto', port: 8787, ttlHours: 168 });
+    });
+
+    test('accepts both modes', () => {
+        expect(emailPreviewConfigSchema.parse({ mode: 'auto' }).mode).toBe('auto');
+        expect(emailPreviewConfigSchema.parse({ mode: 'off' }).mode).toBe('off');
+    });
+
+    test('keeps a manual public base URL, leaving allowedLogins unset', () => {
+        expect(emailPreviewConfigSchema.parse(base)).toEqual({ mode: 'auto', port: 8791, publicBaseUrl: 'https://mac.tailnet.ts.net', ttlHours: 168 });
     });
 
     test('coerces string port and TTL values from the environment', () => {
@@ -1565,12 +1574,11 @@ describe('emailPreviewConfigSchema', () => {
     });
 
     test.each([
+        ['an unknown mode', { mode: 'on' }],
         // eslint-disable-next-line sonarjs/no-clear-text-protocols -- asserting that a clear-text base URL is refused
         ['an http base URL', { publicBaseUrl: 'http://mac.tailnet.ts.net' }],
         ['a base URL whose scheme only starts with https', { publicBaseUrl: 'httpsx://mac.tailnet.ts.net' }],
         ['a base URL whose scheme only ends with https', { publicBaseUrl: 'xhttps://mac.tailnet.ts.net' }],
-        ['a missing base URL', { publicBaseUrl: undefined }],
-        ['a missing port', { port: undefined }],
         ['port 0', { port: 0 }],
         ['port 65536', { port: 65_536 }],
         ['a fractional port', { port: 80.5 }],
@@ -1598,6 +1606,6 @@ describe('emailPreviewConfigSchema', () => {
     test('is optional on emailConfigSchema', () => {
         const email = { user: 'u@example.com', password: 'p', wildDuckApiUrl: 'https://wildduck.example.com' };
         expect(emailConfigSchema.parse(email).preview).toBeUndefined();
-        expect(emailConfigSchema.parse({ ...email, preview: base }).preview).toEqual({ ...base, ttlHours: 168 });
+        expect(emailConfigSchema.parse({ ...email, preview: base }).preview).toEqual({ ...base, mode: 'auto', ttlHours: 168 });
     });
 });

@@ -51,7 +51,7 @@ function linkUrlsOf(card: EmailApprovalCard): string[] {
 
 const previewUrlFor = (uid: number, token: string): string => `https://mac.ts.net/d/${uid}/${token}`;
 
-function makeHarness(stored: WildDuckMessage | null, card: ApprovalCardMessage = cardMessage(OLD_UID), previewUrls?: (uid: number, token: string) => string): Harness {
+function makeHarness(stored: WildDuckMessage | null, card: ApprovalCardMessage = cardMessage(OLD_UID), previewUrls?: (uid: number, token: string) => string | undefined): Harness {
     const events: string[] = [];
     const gate = new ApprovalCardEditGate();
     const getMessage = mock(async (_folder: string, _uid: number): Promise<WildDuckMessage | null> => stored);
@@ -217,6 +217,14 @@ describe('EmailApprovalCardPresenter', () => {
 
         test('has no link when preview is off', async () => {
             const h = makeHarness(draft(NEW_UID, { previewToken: TOKEN }));
+
+            await h.presenter.present(NEW_UID);
+
+            expect(linkUrlsOf(h.postCard.mock.calls[0][0])).toEqual([]);
+        });
+
+        test('has no link while the preview is not yet (or never) published on the tailnet', async () => {
+            const h = makeHarness(draft(NEW_UID, { previewToken: TOKEN }), cardMessage(OLD_UID), () => undefined);
 
             await h.presenter.present(NEW_UID);
 

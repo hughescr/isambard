@@ -1,37 +1,139 @@
+import { logger } from '@hughescr/logger';
 import type { WildDuckClient } from '../wildduck-client';
 import { createDraftPreviewHandler } from './handler';
-import { startDraftPreviewServer, type PreviewServe } from './server';
+import { startDraftPreviewServer, type PreviewServe, type PreviewServer } from './server';
+import { PREVIEW_MOUNT_PATH, openTailscaleCli, type TailscaleCli, type TailscaleDeps } from './tailscale';
 import type { EmailPreviewConfig } from '@/config';
 
 const HOUR_MS = 3_600_000;
+
+/** A draft's preview URL, or undefined while the preview is not published. */
+export type PreviewUrlFor = (uid: number, token: string) => string | undefined;
+
+export interface DraftPreview {
+    urlFor: PreviewUrlFor
+    /** Whether the preview was published; settles once setup has finished and never rejects. */
+    ready:  Promise<boolean>
+}
 
 export interface StartDraftPreviewDeps {
     wildDuckClient:  Pick<WildDuckClient, 'getMessage' | 'openAttachmentStream'>
     /** `Bun.serve` in production. */
     serve:           PreviewServe
     registerCleanup: (step: { name: string, run: () => void | Promise<void> }) => void
+    /** How auto mode runs the Tailscale CLI. */
+    tailscale:       TailscaleDeps
 }
 
-/**
- * Start the draft preview (#158) when it is configured: the handler over the live WildDuck client
- * behind a loopback-only server, stopped at shutdown. Returns how to build a draft's preview URL
- * under the public (tailnet) base URL, or undefined — no preview links on any card — when preview
- * is not configured or the server could not start.
- */
-export function startDraftPreview(config: EmailPreviewConfig | undefined, deps: StartDraftPreviewDeps): ((uid: number, token: string) => string) | undefined {
-    if(config === undefined) {
-        return undefined;
-    }
+const CLEANUP_NAME = 'email preview server';
+
+function errorText(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+}
+
+function startServer(config: EmailPreviewConfig, deps: StartDraftPreviewDeps, allowedLogins: readonly string[] | undefined, mountPath: string): PreviewServer | undefined {
     const handler = createDraftPreviewHandler({
         wildDuckClient: deps.wildDuckClient,
         ttlMs:          config.ttlHours * HOUR_MS,
-        allowedLogins:  config.allowedLogins,
+        allowedLogins,
+        mountPath,
         now:            () => Date.now(),
     });
-    const server = startDraftPreviewServer(config.port, handler, deps.serve);
+    return startDraftPreviewServer(config.port, handler, deps.serve);
+}
+
+/** Manual mode: the admin publishes the server with their own `tailscale serve`. */
+function startManual(config: EmailPreviewConfig, publicBaseUrl: string, deps: StartDraftPreviewDeps): DraftPreview | undefined {
+    const server = startServer(config, deps, config.allowedLogins, new URL(publicBaseUrl).pathname);
     if(server === undefined) {
         return undefined;
     }
-    deps.registerCleanup({ name: 'email preview server', run: () => server.stop() });
-    return (uid, token) => `${config.publicBaseUrl}/d/${uid}/${token}`;
+    deps.registerCleanup({ name: CLEANUP_NAME, run: () => server.stop() });
+    return {
+        urlFor: (uid, token) => `${publicBaseUrl}/d/${uid}/${token}`,
+        ready:  Promise.resolve(true),
+    };
+}
+
+interface Published {
+    tailscale: TailscaleCli
+    server:    PreviewServer
+}
+
+/**
+ * Auto mode: check Tailscale, bind the server, and publish it at `PREVIEW_MOUNT_PATH` on the Mac's
+ * tailnet host, in the background. Until that finishes, and for good if any step fails, cards get
+ * no preview link; a failure is one log line and never stops Izzy.
+ */
+function startAuto(config: EmailPreviewConfig, deps: StartDraftPreviewDeps): DraftPreview {
+    let publicBaseUrl: string | undefined;
+    let stopping = false;
+
+    async function publish(): Promise<Published | undefined> {
+        const tailscale = await openTailscaleCli(deps.tailscale);
+        const self = await tailscale.readSelf();
+        const allowedLogins = config.allowedLogins ?? (self.login === undefined ? undefined : [self.login]);
+        if(allowedLogins === undefined) {
+            throw new Error('Tailscale lists no login for this Mac\'s owner; set EMAIL_PREVIEW_ALLOWED_LOGINS');
+        }
+        await tailscale.assertNoFunnel(self.dnsName);
+        if(stopping) {
+            return undefined;
+        }
+        const server = startServer(config, deps, allowedLogins, PREVIEW_MOUNT_PATH);
+        if(server === undefined) {
+            return undefined;
+        }
+        try {
+            await tailscale.mount(self.dnsName, config.port);
+        } catch (err: unknown) {
+            await server.stop();
+            throw err;
+        }
+        publicBaseUrl = `https://${self.dnsName}${PREVIEW_MOUNT_PATH}`;
+        logger.info({ publicBaseUrl, msg: 'Draft preview published on the tailnet' });
+        return { tailscale, server };
+    }
+
+    const published = publish().catch((err: unknown) => {
+        logger.warn({ reason: errorText(err), msg: 'Draft preview disabled; approval cards will carry no preview links' });
+        return undefined;
+    });
+
+    deps.registerCleanup({
+        name: CLEANUP_NAME,
+        run:  async () => {
+            stopping = true;
+            const live = await published;
+            if(live === undefined) {
+                return;
+            }
+            try {
+                await live.tailscale.unmount();
+            } catch (err: unknown) {
+                logger.warn({ error: errorText(err), msg: 'Could not remove the draft preview from tailscale serve; the next start replaces it' });
+            }
+            await live.server.stop();
+        },
+    });
+
+    return {
+        urlFor: (uid, token) => (publicBaseUrl === undefined ? undefined : `${publicBaseUrl}/d/${uid}/${token}`),
+        ready:  published.then(live => live !== undefined),
+    };
+}
+
+/**
+ * Start the draft preview (#158): off (undefined) when unconfigured or `EMAIL_PREVIEW=off`; manual
+ * when `EMAIL_PREVIEW_PUBLIC_BASE_URL` is set; otherwise published on the tailnet automatically.
+ * Returns synchronously; auto-mode setup continues in the background.
+ */
+export function startDraftPreview(config: EmailPreviewConfig | undefined, deps: StartDraftPreviewDeps): DraftPreview | undefined {
+    if(config === undefined || config.mode === 'off') {
+        return undefined;
+    }
+    if(config.publicBaseUrl !== undefined) {
+        return startManual(config, config.publicBaseUrl, deps);
+    }
+    return startAuto(config, deps);
 }
