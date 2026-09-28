@@ -500,9 +500,8 @@ export class ZoteroClient {
      * version, so a change racing the trash is a 412 → `changed`. Nothing is ever deleted.
      */
     async cleanupPlaceholders(entries: PlaceholderCheck[]): Promise<PlaceholderOutcome[]> {
-        if(entries.length === 0) {
-            return [];
-        }
+        // No `entries.length === 0` short-circuit: getItems([]) already makes zero requests and
+        // resolves to an empty result, so an empty `entries` falls through this whole method for free.
         let fresh: Map<string, ZoteroItem>;
         try {
             const { items } = await this.getItems(entries.map(entry => entry.key));
@@ -522,16 +521,16 @@ export class ZoteroClient {
             }
         }
 
-        if(empty.length > 0) {
-            try {
-                const results = await this.setItemsDeleted(empty.map(entry => ({ key: entry.key, expectedVersion: entry.createdVersion })), true);
-                for(const result of results) {
-                    outcomes.set(result.key, this.#trashOutcome(result));
-                }
-            } catch (error) {
-                for(const entry of empty) {
-                    outcomes.set(entry.key, { key: entry.key, outcome: 'indeterminate', detail: `trashing the empty placeholder failed: ${errorMessage(error)}` });
-                }
+        // No `empty.length > 0` guard: setItemsDeleted([], true) already makes zero requests and
+        // resolves to [], so an empty `empty` falls through this block for free.
+        try {
+            const results = await this.setItemsDeleted(empty.map(entry => ({ key: entry.key, expectedVersion: entry.createdVersion })), true);
+            for(const result of results) {
+                outcomes.set(result.key, this.#trashOutcome(result));
+            }
+        } catch (error) {
+            for(const entry of empty) {
+                outcomes.set(entry.key, { key: entry.key, outcome: 'indeterminate', detail: `trashing the empty placeholder failed: ${errorMessage(error)}` });
             }
         }
         return entries.map(entry => outcomes.get(entry.key)!);
@@ -697,9 +696,9 @@ export class ZoteroClient {
         const currentObjects = await read(edits.map(edit => edit.key));
         const { outcomes, writes } = planWrites(edits, new Map(currentObjects.map(object => [object.key, object])));
         const conflicted = await this.#writeChunks(path, writes, outcomes);
-        if(conflicted.length > 0) {
-            await this.#reportConflicts(conflicted, outcomes, read);
-        }
+        // No `conflicted.length > 0` guard: read([]) already makes zero requests and resolves to
+        // [], so an empty `conflicted` falls through #reportConflicts for free.
+        await this.#reportConflicts(conflicted, outcomes, read);
         return outcomes as ModifyOutcome<T>[];
     }
 
