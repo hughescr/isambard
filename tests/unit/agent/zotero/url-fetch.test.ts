@@ -1,5 +1,5 @@
 /* eslint-disable sonarjs/no-hardcoded-ip -- the fetcher's DNS answers and pinned addresses are literal IP addresses by definition */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import http from 'node:http';
 import type https from 'node:https';
 import type { AddressInfo } from 'node:net';
@@ -193,6 +193,37 @@ describe('fetchUnderHostPolicy', () => {
             expect(single).toEqual([null, '::ffff:808:808', 6, null, '::ffff:808:808', 6]);
             expect(all).toEqual([null, [{ address: '::ffff:808:808', family: 6 }]]);
             expect(lookups).toBe(1);
+        });
+
+        test('hands the transport every validated answer in resolver order for an all-addresses lookup', async () => {
+            const { resolve, calls: resolved } = resolver({ 'multi.test': ['2606:4700::1', '::ffff:8.8.8.8', '8.8.4.4'] });
+            const { request, calls } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: [PDF] }));
+
+            await fetchUnderHostPolicy('https://multi.test/a.pdf', baseOptions({ resolve, request }));
+
+            const lookup = calls[0].options.lookup!;
+            const all: unknown[] = [];
+            const single: unknown[] = [];
+            lookup('multi.test', { all: true }, (error: unknown, addresses: unknown) => all.push(error, addresses));
+            lookup('multi.test', {}, (error: unknown, address: unknown, family: unknown) => single.push(error, address, family));
+
+            expect(all).toEqual([null, [
+                { address: '2606:4700::1', family: 6 },
+                { address: '::ffff:808:808', family: 6 },
+                { address: '8.8.4.4', family: 4 },
+            ]]);
+            expect(single).toEqual([null, '2606:4700::1', 6]);
+            expect(resolved).toEqual(['multi.test']);
+        });
+
+        test('refuses the host when any answer, not just the first, is blocked', async () => {
+            const { resolve } = resolver({ 'late.test': ['2606:4700::1', '8.8.8.8', '10.0.0.1'] });
+            const { request, calls } = fakeTransport(() => ({ status: 200 }));
+
+            const error = await fetchError('https://late.test/', baseOptions({ resolve, request }));
+
+            expect((error as ZoteroUrlFetchError).context).toEqual({ url: 'https://late.test/', reason: 'resolves to a blocked address' });
+            expect(calls).toEqual([]);
         });
 
         test('sends a plain GET with no pooled socket, identity encoding, and the original host for TLS', async () => {
@@ -436,6 +467,49 @@ describe('fetchUnderHostPolicy', () => {
             expect((error as ZoteroUrlFetchError).context).toEqual({ url: 'https://a.test/x', reason: 'ECONNRESET' });
         });
 
+        test('reports a connect failure that carries only an error code', async () => {
+            const { resolve: xResolve } = resolver({ 'x.test': ['8.8.8.8'] });
+            // eslint-disable-next-line unicorn/error-message -- Bun's all-answers-refused connect error has an empty message; that is the case under test
+            const { request } = fakeTransport(() => ({ status: 0, error: Object.assign(new Error(''), { code: 'ECONNREFUSED' }) }));
+
+            const error = await fetchError('https://x.test/a.pdf', baseOptions({ resolve: xResolve, request }));
+
+            expect((error as ZoteroUrlFetchError).message).toBe('Fetching https://x.test/a.pdf failed: ECONNREFUSED');
+            expect((error as ZoteroUrlFetchError).context).toEqual({ url: 'https://x.test/a.pdf', reason: 'ECONNREFUSED' });
+        });
+
+        test('reports a bare connection failure with no message or code', async () => {
+            const { resolve: xResolve } = resolver({ 'x.test': ['8.8.8.8'] });
+            // eslint-disable-next-line unicorn/error-message -- an error with neither message nor code is the case under test
+            const { request } = fakeTransport(() => ({ status: 0, error: new Error('') }));
+
+            const error = await fetchError('https://x.test/a.pdf', baseOptions({ resolve: xResolve, request }));
+
+            expect((error as ZoteroUrlFetchError).message).toBe('Fetching https://x.test/a.pdf failed: connection failed');
+        });
+
+        test('prefers an error message over its code', async () => {
+            const { request } = fakeTransport(() => ({ status: 0, error: Object.assign(new Error('connect ECONNREFUSED 8.8.8.8:443'), { code: 'ECONNREFUSED' }) }));
+
+            const error = await fetchError('https://a.test/x', baseOptions({ resolve, request }));
+
+            expect((error as ZoteroUrlFetchError).message).toBe('Fetching https://a.test/x failed: connect ECONNREFUSED 8.8.8.8:443');
+        });
+
+        test.each([
+            ['an HTTP error status', { status: 503 }, 'HTTP 503'],
+            ['a mid-body failure', { status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: ['%PDF-'], bodyError: new Error('socket hang up') }, 'socket hang up'],
+        ] as [string, FakeReply, string][])('with several answers, %s is final: one resolution, one request', async (_label, reply, reason) => {
+            const { resolve: multi, calls: resolved } = resolver({ 'multi.test': ['2606:4700::1', '8.8.8.8', '8.8.4.4'] });
+            const { request, calls } = fakeTransport(() => reply);
+
+            const error = await fetchError('https://multi.test/a.pdf', baseOptions({ resolve: multi, request }));
+
+            expect((error as ZoteroUrlFetchError).context).toMatchObject({ url: 'https://multi.test/a.pdf', reason });
+            expect(calls).toHaveLength(1);
+            expect(resolved).toEqual(['multi.test']);
+        });
+
         test.each(['AbortError', 'TimeoutError'])('reports a %s as a timeout', async (name) => {
             const abort = Object.assign(new Error('aborted'), { name });
             const { request } = fakeTransport(() => ({ status: 0, error: abort }));
@@ -480,10 +554,36 @@ describe('fetchUnderHostPolicy', () => {
             port = (server.address() as AddressInfo).port;
         });
 
+        beforeEach(() => {
+            hosts.length = 0;
+        });
+
         afterAll(async () => {
             await new Promise<void>((resolve) => {
                 server.close(() => resolve());
             });
+        });
+
+        // Local-socket exception to the <1 ms target: the server listens on 127.0.0.1 only, so the
+        // first pinned answer (::1) is refused and the runtime's connect fallback must reach the second.
+        test('falls back past a refusing answer on the real transport', async () => {
+            const resolved: string[] = [];
+            const result = await fetchUnderHostPolicy(`http://fallback.invalid:${port}/a.pdf`, baseOptions({
+                resolve: async (host) => {
+                    resolved.push(host);
+                    return [{ address: '::1', family: 6 }, { address: '127.0.0.1', family: 4 }];
+                },
+                checkAddress: (raw) => {
+                    if(raw === '::1') {
+                        return { ok: true, address: raw, family: 6 };
+                    }
+                    return raw === '127.0.0.1' ? { ok: true, address: raw, family: 4 } : { ok: false, reason: 'only loopback in this test' };
+                },
+            }));
+
+            expect(result.kind).toBe('pdf');
+            expect(hosts).toEqual([`fallback.invalid:${port}`]);
+            expect(resolved).toEqual(['fallback.invalid']);
         });
 
         test('connects to the pinned address, not a fresh resolution', async () => {

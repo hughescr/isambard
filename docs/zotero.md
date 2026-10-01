@@ -27,6 +27,8 @@ The key never appears in logs, error messages or tool output, and it is only eve
 
 An empty override counts as unset. URL fetches do **not** use `ZOTERO_MAX_STORED_FILE_BYTES`: they use the browser tool's caps (`browser.maxTextBytes` for HTML, `browser.maxScreenshotBytes` for PDFs, 2,000,000 bytes by default) and its host allowlist. Many papers are bigger than 2 MB, so a PDF fetched by URL often comes back as `pdf: "failed: ... too large ..."` while the paper itself is still added. Craig can drop the PDF in from his desktop, or raise the browser cap.
 
+A URL fetch connects only to the host's checked DNS answers, but it is given all of them, so a host whose IPv6 address is unreachable from here is still fetched over IPv4.
+
 ## What Izzy can and cannot do
 
 The ten tools: `searchLibrary`, `getItems` (fields, abstract, child notes, attachments, and Craig's reader highlights and comments), `listCollections`, `addPapers` (DOI via Crossref, arXiv id via the arXiv API, or URL), `attachPdfs`, `downloadAttachments` (to `zotero-files/<key>/` under Izzy's working directory), `updateItems`, `writeNotes`, `manageCollections`, and `trashOrRestore`.

@@ -157,7 +157,40 @@ describe('fetchUnderHostPolicy (mutant kills)', () => {
 
             const seen: unknown[] = [];
             calls[0].options.lookup!('multi.test', {}, (error: unknown, address: unknown, family: unknown) => seen.push(error, address, family));
-            expect(seen).toEqual([null, '8.8.8.8', 4]);
+            calls[0].options.lookup!('multi.test', { all: true }, (error: unknown, addresses: unknown) => seen.push(error, addresses));
+            expect(seen).toEqual([null, '8.8.8.8', 4, null, [{ address: '8.8.8.8', family: 4 }, { address: '8.8.4.4', family: 4 }]]);
+        });
+
+        test('keeps a duplicated canonical answer rather than deduplicating it', async () => {
+            const { request, calls } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: [PDF] }));
+
+            await fetchUnderHostPolicy('https://dup.test/a.pdf', baseOptions({ resolve: resolver({ 'dup.test': ['8.8.8.8', '::ffff:8.8.8.8', '8.8.8.8'] }), request }));
+
+            const seen: unknown[] = [];
+            calls[0].options.lookup!('dup.test', { all: true }, (_error: unknown, addresses: unknown) => seen.push(addresses));
+            expect(seen).toEqual([[{ address: '8.8.8.8', family: 4 }, { address: '::ffff:808:808', family: 6 }, { address: '8.8.8.8', family: 4 }]]);
+        });
+    });
+
+    describe('connect failure reasons', () => {
+        test.each([
+            ['an empty-string code', ''],
+            ['a non-string code', 111],
+        ])('reports "connection failed" for an empty message with %s', async (_label, code) => {
+            // eslint-disable-next-line unicorn/error-message -- an empty message is the case under test
+            const { request } = fakeTransport(() => ({ status: 0, error: Object.assign(new Error(''), { code }) }));
+
+            const error = await fetchError('https://a.test/x', baseOptions({ resolve, request }));
+
+            expect((error as ZoteroUrlFetchError).context).toStrictEqual({ url: 'https://a.test/x', reason: 'connection failed' });
+        });
+
+        test('still stringifies a non-Error rejection', async () => {
+            const { request } = fakeTransport(() => ({ status: 0, error: 'boom' as unknown as Error }));
+
+            const error = await fetchError('https://a.test/x', baseOptions({ resolve, request }));
+
+            expect((error as ZoteroUrlFetchError).message).toBe('Fetching https://a.test/x failed: boom');
         });
     });
 

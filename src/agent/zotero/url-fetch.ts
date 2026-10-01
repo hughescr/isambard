@@ -4,10 +4,12 @@
  * answer through `checkResolvedAddress`, which applies the same range logic to the canonical form
  * of the address.
  *
- * DNS rebinding is closed by resolving each hop exactly once and pinning the connection to the
- * validated canonical address through `node:http(s)`'s `lookup` option (Bun's `fetch` cannot pin).
- * TLS still verifies the original hostname. Byte caps are the browser's: HTML is truncated at the
- * text cap, and a PDF over the download cap is an error.
+ * DNS rebinding is closed by resolving each hop exactly once and pinning the connection, through
+ * `node:http(s)`'s `lookup` option (Bun's `fetch` cannot pin), to the validated canonical answers;
+ * the transport's connect fallback chooses among them, so an unusable IPv6 answer can fall back to
+ * IPv4 while connecting. Nothing is re-sent once a connection is established. TLS still verifies the
+ * original hostname. Byte caps are the browser's: HTML is truncated at the text cap, and a PDF
+ * over the download cap is an error.
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
@@ -65,6 +67,9 @@ interface Pinned {
     family:  4 | 6
 }
 
+/** A hop's checked canonical answers, in resolver order; never empty. */
+type PinnedAnswers = [Pinned, ...Pinned[]];
+
 type LookupCallback = (error: Error | null, address: string | Pinned[], family?: number) => void;
 
 // Stryker disable all: production defaults (real DNS and sockets); tests inject all three.
@@ -85,13 +90,28 @@ function errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Why a transport `Error` failed: its message, else its string `code` (Bun reports a connect that
+ * failed on every pinned answer as `ECONNREFUSED` with an empty message), else a generic reason.
+ */
+function connectReason(error: Error): string {
+    if(error.message !== '') {
+        return error.message;
+    }
+    const { code } = error as { code?: unknown };
+    return typeof code === 'string' && code !== '' ? code : 'connection failed';
+}
+
 /** A socket, timeout or stream failure as a fetch error; our own typed errors pass through. */
 function transportFailure(url: string, error: unknown): ZoteroError {
     if(error instanceof ZoteroError) {
         return error;
     }
-    const timedOut = error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError');
-    return failed(url, timedOut ? 'timed out' : errorMessage(error));
+    if(!(error instanceof Error)) {
+        return failed(url, String(error));
+    }
+    const timedOut = error.name === 'AbortError' || error.name === 'TimeoutError';
+    return failed(url, timedOut ? 'timed out' : connectReason(error));
 }
 
 /**
@@ -104,8 +124,12 @@ function bareHost(url: URL): string {
     return isIPv6(inner) ? inner : url.hostname;
 }
 
-/** The hop's single resolution, every answer checked; the first answer (canonical) is pinned. */
-async function pinHost(url: URL, options: UrlFetchOptions): Promise<Pinned> {
+/**
+ * The hop's single resolution with every answer checked. All the checked canonical answers are
+ * pinned, in resolver order (duplicates kept); any blocked or malformed answer refuses the whole
+ * hop. The result is never empty: a resolver with no answers is refused here.
+ */
+async function pinHost(url: URL, options: UrlFetchOptions): Promise<PinnedAnswers> {
     const host = bareHost(url);
     let answers: { address: string }[];
     if(isIP(host) === 0) {
@@ -117,30 +141,33 @@ async function pinHost(url: URL, options: UrlFetchOptions): Promise<Pinned> {
     } else {
         answers = [{ address: host }];
     }
-    if(answers.length === 0) {
-        throw refused(url.href, 'host has no addresses');
-    }
 
     const check = options.checkAddress ?? checkResolvedAddress;
-    const pinned: Pinned[] = [];
-    for(const answer of answers) {
+    const pin = (answer: { address: string }): Pinned => {
         const result = check(answer.address);
         if(!result.ok) {
             throw result.reason === 'resolver returned a malformed address'
                 ? refused(url.href, result.reason)
                 : refused(url.href, 'resolves to a blocked address', result.reason);
         }
-        pinned.push({ address: result.address, family: result.family });
+        return { address: result.address, family: result.family };
+    };
+    const [first, ...rest] = answers;
+    if(first === undefined) {
+        throw refused(url.href, 'host has no addresses');
     }
-    return pinned[0]!;
+    return [pin(first), ...rest.map(answer => pin(answer))];
 }
 
-async function send(url: URL, pinned: Pinned, options: UrlFetchOptions): Promise<http.IncomingMessage> {
+async function send(url: URL, pinned: PinnedAnswers, options: UrlFetchOptions): Promise<http.IncomingMessage> {
     const transports = options.request ?? realRequest;
     const transport = url.protocol === 'https:' ? transports.https : transports.http;
-    // Every lookup the transport makes gets the one validated answer; nothing resolves the host again.
+    // Every lookup the transport makes gets only the validated answers; nothing resolves the host
+    // again. An all-addresses lookup gets all of them, so the runtime's connect-phase fallback (for
+    // example from an unusable IPv6 answer to IPv4) chooses among them; a single lookup gets the first.
+    const [first] = pinned;
     const lookup = (_host: string, lookupOptions: { all?: boolean } | undefined, callback: LookupCallback): void => {
-        const answer: Parameters<LookupCallback> = lookupOptions?.all === true ? [null, [pinned]] : [null, pinned.address, pinned.family];
+        const answer: Parameters<LookupCallback> = lookupOptions?.all === true ? [null, pinned] : [null, first.address, first.family];
         callback(...answer);
     };
     const host = bareHost(url);
