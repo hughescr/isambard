@@ -135,6 +135,34 @@ function failingCancel(code: number, headers: Record<string, string> = {}): { re
     return { response, cancelled: () => count };
 }
 
+/** A response whose body `cancel()` stays pending until `release()`; with `brokenText`, reading it fails. */
+function heldCancel(code: number, brokenText = false): { response: Response, release: () => void } {
+    const gate = deferred<void>();
+    const response = status(code, 'x');
+    Object.defineProperty(response, 'body', { value: { cancel: async () => gate.promise } });
+    if(brokenText) {
+        Object.defineProperty(response, 'text', {
+            value: async () => {
+                throw new Error('connection reset');
+            },
+        });
+    }
+    return {
+        response,
+        release: () => {
+            gate.resolve();
+        },
+    };
+}
+
+/** Lets every already-queued continuation run (far more turns than any lookup step needs). */
+async function drainMicrotasks(): Promise<void> {
+    for(let turn = 0; turn < 100; turn++) {
+        // eslint-disable-next-line no-await-in-loop -- each turn must finish before the next is queued
+        await Promise.resolve();
+    }
+}
+
 /** A sleep whose first call after `arm()` waits for `gate`; every other call advances the clock at once. */
 function gatedSleep() {
     const gate = deferred<void>();
@@ -301,6 +329,15 @@ describe('ArxivResolver', () => {
         const error = await caught(resolver.lookupIds(['1706.03762']));
 
         expect(error.message).toBe('arXiv lookup failed (HTTP 404)');
+        expect(calls).toHaveLength(1);
+    });
+
+    test('an API 499 is below the server-error range: an error, not a fallback', async () => {
+        const { resolver, calls } = setup(route(() => status(499, 'closed'), pages({ '1706.03762': ABS_ATTENTION })));
+
+        const error = await caught(resolver.lookupIds(['1706.03762']));
+
+        expect(error.message).toBe('arXiv lookup failed (HTTP 499)');
         expect(calls).toHaveLength(1);
     });
 
@@ -473,6 +510,14 @@ describe('ArxivResolver abs-page fallback', () => {
         expect(absUrls(calls)).toEqual(['https://arxiv.org/abs/2101.00001', 'https://arxiv.org/abs/1706.03762']);
     });
 
+    test('a 404 abs page is absent even when its body is a matching page', async () => {
+        const { resolver } = setup(route(throttled, () => status(404, ABS_ATTENTION)));
+
+        const found = await resolver.lookupIds(['1706.03762']);
+
+        expect(found.size).toBe(0);
+    });
+
     test('a 200 abs page naming another or no arXiv id is absent', async () => {
         const other = ABS_ATTENTION.replace('content="1706.03762"/>', 'content="2101.99999"/>');
         const none = ABS_ATTENTION.replace('<meta name="citation_arxiv_id" content="1706.03762"/>', '');
@@ -570,7 +615,8 @@ describe('ArxivResolver abs-page fallback', () => {
         const error = await caught(resolver.lookupIds(['1706.03762']));
 
         expect(error.message).toBe('arXiv lookup failed: export API HTTP 429; abs page for 1706.03762 The operation timed out.');
-        expect(error.context).toEqual({ source: 'arxiv' });
+        // Strict: the context has no `status` key at all, not one set to undefined.
+        expect(error.context).toStrictEqual({ source: 'arxiv' });
     });
 
     test('a rejected abs body read gives a combined error without a status and no partial page is used', async () => {
@@ -623,6 +669,38 @@ describe('ArxivResolver abs-page fallback', () => {
 
         expect(error.message).toBe('arXiv lookup failed (HTTP 400)');
         expect(bad.cancelled()).toBe(1);
+    });
+
+    test.each([
+        ['an export API body-read failure', 'api', true, 200, 'resolved'],
+        ['a throttled export API', 'api', false, 429, 'resolved'],
+        ['an abs body-read failure', 'abs', true, 200, 'rejected'],
+        ['a failed abs page', 'abs', false, 503, 'rejected'],
+    ] as const)('waits for the body cancel after %s before going on', async (_name, held, brokenText, code, outcome) => {
+        const pending = heldCancel(code, brokenText);
+        const { resolver, calls } = setup(route(
+            () => (held === 'api' ? pending.response : throttled()),
+            () => (held === 'abs' ? pending.response : html(ABS_ATTENTION))
+        ));
+
+        let done = false;
+        const settled = (async () => {
+            try {
+                await resolver.lookupIds(['1706.03762']);
+                return 'resolved';
+            } catch{
+                return 'rejected';
+            } finally {
+                done = true;
+            }
+        })();
+        await drainMicrotasks();
+
+        // Held at the cancel: no abs request after a held API body, no settled lookup after a held abs body.
+        expect(calls).toHaveLength(held === 'api' ? 1 : 2);
+        expect(done).toBe(false);
+        pending.release();
+        expect(await settled).toBe(outcome);
     });
 });
 
@@ -825,13 +903,15 @@ describe('ArxivResolver Retry-After', () => {
     });
 
     test('a 404 with Retry-After stops the next id at its pre-check', async () => {
-        const { resolver, calls } = setup(route(throttled, absExcept('2101.00001', () => status(404, 'gone', { 'Retry-After': '30' }), () => html(ABS_ATTENTION))));
+        const { resolver, calls, clock } = setup(route(throttled, absExcept('2101.00001', () => status(404, 'gone', { 'Retry-After': '30' }), () => html(ABS_ATTENTION))));
 
         const error = await caught(resolver.lookupIds(['2101.00001', '1706.03762']));
 
         expect(error.message).toBe('arXiv lookup failed: export API HTTP 429; abs page for 1706.03762 backing off (Retry-After)');
         expect(error.context).toEqual({ source: 'arxiv' });
         expect(absUrls(calls)).toEqual(['https://arxiv.org/abs/2101.00001']);
+        // Fails fast: the second id never reserves (or waits for) a request slot.
+        expect(clock.sleeps).toEqual([3000]);
     });
 
     test('a waiting abs request rechecks a cooldown set meanwhile', async () => {

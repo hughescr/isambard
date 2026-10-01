@@ -191,15 +191,18 @@ function mapEntry(id: string, entry: ArxivEntry, accessDate: string): MappedItem
  * version; an arXiv-minted DOI is dropped because `mapEntry` sets it as the item DOI itself.
  */
 function mapAbsPage(id: string, html: string, accessDate: string): MappedItem | undefined {
+    // Stryker disable next-line StringLiteral: equivalent; the page URL only feeds meta.item.fields.url and meta.pdfUrl, and mapAbsPage reads neither (mapEntry builds both from the id).
     const meta = parseCitationMeta(html, `${ABS_URL}${id}`, accessDate);
     if(meta.arxiv?.id !== id) {
         return undefined;
     }
+    // Stryker disable next-line StringLiteral: equivalent; with no citation_date any non-date fallback string fails mapEntry's YYYY-MM-DD match, so the item gets no date either way.
+    const citationDate = meta.item.fields.date ?? '';
     return mapEntry(id, {
         id,
         title:     meta.item.fields.title ?? '',
         summary:   meta.abstract ?? '',
-        published: (meta.item.fields.date ?? '').replaceAll('/', '-'),
+        published: citationDate.replaceAll('/', '-'),
         authors:   meta.item.creators,
         pdfUrl:    `${PDF_URL}${id}`,
         doi:       meta.doi === undefined || ARXIV_MINTED_DOI.test(meta.doi) ? undefined : meta.doi,
@@ -314,6 +317,7 @@ export class ArxivResolver {
         url.searchParams.set('max_results', String(unique.length));
 
         let response: Response | undefined;
+        // Stryker disable next-line StringLiteral: equivalent; `body` is read only after `response.ok`, and that path always assigns it from `response.text()` first.
         let body = '';
         try {
             response = await this.#fetch(url.href, { headers: { 'User-Agent': USER_AGENT }, signal: this.#timeoutSignal(this.#timeoutMs) });
@@ -354,8 +358,8 @@ export class ArxivResolver {
         const found = new Map<string, MappedItem>();
         for(const id of unique) {
             // eslint-disable-next-line no-await-in-loop -- arXiv's 3 s spacing makes these requests strictly sequential
-            const { status, page } = await this.#getAbsPage(id, apiReason);
-            if(status === 200) {
+            const page = await this.#getAbsPage(id, apiReason);
+            if(page !== undefined) {
                 const item = mapAbsPage(id, page, accessDate);
                 if(item !== undefined) {
                     found.set(id, item);
@@ -366,11 +370,11 @@ export class ArxivResolver {
     }
 
     /**
-     * One abs-page request. Resolves with the page for a 200 and with an empty page for a 404 (the id
+     * One abs-page request. Resolves with the page for a 200 and with `undefined` for a 404 (the id
      * is absent); every other outcome throws the combined failure. A non-OK answer starts any cooldown
      * its `Retry-After` asks for, and its body is cancelled.
      */
-    async #getAbsPage(id: string, apiReason: string): Promise<{ status: number, page: string }> {
+    async #getAbsPage(id: string, apiReason: string): Promise<string | undefined> {
         if(this.#now() < this.#absBackoffUntil) {
             throw absFailure(apiReason, id, BACKING_OFF);
         }
@@ -380,7 +384,7 @@ export class ArxivResolver {
             throw absFailure(apiReason, id, BACKING_OFF);
         }
         let response: Response | undefined;
-        let page = '';
+        let page: string | undefined;
         try {
             response = await this.#fetch(`${ABS_URL}${id}`, { headers: { 'User-Agent': USER_AGENT, Accept: 'text/html' }, signal: this.#timeoutSignal(this.#timeoutMs) });
             if(response.status === 200) {
@@ -397,6 +401,6 @@ export class ArxivResolver {
                 throw absFailure(apiReason, id, `HTTP ${response.status}`, response.status);
             }
         }
-        return { status: response.status, page };
+        return page;
     }
 }
