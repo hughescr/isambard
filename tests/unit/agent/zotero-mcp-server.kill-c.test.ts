@@ -35,8 +35,6 @@ function setup(configure?: (server: FakeZoteroServer) => void): { server: FakeZo
         izzyUserId:         21_862_647,
         addPapersLock:      pLimit(1),
         hostPolicy:         { allowlist: [] },
-        maxHtmlBytes:       100,
-        maxUrlPdfBytes:     1234,
     };
     return { server, deps, mcp: createZoteroMCPServer(deps) };
 }

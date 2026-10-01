@@ -3,7 +3,7 @@
  * file flows, and output shaping. The MCP server in `../zotero-mcp-server.ts` is the only consumer.
  */
 
-export { fetchUnderHostPolicy, type UrlFetchOptions, type UrlFetchResult } from './url-fetch';
+export { ZOTERO_MAX_PAGE_BYTES, fetchUnderHostPolicy, type UrlFetchOptions, type UrlFetchResult } from './url-fetch';
 export { addPapers, type AddPapersDeps, type AddPapersOptions, type PaperInput, type PaperResult } from './add-papers';
 export {
     attachPdfs,

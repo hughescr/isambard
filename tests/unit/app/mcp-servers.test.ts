@@ -793,7 +793,7 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
     describe('zotero', () => {
         const zotero = { client: {}, metadata: {}, maxStoredFileBytes: 52_428_800, izzyUserId: 21_862_647, addPapersLock: {} } as unknown as ZoteroDeps;
 
-        test.each(['conversation', 'perch'] as const)('builds the Zotero server for the %s role with the browser policy and caps', (role) => {
+        test.each(['conversation', 'perch'] as const)('passes only the Zotero deps and the browser host policy for the %s role', (role) => {
             const mockZoteroServer = freshServerConfig('zotero');
             const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer').mockReturnValue(mockZoteroServer);
             spies.push(createZoteroSpy);
@@ -804,17 +804,7 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
 
             expect(result.zoteroMcpServer).toBe(mockZoteroServer);
             expect(createZoteroSpy).toHaveBeenCalledTimes(1);
-            expect(createZoteroSpy.mock.calls[0][0]).toEqual({ ...zotero, hostPolicy: policy, maxHtmlBytes: 100_000, maxUrlPdfBytes: 2_000_000 });
-        });
-
-        test.each([1234, 5678])('takes the URL PDF cap from browserMaxScreenshotBytes (%d), never from maxStoredFileBytes', (cap) => {
-            const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer').mockReturnValue(freshServerConfig('zotero'));
-            spies.push(createZoteroSpy);
-            const shared = mcpServersModule.createMcpSharedDeps({ ...mockOptions, zotero, browserMaxTextBytes: 100_000, browserMaxScreenshotBytes: cap });
-
-            mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
-
-            expect(createZoteroSpy.mock.calls[0][0].maxUrlPdfBytes).toBe(cap);
+            expect(createZoteroSpy.mock.calls[0][0]).toEqual({ ...zotero, hostPolicy: policy });
         });
 
         test('defaults to a permissive policy object when no browser policy is given', () => {
@@ -830,19 +820,22 @@ describe('createMcpSharedDeps / createMcpServerInstances', () => {
         });
 
         test.each([
-            ['browserMaxTextBytes', { browserMaxScreenshotBytes: 2 }],
-            ['browserMaxScreenshotBytes', { browserMaxTextBytes: 1 }],
-        ])('skips the Zotero server with an error log when %s is missing', (_missing, caps) => {
-            const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer').mockReturnValue(freshServerConfig('zotero'));
+            ['no caps', {}],
+            ['text cap only', { browserMaxTextBytes: 1 }],
+            ['screenshot cap only', { browserMaxScreenshotBytes: 2 }],
+        ])('builds the zotero server when browser caps are absent (%s)', (_label, caps) => {
+            const mockZoteroServer = freshServerConfig('zotero');
+            const createZoteroSpy = spyOn(zoteroMcpModule, 'createZoteroMCPServer').mockReturnValue(mockZoteroServer);
             spies.push(createZoteroSpy);
             mockLogger.error.mockClear();
             const shared = mcpServersModule.createMcpSharedDeps({ ...mockOptions, zotero, ...caps });
 
             const result = mcpServersModule.createMcpServerInstances(shared, { role: 'conversation' });
 
-            expect(result.zoteroMcpServer).toBeUndefined();
-            expect(createZoteroSpy).not.toHaveBeenCalled();
-            expect(mockLogger.error).toHaveBeenCalledWith('browserMaxTextBytes and browserMaxScreenshotBytes are required for the Zotero URL fetch caps; skipping zotero MCP server');
+            expect(result.zoteroMcpServer).toBe(mockZoteroServer);
+            expect(createZoteroSpy).toHaveBeenCalledTimes(1);
+            expect(createZoteroSpy.mock.calls[0][0]).toEqual({ ...zotero, hostPolicy: { allowlist: undefined } });
+            expect(mockLogger.error).not.toHaveBeenCalled();
         });
 
         test('is absent when Zotero is not configured', () => {

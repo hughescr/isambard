@@ -32,9 +32,9 @@ export interface ZoteroFileDeps {
     client:             ZoteroClient
     /** Izzy's working directory; downloads land under `<root>/zotero-files/`, local uploads are read from under it. */
     root:               string
-    /** Cap for Zotero-storage downloads and local-file uploads. */
+    /** Cap for Zotero-storage downloads, local-file uploads, and PDFs fetched by URL. */
     maxStoredFileBytes: number
-    /** Fetches a PDF by URL under the browser host policy and the browser download cap. */
+    /** Fetches a PDF by URL under the browser host policy and the Zotero file-size cap. */
     fetchPdf:           (url: string) => Promise<UrlFetchResult>
     now:                () => number
 }

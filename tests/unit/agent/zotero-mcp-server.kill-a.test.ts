@@ -32,8 +32,6 @@ function setup(configure?: (server: FakeZoteroServer) => void, overrides: Partia
         izzyUserId:         IZZY,
         addPapersLock:      pLimit(1),
         hostPolicy:         { allowlist: ['papers.test'] },
-        maxHtmlBytes:       100,
-        maxUrlPdfBytes:     1234,
         fetchUrl:           async (url, options): Promise<UrlFetchResult> => {
             fetches.push({ url, options });
             return { finalUrl: url, kind: 'pdf', bytes: new Uint8Array(), truncated: false };

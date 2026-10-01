@@ -23,7 +23,7 @@ export interface ZoteroMetadataLookup {
 export interface ZoteroDeps {
     client:             ZoteroClient
     metadata:           ZoteroMetadataLookup
-    /** Cap for Zotero-storage downloads and local-file uploads only; URL fetches use the browser caps. */
+    /** Cap for Zotero-storage downloads, local-file uploads, and PDFs fetched by URL. */
     maxStoredFileBytes: number
     /** Izzy's own Zotero user id, to label authorship. */
     izzyUserId:         number

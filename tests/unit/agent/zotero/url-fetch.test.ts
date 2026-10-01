@@ -403,7 +403,7 @@ describe('fetchUnderHostPolicy', () => {
             const error = await fetchError('https://a.test/x', baseOptions({ maxPdfBytes: 10, resolve, request }));
 
             expect(error).toBeInstanceOf(ZoteroFileError);
-            expect((error as ZoteroFileError).message).toBe('The PDF at https://a.test/x is larger than the 10-byte limit (the browser download cap)');
+            expect((error as ZoteroFileError).message).toBe('The PDF at https://a.test/x is larger than the 10-byte limit (ZOTERO_MAX_STORED_FILE_BYTES)');
             expect((error as ZoteroFileError).context).toEqual({ reason: 'too_large', limit: 10 });
         });
 

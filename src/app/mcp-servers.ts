@@ -314,20 +314,14 @@ export interface CreateMcpServerInstancesOptions {
 }
 
 /**
- * The Zotero MCP server, whose URL fetches use the browser's own host policy and byte caps from the
- * same options the browser server gets; skipped (with an error log) when those caps are missing.
+ * The Zotero MCP server shares the browser's host policy, but owns its page and PDF caps.
+ * It is built whenever Zotero dependencies are provided, independent of browser byte caps.
  */
-function buildZoteroMcpServer(zotero: ZoteroDeps, options: MCPServersOptions): McpServerConfig | undefined {
-    if(options.browserMaxTextBytes === undefined || options.browserMaxScreenshotBytes === undefined) {
-        logger.error('browserMaxTextBytes and browserMaxScreenshotBytes are required for the Zotero URL fetch caps; skipping zotero MCP server');
-        return undefined;
-    }
+function buildZoteroMcpServer(zotero: ZoteroDeps, options: MCPServersOptions): McpServerConfig {
     return createZoteroMCPServer({
         ...zotero,
         // Stryker disable next-line llm: browserPolicy is typed BrowserHostPolicy | undefined (object or nullish), so || and ?? select the same value.
-        hostPolicy:     options.browserPolicy ?? { allowlist: undefined },
-        maxHtmlBytes:   options.browserMaxTextBytes,
-        maxUrlPdfBytes: options.browserMaxScreenshotBytes,
+        hostPolicy: options.browserPolicy ?? { allowlist: undefined },
     });
 }
 

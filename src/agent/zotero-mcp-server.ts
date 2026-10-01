@@ -16,6 +16,7 @@ import type { BrowserHostPolicy } from './browser';
 import { mcpErrorResult, mcpJsonResult, withToolErrorHandling } from './mcp-helpers';
 import {
     UNTRUSTED_NOTICE,
+    ZOTERO_MAX_PAGE_BYTES,
     addPapers,
     attachPdfs,
     clip,
@@ -45,17 +46,13 @@ import {
 
 export interface ZoteroMCPServerDeps extends ZoteroDeps {
     /** The browser tool's host policy; every URL fetch goes through it. */
-    hostPolicy:     BrowserHostPolicy
-    /** The browser's text cap: fetched HTML is truncated here. */
-    maxHtmlBytes:   number
-    /** The browser's download cap: a PDF fetched by URL over this is refused. */
-    maxUrlPdfBytes: number
+    hostPolicy:    BrowserHostPolicy
     /** Where downloads land (`<root>/zotero-files/...`) and local uploads are read from; default the working directory. */
-    downloadRoot?:  string
+    downloadRoot?: string
     /** Test seam for URL fetches. */
-    fetchUrl?:      (url: string, options: UrlFetchOptions) => Promise<UrlFetchResult>
+    fetchUrl?:     (url: string, options: UrlFetchOptions) => Promise<UrlFetchResult>
     /** Test seam for the clock. */
-    now?:           () => number
+    now?:          () => number
 }
 
 const zoteroKey = z.string().regex(ZOTERO_KEY_PATTERN).describe('A Zotero item or collection key (8 characters)');
@@ -266,8 +263,8 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
     const fetchWith = (accept: UrlFetchOptions['accept']) => async (url: string) => fetchUrl(url, {
         policy:       deps.hostPolicy,
         accept,
-        maxHtmlBytes: deps.maxHtmlBytes,
-        maxPdfBytes:  deps.maxUrlPdfBytes,
+        maxHtmlBytes: ZOTERO_MAX_PAGE_BYTES,
+        maxPdfBytes:  deps.maxStoredFileBytes,
     });
     const fetchPdf = fetchWith('pdf');
     const fileDeps = (): ZoteroFileDeps => ({ client: deps.client, root, maxStoredFileBytes: deps.maxStoredFileBytes, fetchPdf, now });
@@ -404,7 +401,7 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
 
             tool(
                 'addPapers',
-                'Add papers to the shared Zotero group by DOI (Crossref), arXiv id, or URL. Checks the whole library (Trash included) for the same DOI, arXiv id or URL first and reports "exists" instead of adding a duplicate. By default also tries to attach a PDF (fetched under the browser host policy and download cap).',
+                'Add papers to the shared Zotero group by DOI (Crossref), arXiv id, or URL. Checks the whole library (Trash included) for the same DOI, arXiv id or URL first and reports "exists" instead of adding a duplicate. By default also tries to attach a PDF (fetched under the browser host policy and the Zotero file-size cap).',
                 {
                     papers: z.array(z.union([
                         z.strictObject({ doi: z.string().min(1).describe('A DOI, doi:..., or doi.org URL') }),
@@ -435,7 +432,7 @@ export function createZoteroMCPServer(deps: ZoteroMCPServerDeps) {
 
             tool(
                 'attachPdfs',
-                'Attach PDFs to existing Zotero items, from a URL (browser host policy and download cap) or from a file under your working directory. Each becomes a new child attachment. A failed upload leaves no empty attachment behind (it is moved to the Trash).',
+                'Attach PDFs to existing Zotero items, from a URL (browser host policy and the Zotero file-size cap) or from a file under your working directory. Each becomes a new child attachment. A failed upload leaves no empty attachment behind (it is moved to the Trash).',
                 {
                     attachments: z.array(z.object({
                         parentKey: zoteroKey.describe('The item to attach the PDF to'),

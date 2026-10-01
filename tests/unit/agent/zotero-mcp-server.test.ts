@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import pLimit from 'p-limit';
-import type { UrlFetchOptions, UrlFetchResult } from '../../../src/agent/zotero';
+import { ZOTERO_MAX_PAGE_BYTES, type UrlFetchOptions, type UrlFetchResult } from '../../../src/agent/zotero';
 import { createZoteroMCPServer, type ZoteroMCPServerDeps } from '../../../src/agent/zotero-mcp-server';
 import journalTemplate from '../../fixtures/zotero/template-journalArticle.json';
 import { callSdkTool, listSdkTools } from '../../helpers/sdk-mcp-client';
@@ -36,8 +36,6 @@ function setup(configure?: (server: FakeZoteroServer) => void, overrides: Partia
         izzyUserId:         IZZY,
         addPapersLock:      pLimit(1),
         hostPolicy:         { allowlist: ['papers.test'] },
-        maxHtmlBytes:       100,
-        maxUrlPdfBytes:     1234,
         downloadRoot:       root,
         fetchUrl:           async (url, options): Promise<UrlFetchResult> => {
             fetches.push({ url, options });
@@ -70,6 +68,15 @@ async function callText(mcp: ZoteroMcp, name: string, args: Record<string, unkno
 
 async function callJson(mcp: ZoteroMcp, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
     return JSON.parse(await callText(mcp, name, args)) as Record<string, unknown>;
+}
+
+/** Dependency-wiring tests skip the MCP handshake; other cases cover SDK schema validation. */
+async function callHandlerJson(mcp: ZoteroMcp, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const instance = mcp.instance as unknown as { _registeredTools: Record<string, {
+        handler: (input: Record<string, unknown>) => Promise<{ content: { text: string }[] }>
+    }> };
+    const result = await instance._registeredTools[name].handler(args);
+    return JSON.parse(result.content[0].text) as Record<string, unknown>;
 }
 
 describe('createZoteroMCPServer', () => {
@@ -265,12 +272,39 @@ describe('createZoteroMCPServer', () => {
             expect(body.results).toEqual([expect.objectContaining({ status: 'added', title: 'A', pdf: 'no_candidate' })]);
         });
 
-        test('fetches pages with the browser policy and caps', async () => {
-            const { mcp, fetches } = setup();
+        test('fetches pages with the browser host policy and Zotero caps', async () => {
+            const { mcp, deps, fetches } = setup();
 
-            await callTool(mcp, 'addPapers', { papers: [{ url: 'https://papers.test/x.pdf' }], attachPdf: false });
+            await callHandlerJson(mcp, 'addPapers', { papers: [{ url: 'https://papers.test/x.pdf' }], attachPdf: false });
 
-            expect(fetches).toEqual([{ url: 'https://papers.test/x.pdf', options: { policy: { allowlist: ['papers.test'] }, accept: 'html-or-pdf', maxHtmlBytes: 100, maxPdfBytes: 1234 } }]);
+            expect(ZOTERO_MAX_PAGE_BYTES).toBe(1_048_576);
+            expect(fetches).toEqual([{ url: 'https://papers.test/x.pdf', options: { policy: { allowlist: ['papers.test'] }, accept: 'html-or-pdf', maxHtmlBytes: ZOTERO_MAX_PAGE_BYTES, maxPdfBytes: deps.maxStoredFileBytes } }]);
+        });
+
+        test('addPapers fetches PDF candidates with the Zotero caps', async () => {
+            const fetches: { url: string, options: UrlFetchOptions }[] = [];
+            const { mcp, deps } = setup(undefined, {
+                maxStoredFileBytes: 4321,
+                fetchUrl:           async (url, options) => {
+                    fetches.push({ url, options });
+                    // Stop after observing the fetch options: attachment storage is tested separately.
+                    throw new Error('fixture fetch stop');
+                },
+                metadata: {
+                    lookupDois: async () => new Map([['10.1000/a', {
+                        itemType: 'journalArticle', fields: { title: 'A', DOI: '10.1000/a' }, creators: [], pdfCandidates: ['https://papers.test/a.pdf'],
+                    }]]),
+                    lookupArxiv: async () => new Map(),
+                },
+            });
+
+            const body = await callHandlerJson(mcp, 'addPapers', { papers: [{ doi: '10.1000/a' }] });
+
+            expect(body.results).toEqual([expect.objectContaining({ status: 'added', pdf: 'failed: fixture fetch stop' })]);
+            expect(fetches).toEqual([{
+                url:     'https://papers.test/a.pdf',
+                options: { policy: { allowlist: ['papers.test'] }, accept: 'pdf', maxHtmlBytes: ZOTERO_MAX_PAGE_BYTES, maxPdfBytes: deps.maxStoredFileBytes },
+            }]);
         });
 
         test('refuses a paper that is not exactly one of doi, arxivId or url', async () => {
@@ -282,13 +316,13 @@ describe('createZoteroMCPServer', () => {
             expect(server.calls).toEqual([]);
         });
 
-        test('attaches a PDF from a URL using the browser download cap, not the stored-file cap', async () => {
-            const { server, mcp, fetches } = setup(s => s.addItem({ key: 'ITEM2345' }));
+        test('attaches a PDF from a URL under maxStoredFileBytes', async () => {
+            const { server, mcp, deps, fetches } = setup(s => s.addItem({ key: 'ITEM2345' }));
 
-            const body = await callJson(mcp, 'attachPdfs', { attachments: [{ parentKey: 'ITEM2345', source: { url: 'https://papers.test/a.pdf' } }] });
+            const body = await callHandlerJson(mcp, 'attachPdfs', { attachments: [{ parentKey: 'ITEM2345', source: { url: 'https://papers.test/a.pdf' } }] });
 
             expect(body.results).toEqual([{ parentKey: 'ITEM2345', pdf: 'attached', attachmentKey: expect.any(String) }]);
-            expect(fetches[0].options).toEqual({ policy: { allowlist: ['papers.test'] }, accept: 'pdf', maxHtmlBytes: 100, maxPdfBytes: 1234 });
+            expect(fetches[0].options).toEqual({ policy: { allowlist: ['papers.test'] }, accept: 'pdf', maxHtmlBytes: ZOTERO_MAX_PAGE_BYTES, maxPdfBytes: deps.maxStoredFileBytes });
             expect(writes(server).some(entry => entry.url.startsWith(`${LIBRARY}/items`))).toBe(true);
         });
 

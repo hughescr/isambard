@@ -33,8 +33,6 @@ function baseDeps(overrides: Partial<ZoteroMCPServerDeps> = {}): { server: FakeZ
         izzyUserId:         21_862_647,
         addPapersLock:      pLimit(1),
         hostPolicy:         { allowlist: [] },
-        maxHtmlBytes:       100,
-        maxUrlPdfBytes:     1234,
         ...overrides,
     };
     return { server, deps };
@@ -104,7 +102,7 @@ describe('createZoteroMCPServer — mcp-b (lines 357-457)', () => {
             const tools = await listSdkTools(mcp);
             const addPapers = tools.find(entry => entry.name === 'addPapers')!;
 
-            expect(addPapers.description).toBe('Add papers to the shared Zotero group by DOI (Crossref), arXiv id, or URL. Checks the whole library (Trash included) for the same DOI, arXiv id or URL first and reports "exists" instead of adding a duplicate. By default also tries to attach a PDF (fetched under the browser host policy and download cap).');
+            expect(addPapers.description).toBe('Add papers to the shared Zotero group by DOI (Crossref), arXiv id, or URL. Checks the whole library (Trash included) for the same DOI, arXiv id or URL first and reports "exists" instead of adding a duplicate. By default also tries to attach a PDF (fetched under the browser host policy and the Zotero file-size cap).');
             expect(addPapers.annotations?.title).toBe('Add Papers to Zotero');
             expect(addPapers.inputSchema.properties).toEqual({
                 papers: {
@@ -143,7 +141,7 @@ describe('createZoteroMCPServer — mcp-b (lines 357-457)', () => {
             const tools = await listSdkTools(mcp);
             const attachPdfs = tools.find(entry => entry.name === 'attachPdfs')!;
 
-            expect(attachPdfs.description).toBe('Attach PDFs to existing Zotero items, from a URL (browser host policy and download cap) or from a file under your working directory. Each becomes a new child attachment. A failed upload leaves no empty attachment behind (it is moved to the Trash).');
+            expect(attachPdfs.description).toBe('Attach PDFs to existing Zotero items, from a URL (browser host policy and the Zotero file-size cap) or from a file under your working directory. Each becomes a new child attachment. A failed upload leaves no empty attachment behind (it is moved to the Trash).');
             expect(attachPdfs.annotations?.title).toBe('Attach PDFs in Zotero');
             expect(attachPdfs.inputSchema.properties).toEqual({
                 attachments: {

@@ -22,10 +22,10 @@ The key never appears in logs, error messages or tool output, and it is only eve
 |---|---|---|
 | `ZOTERO_GROUP_ID` | `6692257` | The only library the client can address (`/groups/<id>`). |
 | `ZOTERO_USER_ID` | `21862647` | Izzy's user id; used only to label items as `addedBy: izzy`. |
-| `ZOTERO_MAX_STORED_FILE_BYTES` | `52428800` (50 MiB) | Largest file downloaded from Zotero storage, or uploaded from a local file. |
+| `ZOTERO_MAX_STORED_FILE_BYTES` | `52428800` (50 MiB) | Largest file downloaded from Zotero storage, uploaded from a local file, or fetched by URL as a PDF. |
 | `ZOTERO_CROSSREF_MAILTO` | unset | An email address sent to Crossref in the User-Agent, for its "polite" pool. |
 
-An empty override counts as unset. URL fetches do **not** use `ZOTERO_MAX_STORED_FILE_BYTES`: they use the browser tool's caps (`browser.maxTextBytes` for HTML, `browser.maxScreenshotBytes` for PDFs, 2,000,000 bytes by default) and its host allowlist. Many papers are bigger than 2 MB, so a PDF fetched by URL often comes back as `pdf: "failed: ... too large ..."` while the paper itself is still added. Craig can drop the PDF in from his desktop, or raise the browser cap.
+An empty override counts as unset. URL fetches use the browser host allowlist, but Zotero's own byte caps: a URL PDF is capped by `ZOTERO_MAX_STORED_FILE_BYTES` (50 MiB by default, with exactly-at-cap files accepted), and HTML is read up to 1 MiB. The Zotero server does not require browser byte caps. The existing 30 s per-request timeout covers connection, headers and body, but not the preceding DNS lookup; a large PDF from a slow host may time out before reaching the file-size cap.
 
 A URL fetch connects only to the host's checked DNS answers, but it is given all of them, so a host whose IPv6 address is unreachable from here is still fetched over IPv4.
 
@@ -42,7 +42,7 @@ Rules the code enforces:
 - **Untrusted content.** Abstracts, notes, annotations, web pages and PDFs are third-party data. Tool results say so, note text Izzy writes is escaped, and downloaded file names are sanitised with a forced extension.
 - **Contained files.** Local PDFs for upload are read, and downloads written, only under Izzy's working directory, without following symlinks at any level (`utils/contained-fs.ts`). On a platform other than macOS or Linux the two file tools fail closed and the other tools keep working.
 
-Storage used by uploads counts against Craig's Zotero storage plan.
+Storage used by uploads counts against Craig's Zotero storage plan. The per-file cap is not a batch memory bound: loaded PDF buffers are retained until the batched store, so at the defaults a 20-paper `addPapers` call can hold about 1000 MiB and a 10-file `attachPdfs` call about 500 MiB of PDF payload, plus transient copies; fetch concurrency of 3 does not bound that retention.
 
 ## Hand-off for the runtime directory
 
@@ -53,8 +53,8 @@ Add `zotero-files/` to `scratch/.gitignore` (next to `attachments/`), so downloa
 Unit tests use fakes only. Before relying on the integration, run a one-off check against the real group. It writes to the shared library, so run it only with Craig's go-ahead, from a throwaway script outside the repo, with the key read through `op read` into a variable (never printed):
 
 1. Create a collection `izzy-smoke`.
-2. `addPapers` with `{arxivId: "1706.03762"}` into that collection. Its PDF is 2.2 MB, so with the default browser cap this exercises the "too large" path.
-3. `attachPdfs` with a small local PDF (under 2 MB). Record the attachment's `version` and `md5` before and after, to confirm that registering an upload bumps the version and sets `md5` (the failed-upload cleanup relies on this).
+2. `addPapers` with `{arxivId: "1706.03762"}` into that collection. Its 2.2 MB PDF is under the default Zotero file-size cap and should attach, no longer exercising the "too large" path.
+3. `attachPdfs` with that PDF's URL on the new item (or a local PDF under the Zotero file-size cap). Record the attachment's `version` and `md5` before and after, to confirm that registering an upload bumps the version and sets `md5` (the failed-upload cleanup relies on this).
 4. `addPapers` again with the same arXiv id: expect `exists`.
 5. `getItems` on the paper (children and attachment), then `downloadAttachments` (the md5 must match).
 6. `updateItems`: add and remove a tag, then edit a field with a stale version to see the conflict.

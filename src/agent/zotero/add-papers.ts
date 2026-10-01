@@ -54,9 +54,9 @@ export interface AddPapersDeps {
     metadata:  ZoteroMetadataLookup
     /** Shared by both sessions: one addPapers at a time. */
     lock:      LimitFunction
-    /** Fetches a page or PDF under the browser host policy and caps. */
+    /** Fetches a page or PDF under the browser host policy and Zotero's page and file-size caps. */
     fetchPage: (url: string) => Promise<UrlFetchResult>
-    /** Fetches a PDF under the browser host policy and download cap. */
+    /** Fetches a PDF under the browser host policy and the Zotero file-size cap. */
     fetchPdf:  (url: string) => Promise<UrlFetchResult>
     now:       () => number
 }

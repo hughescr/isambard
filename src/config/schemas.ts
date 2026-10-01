@@ -238,7 +238,7 @@ export const zoteroConfigSchema = z.object({
     groupId:            z.number().int().positive().default(6_692_257),
     /** Izzy's own Zotero account; labels authorship in tool output. */
     userId:             z.number().int().positive().default(21_862_647),
-    /** Zotero-storage downloads and local-file uploads ONLY. URL fetches use the browser caps. */
+    /** Cap for Zotero-storage downloads, local-file uploads, and PDFs fetched by URL. */
     maxStoredFileBytes: z.number().int().positive().default(50 * 1024 * 1024),
     /** Sent in the Crossref User-Agent for the polite pool. */
     crossrefMailto:     z.email().optional(),

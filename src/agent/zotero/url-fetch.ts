@@ -8,8 +8,8 @@
  * `node:http(s)`'s `lookup` option (Bun's `fetch` cannot pin), to the validated canonical answers;
  * the transport's connect fallback chooses among them, so an unusable IPv6 answer can fall back to
  * IPv4 while connecting. Nothing is re-sent once a connection is established. TLS still verifies the
- * original hostname. Byte caps are the browser's: HTML is truncated at the text cap, and a PDF
- * over the download cap is an error.
+ * original hostname. Only the host policy is shared with the browser: Zotero owns the byte caps,
+ * truncating HTML at its page cap and refusing PDFs over its configured file-size cap.
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
@@ -19,13 +19,17 @@ import { isIP, isIPv6 } from 'node:net';
 import { checkResolvedAddress, validateUrl, type BrowserHostPolicy } from '../browser';
 import { ZoteroError, ZoteroFileError, ZoteroUrlFetchError } from '@/errors';
 
+/** Zotero's fixed HTML read cap; PDF fetches instead use `maxStoredFileBytes`. */
+export const ZOTERO_MAX_PAGE_BYTES = 1_048_576;
+
 export interface UrlFetchOptions {
+    /** Host policy shared with the browser; the byte caps below belong to Zotero. */
     policy:        BrowserHostPolicy
     /** `pdf`: anything else is `not_pdf`. `html-or-pdf`: a page or a PDF. */
     accept:        'pdf' | 'html-or-pdf'
-    /** HTML is read up to this many bytes and then truncated (the browser's text cap). */
+    /** HTML is read up to this many bytes and then truncated (Zotero's page cap). */
     maxHtmlBytes:  number
-    /** A PDF over this many bytes is an error (the browser's download cap). */
+    /** A PDF over this many bytes is an error (Zotero's configured file-size cap). */
     maxPdfBytes:   number
     /** Test seam: DNS resolution, called once per hop. */
     resolve?:      (host: string) => Promise<{ address: string, family: number }[]>
@@ -210,7 +214,7 @@ function decideKind(head: Uint8Array, contentType: string | undefined, url: stri
 }
 
 function tooLarge(url: string, limit: number): ZoteroFileError {
-    return new ZoteroFileError(`The PDF at ${url} is larger than the ${limit}-byte limit (the browser download cap)`, { reason: 'too_large', limit });
+    return new ZoteroFileError(`The PDF at ${url} is larger than the ${limit}-byte limit (ZOTERO_MAX_STORED_FILE_BYTES)`, { reason: 'too_large', limit });
 }
 
 async function readBody(response: http.IncomingMessage, url: string, options: UrlFetchOptions): Promise<UrlFetchResult> {
