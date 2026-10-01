@@ -176,4 +176,22 @@ describe('parseCitationMeta', () => {
         expect(meta.item.itemType).toBe('webpage');
         expect(meta.item.fields).toEqual({ url: PAGE, accessDate: ACCESSED });
     });
+
+    test('reads citation_abstract as abstract, collapsed, from the first tag', () => {
+        const meta = parseCitationMeta(page('<meta name="citation_abstract" content="  The  first\n abstract &amp; more. "><meta name="citation_abstract" content="Second">'), PAGE, ACCESSED);
+
+        expect(meta.abstract).toBe('The first abstract & more.');
+    });
+
+    test('abstract is absent without citation_abstract', () => {
+        const meta = parseCitationMeta(page('<meta name="citation_title" content="T">'), PAGE, ACCESSED);
+
+        expect('abstract' in meta).toBe(false);
+    });
+
+    test('citation_abstract does not add abstractNote to item.fields', () => {
+        const meta = parseCitationMeta(page('<meta name="citation_abstract" content="Text">'), PAGE, ACCESSED);
+
+        expect(meta.item.fields).toEqual({ url: PAGE, accessDate: ACCESSED });
+    });
 });

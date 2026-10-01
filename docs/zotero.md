@@ -29,6 +29,8 @@ An empty override counts as unset. URL fetches use the browser host allowlist, b
 
 A URL fetch connects only to the host's checked DNS answers, but it is given all of them, so a host whose IPv6 address is unreachable from here is still fetched over IPv4.
 
+arXiv ids go through the arXiv export API, falling back to the `arxiv.org/abs/<id>` page (one request per id, read through its `citation_*` tags) when the API is throttled (429), failing (5xx) or breaks mid-transfer (a network error, timeout, or a body that fails to read). Any other API error, such as a 400, is reported without a fallback. Both paths give the same item (a `preprint` with the `10.48550/arXiv.<id>` DOI, `arXiv:<id>` archive id and abs URL), so duplicate detection treats them alike; the abs page has no journal reference, and a journal DOI it lists appears only as `Published version DOI:` in `extra`. All arXiv requests share arXiv's 3 s spacing, and an integer `Retry-After` is honoured per host and held in memory (a restart clears it, a later shorter one never shortens it, and nothing waits it out): during an API cooldown lookups go straight to the abs pages, and during an abs cooldown a lookup that needs the fallback fails at once. When both fail the error names both.
+
 ## What Izzy can and cannot do
 
 The ten tools: `searchLibrary`, `getItems` (fields, abstract, child notes, attachments, and Craig's reader highlights and comments), `listCollections`, `addPapers` (DOI via Crossref, arXiv id via the arXiv API, or URL), `attachPdfs`, `downloadAttachments` (to `zotero-files/<key>/` under Izzy's working directory), `updateItems`, `writeNotes`, `manageCollections`, and `trashOrRestore`.

@@ -1,8 +1,9 @@
 /**
  * addPapers (#157, design §6.2): add papers by DOI, arXiv id or URL, batch-first.
  *
- * Per call: at most two Crossref and two arXiv requests (the second round only for identifiers found
- * on fetched pages), one paged scan of the library for duplicates, one create for all new parents,
+ * Per call: at most two Crossref and two arXiv resolver rounds (the second round only for identifiers
+ * found on fetched pages; each arXiv round is one export API request, or on fallback one abs-page
+ * request per id), one paged scan of the library for duplicates, one create for all new parents,
  * then the PDFs through `storePdfs` (one create, per-file upload, one cleanup).
  *
  * Duplicates are found by identity keys (DOI, arXiv id, URL) compared against a complete transient

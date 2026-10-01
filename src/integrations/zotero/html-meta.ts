@@ -14,12 +14,17 @@ import type { MappedCreator, MappedItem } from './item-fields';
 
 /** What a page's `<head>` says about the work it presents. */
 export interface CitationMeta {
-    doi?:    string
-    arxiv?:  ArxivId
+    doi?:        string
+    arxiv?:      ArxivId
     /** `citation_pdf_url`, resolved against the page URL. It still has to pass the host policy when fetched. */
-    pdfUrl?: string
+    pdfUrl?:     string
+    /**
+     * The first `citation_abstract`, collapsed. Deliberately not copied into `item.fields`: arXiv's
+     * abs-page fallback maps it as the abstract; the generic page path leaves abstractNote unset.
+     */
+    'abstract'?: string
     /** The page's own description of the item: a journal article, conference paper or webpage. */
-    item:    MappedItem
+    item:        MappedItem
 }
 
 function collapse(text: string): string {
@@ -116,6 +121,7 @@ export function parseCitationMeta(html: string, pageUrl: string, accessDate: str
     const arxivValue = first('citation_arxiv_id');
     const arxiv = arxivValue === undefined ? undefined : normalizeArxivId(arxivValue);
     const pdfUrl = resolveUrl(first('citation_pdf_url'), pageUrl);
+    const abstract = first('citation_abstract');
 
     const journal = first('citation_journal_title');
     const conference = first('citation_conference_title');
@@ -153,6 +159,7 @@ export function parseCitationMeta(html: string, pageUrl: string, accessDate: str
         ...doi === undefined ? {} : { doi },
         ...arxiv === undefined ? {} : { arxiv },
         ...pdfUrl === undefined ? {} : { pdfUrl },
+        ...abstract === undefined ? {} : { abstract },
         item: {
             itemType,
             fields,

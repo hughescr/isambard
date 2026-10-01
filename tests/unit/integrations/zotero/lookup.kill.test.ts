@@ -332,7 +332,8 @@ describe('arxiv.ts pacing survivors', () => {
             await Promise.resolve();
             order.push('cancelled');
         };
-        const response = { ok: false, status: 503, body: { cancel } } as unknown as Response;
+        // A 400 is the HTTP error that is thrown (a 429/5xx falls back to the abs pages instead).
+        const response = { ok: false, status: 400, headers: new Headers(), body: { cancel } } as unknown as Response;
         const resolver = new ArxivResolver({ fetch: async () => response, timeoutSignal: () => new AbortController().signal });
 
         await caught(resolver.lookupIds(['1706.03762']));
