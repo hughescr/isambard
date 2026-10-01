@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { ABS_ATTENTION, ABS_MALDACENA } from '../../../fixtures/zotero/arxiv-abs-pages';
 import { deferred, fakeClock, recordingFetch, status, type FakeClock, type FakeHandler, type RecordedCall } from '../../../helpers/zotero-fake';
 import { ZoteroMetadataError } from '@/errors';
 import { ArxivResolver } from '@/integrations/zotero/arxiv';
@@ -8,13 +9,6 @@ import type { MappedItem } from '@/integrations/zotero/item-fields';
 const NOW = Date.parse('2026-09-27T12:00:00.000Z');
 const API_URL = 'https://export.arxiv.org/api/query';
 const ABS_URL = 'https://arxiv.org/abs/';
-
-async function fixture(name: string): Promise<string> {
-    return Bun.file(new URL(`../../../fixtures/zotero/${name}`, import.meta.url)).text();
-}
-
-const ABS_ATTENTION = await fixture('arxiv-abs-1706.03762.html');
-const ABS_MALDACENA = await fixture('arxiv-abs-hep-th-9711200.html');
 
 /** An Atom feed shaped like export.arxiv.org's, with a feed-level title/id that must be ignored. */
 const FEED = `<?xml version="1.0" encoding="UTF-8"?>
