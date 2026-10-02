@@ -395,7 +395,10 @@ describe('AsyncIndexer', () => {
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'x', ttl: undefined, sourceUpdatedAt: 1 });
             // The embedding succeeded, so the upsert failure is not an embedding failure: no retry.
             expect(await firstWarning).toEqual({ error: failure, path, msg: 'AsyncIndexer job failed: dropping and continuing' });
-            expect(jest.getTimerCount()).toBe(0);
+            // The work settled at the warning instead of sleeping on a retry. Not jest.getTimerCount(): that
+            // counts every fake timer in the process, and the hash's real async turn lets another test's
+            // leftover work schedule one into it (#180).
+            expect(indexer.trackedPathCount).toBe(0);
             await indexer.drain();
             expect(mockEmbedder.encode).toHaveBeenCalledTimes(1);
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);

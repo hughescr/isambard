@@ -5,6 +5,7 @@ import { MemoryToolKeyGenerator } from '@/storage/memory-tool/key-generator';
 import { createIndexLayer } from '@/storage/memory-tool/types';
 import { VectorIndex } from '@/storage/memory-vec-store/backend';
 import { createVectorCrossCheckScheduler, VECTOR_CROSS_CHECK_INTERVAL_MS, type VectorCrossCheckDeps } from '@/storage/memory-vec-store/cross-check';
+import * as hashModule from '@/storage/memory-vec-store/hash';
 import { sha256Hex } from '@/storage/memory-vec-store/hash';
 import type { IndexerJob, IndexerUpsertJob, VectorIndexEntry } from '@/storage/memory-vec-store/types';
 
@@ -577,10 +578,15 @@ describe('weekly vector cross-check', () => {
     });
 
     it('waits for an in-flight timed run on stop and schedules nothing after it', async () => {
+        // No real async turn may happen while fake timers are installed: jest.getTimerCount() below counts
+        // every fake timer in the process, and a real crypto turn lets another test's leftover work schedule
+        // one into it (#180). So hash before installing them, and answer the run's own hash from that value.
+        const hash = await identityHash(1);
+        const hashSpy = jest.spyOn(hashModule, 'sha256Hex').mockResolvedValue(hash);
         jest.useFakeTimers();
         jest.setSystemTime(10_000);
         openIndex();
-        seed(1, await identityHash(1));
+        seed(1, hash);
         index.enrollCrossCheck(0, 0);
         const gate = { respond: (): void => {} };
         const send = jest.fn(async () => {
@@ -603,6 +609,7 @@ describe('weekly vector cross-check', () => {
         gate.respond();
         await stopping;
         expectAborted(logger);
+        expect(hashSpy.mock.calls).toEqual([['/identity/1.md\nunchanged']]);
         await flush();
         expect(jest.getTimerCount()).toBe(0);
     });
