@@ -486,6 +486,15 @@ describe('ZoteroClient reads', () => {
 
         expect(await client.getItemTemplate('book')).toEqual({ itemType: 'book' });
     });
+
+    test('a template without an itemType is refused as an unexpected response shape', async () => {
+        const { client } = setup(s => s.templates.set('book', { title: '' }));
+
+        const error = await caught(client.getItemTemplate('book')) as ZoteroError;
+
+        expect(error).toBeInstanceOf(ZoteroError);
+        expect(error.message).toBe('unexpected Zotero response shape from /items/new');
+    });
 });
 
 describe('ZoteroClient batch creates', () => {
