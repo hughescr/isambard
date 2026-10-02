@@ -211,8 +211,8 @@ describe('createZoteroMCPServer (mcp-a: constants, schemas, validation helpers, 
     });
 
     test.each([
-        'parentItem', 'creators', 'tags', 'relations', 'dateAdded', 'dateModified', 'key',
-        'contentType', 'filename', 'charset', 'mtime', 'path',
+        'version', 'parentItem', 'creators', 'tags', 'relations', 'dateAdded', 'dateModified', 'key',
+        'linkMode', 'contentType', 'filename', 'charset', 'mtime', 'path',
     ])('refuses to set the protected field %s', async (field) => {
         const { server, mcp } = setup(s => s.addItem({ key: 'ITEM2345', version: 4 }));
 
