@@ -13,7 +13,7 @@ import * as runtimeModule from '@/app/runtime';
 import * as sessionsModule from '@/app/sessions';
 import * as configLoader from '@/config/loader';
 import { sessionConfigSchema, type DiscordConfig, type DynamoDBConfig, type AgentConfig, type Config, type SessionConfig } from '@/config/schemas';
-import { createApp, type App } from '@/index';
+import { createApp as createUntrackedApp, type App } from '@/index';
 import * as discordBot from '@/integrations/discord/bot';
 import type { DiscordBot } from '@/integrations/discord/bot';
 import * as channelRegistryBackendModule from '@/integrations/discord/channel-registry/backend';
@@ -49,6 +49,36 @@ function pendingSessionHost() {
         stopIngress:     mock(() => undefined),
         recoveryAdapter: { recover: mock(async () => undefined) },
     };
+}
+
+/** Every {@link App} a test in this file builds, so `afterEach` can stop it (#181). */
+const builtApps: App[] = [];
+
+/**
+ * `createApp()`, recording the app so `afterEach` stops it. createApp() arms process-global
+ * work that only `app.stop()` cancels: the DynamoDB reconnection loop (these tests' mock client
+ * cannot answer the startup probe, so the loop starts and retries on real ~1-4 s backoff timers),
+ * the health-outage coalescer's 5 s flush timer, and the 60 s DynamoDB probe interval. Left
+ * running, those timers fire during whichever test runs next and land in its fake-timer count
+ * (#180/#181).
+ * @returns The created app
+ */
+async function createApp(): Promise<App> {
+    const app = await createUntrackedApp();
+    builtApps.push(app);
+    return app;
+}
+
+/** Stops (and forgets) every app built by the test that just finished. */
+async function stopBuiltApps(): Promise<void> {
+    await Promise.all(builtApps.splice(0).map(async (app) => {
+        try {
+            await app.stop();
+        } catch{
+            // Teardown only: a test that cares how stop() settles asserts it itself, and
+            // stop() runs every shutdown step even when an earlier one fails.
+        }
+    }));
 }
 
 describe('Bot Lifecycle Integration', () => {
@@ -138,7 +168,10 @@ describe('Bot Lifecycle Integration', () => {
         );
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        // Stop the apps first: their shutdown steps call into the spies restored below.
+        await stopBuiltApps();
+
         // Restore all spies
         for(const spy of spies) {
             spy.mockRestore();
@@ -276,7 +309,6 @@ describe('Bot Lifecycle Integration', () => {
     });
 
     describe('Memory System Integration', () => {
-        // Integration test with real Discord client creation - needs longer timeout
         it('should create memory system when DynamoDB is configured', async () => {
             const mockClient = {} as DynamoDBClient;
             const mockDocClient = {} as DynamoDBDocumentClient;
@@ -315,7 +347,7 @@ describe('Bot Lifecycle Integration', () => {
             expect(createDynamoDBClientSpy).toHaveBeenCalledWith(mockDynamoDBConfig);
             expect(createContextBuilderSpy).toHaveBeenCalled();
             expect(createMemoryMCPServerSpy).toHaveBeenCalled();
-        }, { timeout: process.env.CI ? 1000 : 100 });
+        });
 
         it('should fail to create app when DynamoDB client creation fails', async () => {
             spies.push(
