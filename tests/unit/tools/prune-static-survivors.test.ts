@@ -1,8 +1,23 @@
+/* eslint-disable n/no-sync -- real filesystem fixtures: node:fs/promises is globally mocked in tests/setup.ts (see makeRealTempDir) */
 import { describe, test, expect, mock, spyOn } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pruneStaticSurvivors, runCli } from '../../../tools/prune-static-survivors';
+
+/**
+ * Creates a real, process-unique temp dir for the tests below that do real file IO.
+ *
+ * Not `mkdtemp`/`rm` from node:fs/promises: tests/setup.ts mocks that module with an in-memory
+ * fake whose `mkdtemp` returns a deterministic `${prefix}mock<N>` path (creating nothing on disk)
+ * and whose `rm` is a no-op. Every concurrent test process — and every Stryker worker, all of
+ * which share one sandbox and one TMPDIR — then read and wrote the SAME real files, so one
+ * process's CLI run pruned (or rewrote) another's report mid-test (#181).
+ * @returns The absolute path of the new directory
+ */
+function makeRealTempDir(): string {
+    return mkdtempSync(path.join(tmpdir(), 'prune-static-survivors-'));
+}
 
 /** Flushes enough microtask ticks for promise chains to settle. */
 async function flush(): Promise<void> {
@@ -259,7 +274,7 @@ describe('runCli', () => {
     });
 
     test('default deps perform real atomic file IO end-to-end against a temp file', async () => {
-        const dir = await mkdtemp(path.join(tmpdir(), 'prune-static-survivors-'));
+        const dir = makeRealTempDir();
         const filePath = path.join(dir, 'incremental.json');
         const report = {
             files: {
@@ -283,12 +298,12 @@ describe('runCli', () => {
             expect(written).toEqual({ files: { 'a.ts': { mutants: [{ id: '2', 'static': true, status: 'Killed' }] } } });
             expect(writes).toEqual([`pruned 1 stale static mutant verdict(s) from ${filePath}\n`]);
         } finally {
-            await rm(dir, { recursive: true, force: true });
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 
     test('the default write writer goes to process.stdout.write', async () => {
-        const dir = await mkdtemp(path.join(tmpdir(), 'prune-static-survivors-'));
+        const dir = makeRealTempDir();
         const filePath = path.join(dir, 'incremental.json');
         const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation(() => true);
         try {
@@ -297,12 +312,12 @@ describe('runCli', () => {
             expect(stdoutSpy).toHaveBeenCalled();
         } finally {
             stdoutSpy.mockRestore();
-            await rm(dir, { recursive: true, force: true });
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 
     test('the actual CLI main entry prunes the requested report', async () => {
-        const dir = await mkdtemp(path.join(tmpdir(), 'prune-static-survivors-'));
+        const dir = makeRealTempDir();
         const filePath = path.join(dir, 'incremental.json');
         try {
             await Bun.write(filePath, JSON.stringify({
@@ -322,12 +337,12 @@ describe('runCli', () => {
             expect(stdout).toBe(`pruned 1 stale static mutant verdict(s) from ${filePath}\n`);
             expect(JSON.parse(await Bun.file(filePath).text())).toEqual({ files: { 'a.ts': { mutants: [] } } });
         } finally {
-            await rm(dir, { recursive: true, force: true });
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 
     test('importing the CLI entrypoint does not prune process.argv[2]', async () => {
-        const dir = await mkdtemp(path.join(tmpdir(), 'prune-static-survivors-'));
+        const dir = makeRealTempDir();
         const filePath = path.join(dir, 'incremental.json');
         const originalArgv = process.argv;
         const stdoutSpy = spyOn(process.stdout, 'write').mockImplementation(() => true);
@@ -345,7 +360,7 @@ describe('runCli', () => {
             // eslint-disable-next-line require-atomic-updates -- restore the process-global argv before this test returns.
             process.argv = originalArgv;
             stdoutSpy.mockRestore();
-            await rm(dir, { recursive: true, force: true });
+            rmSync(dir, { recursive: true, force: true });
         }
     });
 
