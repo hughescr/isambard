@@ -161,7 +161,8 @@ async function wireDynamoDBHealth(
     registerCleanup({ name: 'DynamoDB health notifier', run: () => setDynamoHealthNotifier(undefined) });
 
     // Perform initial DynamoDB health probe against the live client.
-    // On success: mark online. On failure: start reconnection loop.
+    // On success: mark online. On failure: CONNECT_FAIL moves the lifecycle to offline, and the
+    // subscriber above starts the reconnection loop (exactly once — #182).
     try {
         logger.info('Probing DynamoDB connectivity...');
         await probeDynamoDB(storage.holder.getClient(), dynamoDBConfig.tableName);
@@ -173,7 +174,6 @@ async function wireDynamoDBHealth(
             error: err instanceof Error ? err.message : String(err),
             msg:   'DynamoDB probe failed at startup, starting reconnection loop',
         });
-        dynamoDBReconnectionLoop.start();
     }
 
     // Periodic DynamoDB background probe — detects post-startup connection failures
