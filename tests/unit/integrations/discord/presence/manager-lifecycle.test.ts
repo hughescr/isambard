@@ -95,6 +95,8 @@ describe('PresenceManager Lifecycle', () => {
     });
 
     afterEach(() => {
+        // Restores the globalThis setInterval/clearInterval spies even when an assertion threw
+        jest.restoreAllMocks();
         jest.clearAllTimers();
         jest.useRealTimers();
     });
@@ -137,7 +139,6 @@ describe('PresenceManager Lifecycle', () => {
 
             expect(mockIdleGenerator.generate.mock.calls).toHaveLength(idleCalls);
             expect(mockClient.user.setActivity).toHaveBeenLastCalledWith(thinkingActivity);
-            intervalSpy.mockRestore();
         });
 
         it('the idle refresh interval stops firing once an active view arrives', async () => {
@@ -191,7 +192,6 @@ describe('PresenceManager Lifecycle', () => {
             expect(jest.getTimerCount()).toBe(expectedTimers);
             expect(mockIdleGenerator.generate.mock.calls).toHaveLength(expectedIdleCalls);
             expect(mockClient.user.setActivity.mock.calls).toHaveLength(setActivityCalls);
-            setIntervalSpy.mockRestore();
         });
 
         it('start() then stop() with no view never calls the idle generator nor Discord', async () => {
@@ -287,7 +287,6 @@ describe('PresenceManager Lifecycle', () => {
             await manager.applyView(activeView);
 
             expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
-            clearIntervalSpy.mockRestore();
         });
 
         it('active→active never calls clearInterval', async () => {
@@ -298,7 +297,6 @@ describe('PresenceManager Lifecycle', () => {
             await manager.applyView(respondingView);
 
             expect(clearIntervalSpy).not.toHaveBeenCalled();
-            clearIntervalSpy.mockRestore();
         });
 
         it('idle→active→active→stop() calls clearInterval exactly once', async () => {
@@ -311,7 +309,6 @@ describe('PresenceManager Lifecycle', () => {
             manager.stop();
 
             expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
-            clearIntervalSpy.mockRestore();
         });
     });
 
@@ -358,9 +355,6 @@ describe('PresenceManager Lifecycle', () => {
             expect(mockIdleGenerator.generate).toHaveBeenCalledTimes(1);
             expect(setIntervalSpy).toHaveBeenCalledTimes(1);
             expect(mockClient.user.setActivity).toHaveBeenLastCalledWith({ name: '💬 • 1 🪾 • Status for responding', type: ActivityType.Custom });
-
-            setIntervalSpy.mockRestore();
-            clearIntervalSpy.mockRestore();
         });
     });
 });

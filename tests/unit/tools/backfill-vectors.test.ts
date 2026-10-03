@@ -965,23 +965,30 @@ describe('vector backfill runner with injected services', () => {
             { items: [] },
         ]);
         const sleeping = Promise.withResolvers<void>();
+        // The pacing sleep's own state, observed directly. Not jest.getTimerCount(): that counts every
+        // fake timer in the process, so a real async turn (a non-empty page, an upsert) lets another
+        // test's leftover work add one (#184, as #180).
+        let sleepSettled = false;
         const deps = {
             ...runtime.deps,
             sleep: async (ms: number) => {
                 const timer = sleepForRateLimit(ms);
                 sleeping.resolve();
-                return timer;
+                await timer;
+                sleepSettled = true;
             },
         };
         const pending = main(['bun', 'script', '--layer=identity', '--rate-limit-rcu-per-sec=2'], deps);
         await sleeping.promise;
         expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(1);
         jest.advanceTimersByTime(18_749);
-        // The pacing timer is still pending one millisecond short of 37.5 RCU at 2 RCU/s.
-        expect(jest.getTimerCount()).toBe(1);
+        await Promise.resolve();
+        // The pacing sleep is still pending one millisecond short of 37.5 RCU at 2 RCU/s.
+        expect(sleepSettled).toBe(false);
         expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(1);
         jest.advanceTimersByTime(1);
-        expect(jest.getTimerCount()).toBe(0);
+        await Promise.resolve();
+        expect(sleepSettled).toBe(true);
         await pending;
         expect(runtime.listByIndexNamespace).toHaveBeenCalledTimes(2);
     });
