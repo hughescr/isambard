@@ -16,6 +16,7 @@ export async function loadIdentityContext(
     oauthToken: string | undefined,
     contextBuilder?: ContextBuilder
 ): Promise<string | undefined> {
+    // Stryker disable next-line llm: equivalent; for a string | undefined, !oauthToken and !oauthToken?.length are both true exactly for undefined and ''
     if(!oauthToken) {
         return undefined;
     }
