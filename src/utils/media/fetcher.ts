@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { createDeadline } from '../deadline';
+import { createDeadline, discardBody } from '../deadline';
 import { needsConversion, convert } from './converters';
 import {
     type MediaFetchMetadata,
@@ -38,8 +38,9 @@ export async function fetchImage(
     }
 
     const deadline = createDeadline(FETCH_TIMEOUT_MS);
+    let response: Response | undefined;
     try {
-        const response = await fetch(metadata.url, {
+        response = await fetch(metadata.url, {
             signal: deadline.signal,
         });
 
@@ -108,6 +109,8 @@ export async function fetchImage(
             },
         };
     } finally {
+        // An error status returns without reading the body: release it while the deadline still stands, never after
+        discardBody(response);
         deadline.clear();
     }
 }

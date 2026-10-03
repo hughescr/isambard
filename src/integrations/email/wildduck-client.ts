@@ -3,7 +3,7 @@ import { convert } from 'html-to-text';
 import { EmailFolder } from '@/config';
 import { WildDuckError, WildDuckAuthError } from '@/errors';
 import { formatMailboxMessageRef, parseMailboxMessageRef, type EmailMetadata, type EmailAddress, type EmailHeaders, type SearchEmailAddress, type VerificationResults } from '@/integrations/email/types';
-import { createDeadline } from '@/utils';
+import { createDeadline, discardBody } from '@/utils';
 
 export { WildDuckError, WildDuckAuthError } from '@/errors';
 
@@ -995,6 +995,7 @@ export class WildDuckClient {
             return null;
         }
         if(response.status === 401) {
+            discardBody(response);
             throw new WildDuckAuthError('WildDuck authentication failed (401)');
         }
         if(!response.ok) {
@@ -1082,8 +1083,9 @@ export class WildDuckClient {
 
         // The deadline covers reading the body too, so it stands down only once the response is fully consumed
         const deadline = createDeadline(REQUEST_TIMEOUT_MS);
+        let response: Response | undefined;
         try {
-            const response = await fetch(`${this.options.url}${path}`, {
+            response = await fetch(`${this.options.url}${path}`, {
                 ...options,
                 headers,
                 signal: options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal,
@@ -1102,6 +1104,8 @@ export class WildDuckClient {
 
             return await (response.json() as Promise<T>);
         } finally {
+            // A 401 throws without reading the body: release it while the deadline still stands, never after
+            discardBody(response);
             deadline.clear();
         }
     }

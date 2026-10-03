@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
+import { stalledResponse } from '../../../../helpers/stalled-response';
 import { mockHeicConvert, setHeicConvertImpl, resetHeicConvertImpl, mockFsPromises, resetMockFs } from '../../../../setup';
 import { fetchImage, fetchImages, saveNonImageAttachment } from '@/integrations/discord/attachments/fetcher';
 import { type AttachmentMetadata, MAX_IMAGE_SIZE_BYTES  } from '@/integrations/discord/attachments/types';
@@ -555,6 +556,17 @@ describe('Attachment Fetcher', () => {
 
                 await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
 
+                expect(jest.getTimerCount()).toBe(0);
+            });
+
+            test('cancels an unread stalled error body before the deadline stands down', async () => {
+                jest.useFakeTimers();
+                const stalled = stalledResponse(500);
+                mockFetch.mockResolvedValueOnce(stalled.response);
+
+                expect(await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123')).toBeNull();
+
+                expect(stalled.cancelled()).toBe(true);
                 expect(jest.getTimerCount()).toBe(0);
             });
 

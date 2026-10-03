@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
-import { clearDeadlineWhenBodySettles, createDeadline, deadlineFactory } from '@/utils/deadline';
+import { stalledResponse } from '../../helpers/stalled-response';
+import { clearDeadlineWhenBodySettles, createDeadline, deadlineFactory, discardBody } from '@/utils/deadline';
 
 describe('createDeadline', () => {
     beforeEach(() => {
@@ -99,16 +100,42 @@ describe('clearDeadlineWhenBodySettles', () => {
         expect(jest.getTimerCount()).toBe(0);
     });
 
-    it('lets the deadline abort a body that stalls past it', async () => {
+    /** An upstream body that stalls until the deadline's signal aborts, then fails with the signal's reason (what a real aborted fetch body does). */
+    function abortAwareStall(signal: AbortSignal): ReadableStream<Uint8Array> {
+        return new ReadableStream<Uint8Array>({
+            pull: async () => new Promise<void>((_resolve, reject) => {
+                // pull() runs on a microtask after the read starts, so the deadline may already have fired
+                if(signal.aborted) {
+                    reject(signal.reason as Error);
+                    return;
+                }
+                signal.addEventListener('abort', () => {
+                    reject(signal.reason as Error);
+                }, { once: true });
+            }),
+        });
+    }
+
+    const readers: readonly [string, (wrapped: Response) => Promise<unknown>][] = [
+        ['.json()', async wrapped => wrapped.json()],
+        ['.text()', async wrapped => wrapped.text()],
+        ['.arrayBuffer()', async wrapped => wrapped.arrayBuffer()],
+        ['a direct .body reader', async wrapped => wrapped.body?.getReader().read()],
+        ['clone().text()', async wrapped => wrapped.clone().text()],
+    ];
+
+    it.each(readers)('lets the deadline abort a body read through %s that stalls past it, rejecting with the timeout', async (_name, read) => {
         const deadline = createDeadline(1000);
-        const stalled = new ReadableStream<Uint8Array>({ pull: async () => Promise.withResolvers<void>().promise });
-        const wrapped = clearDeadlineWhenBodySettles(new Response(stalled), deadline);
-        const read = wrapped.text();
-        read.catch(() => undefined);
+        const wrapped = clearDeadlineWhenBodySettles(new Response(abortAwareStall(deadline.signal)), deadline);
+        const pending = read(wrapped);
 
-        jest.advanceTimersByTime(1000);
+        jest.advanceTimersByTime(999);
+        expect(deadline.signal.aborted).toBe(false);
+        jest.advanceTimersByTime(1);
 
-        expect(deadline.signal.aborted).toBe(true);
+        await expect(pending).rejects.toBe(deadline.signal.reason);
+        expect((deadline.signal.reason as DOMException).name).toBe('TimeoutError');
+        expect(jest.getTimerCount()).toBe(0);
     });
 
     it('clears the deadline when the body fails, and surfaces the failure', async () => {
@@ -162,5 +189,39 @@ describe('clearDeadlineWhenBodySettles', () => {
         expect(wrapped.statusText).toBe('Teapot');
         expect(wrapped.headers.get('X-Test')).toBe('yes');
         deadline.clear();
+    });
+});
+
+describe('discardBody', () => {
+    it('cancels a stalled, non-empty body', () => {
+        const stalled = stalledResponse(500);
+
+        discardBody(stalled.response);
+
+        expect(stalled.cancelled()).toBe(true);
+    });
+
+    it('does nothing for no response, a bodiless response, or a response-shaped object without a body', () => {
+        expect(discardBody(undefined)).toBeUndefined();
+        expect(discardBody(new Response(null, { status: 204 }))).toBeUndefined();
+        expect(discardBody({ ok: false } as Response)).toBeUndefined();
+    });
+
+    it('never surfaces a failure to cancel: a locked body (async rejection) or a body whose cancel() throws', async () => {
+        const locked = new Response('x');
+        locked.body?.getReader();
+        const throwing = {
+            body: {
+                cancel: () => {
+                    throw new Error('boom');
+                },
+            },
+        } as unknown as Response;
+
+        expect(discardBody(locked)).toBeUndefined();
+        expect(discardBody(throwing)).toBeUndefined();
+        // the swallowed rejections must not escape as unhandled rejections
+        await Promise.resolve();
+        await Promise.resolve();
     });
 });

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { createDeadline } from '../../deadline';
+import { createDeadline, discardBody } from '../../deadline';
 import type { SpawnRunner } from './types';
 import { MediaProcessingError } from '@/errors';
 
@@ -45,8 +45,9 @@ export async function downloadVideo(
 
     // Direct HTTP download via fetch; the deadline covers the body stream too, so it stands down only once the write is over
     const deadline = createDeadline(DOWNLOAD_TIMEOUT_MS);
+    let response: Response | undefined;
     try {
-        const response = await fetch(url, {
+        response = await fetch(url, {
             signal: deadline.signal,
         });
 
@@ -63,6 +64,8 @@ export async function downloadVideo(
 
         return outputPath;
     } finally {
+        // An error status (or a failed write) leaves the body unread: release it while the deadline still stands, never after
+        discardBody(response);
         deadline.clear();
     }
 }

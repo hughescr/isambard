@@ -3,6 +3,7 @@ import { describe, it, expect, mock, beforeEach, afterEach, jest } from 'bun:tes
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { stalledResponse } from '../../../../helpers/stalled-response';
 import { MediaProcessingError } from '@/errors';
 import { isHlsUrl, downloadVideo } from '@/utils/media/video/downloader';
 import type { SpawnRunner } from '@/utils/media/video/types';
@@ -91,6 +92,30 @@ describe('downloadVideo', () => {
             await expect(downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/clean-http`, makeSuccessRunner())).rejects.toThrow('HTTP download failed');
 
             expect(jest.getTimerCount()).toBe(0);
+        });
+
+        it('cancels an unread stalled error body before the deadline stands down', async () => {
+            jest.useFakeTimers();
+            const stalled = stalledResponse(503);
+            globalThis.fetch = mock(async (): Promise<Response> => stalled.response) as unknown as typeof fetch;
+
+            await expect(downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/stalled-http`, makeSuccessRunner())).rejects.toThrow('HTTP download failed');
+
+            expect(stalled.cancelled()).toBe(true);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        it('cancels the body when the disk write fails part-way, instead of leaving it stalled', async () => {
+            jest.useFakeTimers();
+            const stalled = stalledResponse(200);
+            globalThis.fetch = mock(async (): Promise<Response> => stalled.response) as unknown as typeof fetch;
+            jest.spyOn(Bun, 'write').mockImplementationOnce(async () => {
+                throw new Error('ENOSPC');
+            });
+
+            await expect(downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/stalled-write`, makeSuccessRunner())).rejects.toThrow('ENOSPC');
+
+            expect(stalled.cancelled()).toBe(true);
         });
 
         it('leaves no deadline timer armed after a disk-write failure', async () => {

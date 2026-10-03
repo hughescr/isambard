@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
+import { stalledResponse } from '../../../helpers/stalled-response';
 import { mockLogger } from '../../../setup';
 import { FIND_BY_MESSAGE_ID_MAX_PAGES, WildDuckClient, WildDuckError, WildDuckAuthError } from '@/integrations/email/wildduck-client';
 
@@ -902,6 +903,19 @@ describe('WildDuckClient', () => {
 
             await expect(client.search({})).rejects.toThrow();
 
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('cancels an unread stalled 401 body before the deadline stands down', async () => {
+            const client = await makeInitializedClient();
+            const stalled = stalledResponse(401);
+            mockFetch.mockResolvedValueOnce(stalled.response);
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.search({});
+
+            expect(stalled.cancelled()).toBe(true);
             expect(jest.getTimerCount()).toBe(0);
         });
 
@@ -3855,6 +3869,20 @@ describe('WildDuckClient', () => {
 
             expect(err).toBeInstanceOf(WildDuckAuthError);
             expect((err as WildDuckAuthError).message).toBe('WildDuck authentication failed (401)');
+        });
+
+        test('cancels an unread stalled 401 body on both attempts', async () => {
+            const client = await makeInitializedClient();
+            const first = stalledResponse(401);
+            const second = stalledResponse(401);
+            mockFetch.mockResolvedValueOnce(first.response);
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(second.response);
+
+            await expect(client.openAttachmentStream('Drafts', 42, 'ATT00001')).rejects.toBeInstanceOf(WildDuckAuthError);
+
+            expect(first.cancelled()).toBe(true);
+            expect(second.cancelled()).toBe(true);
         });
 
         test('returns null for a 404 with no body', async () => {

@@ -42,6 +42,29 @@ export function deadlineFactory(inject: ((ms: number) => AbortSignal) | undefine
 }
 
 /**
+ * Cancels a response body nobody is going to read, so its transport is released. Call this on
+ * every path that returns or throws without consuming the body (an error status, say) before the
+ * deadline stands down: once the deadline is cleared nothing else would ever abort a body that
+ * then stalls. Best effort: it never throws and never waits, so it cannot mask the error the
+ * caller is already reporting.
+ * @param response The response whose body is abandoned; undefined (no response yet) is a no-op
+ */
+export function discardBody(response: Response | undefined): void {
+    const body = response?.body;
+    if(body !== undefined && body !== null) {
+        void cancelQuietly(body);
+    }
+}
+
+async function cancelQuietly(body: ReadableStream<Uint8Array>): Promise<void> {
+    try {
+        await body.cancel();
+    } catch{
+        // best effort: the caller is already on an error or early-return path
+    }
+}
+
+/**
  * Returns `response` with its deadline tied to its body: the deadline stands down when the body
  * ends, fails or is cancelled, so the deadline keeps covering a slow body read by the caller yet
  * never outlives the response. A response with no body has nothing left to guard, so its deadline

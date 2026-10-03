@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
+import { stalledResponse } from '../../../helpers/stalled-response';
 import { mockHeicConvert, mockLogger, setHeicConvertImpl, resetHeicConvertImpl } from '../../../setup';
 import { fetchImage, fetchImages, FETCH_TIMEOUT_MS } from '@/utils/media/fetcher';
 import { type MediaFetchMetadata, MAX_IMAGE_SIZE_BYTES } from '@/utils/media/types';
@@ -310,6 +311,18 @@ describe('Media Fetcher', () => {
                 error:       'HTTP 404 Not Found',
                 msg:         'Failed to fetch image: image.jpg',
             });
+        });
+
+        test('cancels an unread stalled error body before the deadline stands down', async () => {
+            jest.useFakeTimers();
+            const stalled = stalledResponse(500);
+            mockFetch.mockResolvedValueOnce(stalled.response);
+
+            const result = await fetchImage({ url: 'https://example.com/image.jpg', filename: 'image.jpg', contentType: 'image/jpeg', size: 1024 });
+
+            expect(result?.success).toBe(false);
+            expect(stalled.cancelled()).toBe(true);
+            expect(jest.getTimerCount()).toBe(0);
         });
 
         test('returns failure info when HEIC conversion fails', async () => {
