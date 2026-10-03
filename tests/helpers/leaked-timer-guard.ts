@@ -102,7 +102,19 @@ export interface TimerGuardExtras {
  * test file's module scope) that calls the runner's `startOrphanWatchdog()` has its own file in the
  * stack, so it is tracked; nothing created after the first test starts is ever exempt.
  */
-export const STRYKER_PRELOAD_FRAME = '@hughescr/stryker-bun-runner/dist/coverage/preload';
+export const STRYKER_PRELOAD_FRAME = '/@hughescr/stryker-bun-runner/dist/coverage/preload-logic.js';
+
+/** What may follow the preload file name in a frame: an optional `:line:col` and the closing paren of `at fn (...)`. */
+const FRAME_LOCATION_TAIL = /^(?::\d+){0,2}\)?$/;
+
+/** True when `frame` is exactly a frame in the runner's `preload-logic.js` (path-segment boundary before it, nothing but a location after it). */
+function isStrykerPreloadFrame(frame: string | undefined): boolean {
+    if(frame === undefined) {
+        return false;
+    }
+    const at = frame.indexOf(STRYKER_PRELOAD_FRAME);
+    return at !== -1 && FRAME_LOCATION_TAIL.test(frame.slice(at + STRYKER_PRELOAD_FRAME.length));
+}
 
 const DEFAULT_OWN_CODE_FRAMES: readonly string[] = ['/tests/', '/src/'];
 
@@ -251,7 +263,7 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
     }
 
     function isTestHarnessBootTimer(stack: readonly string[]): boolean {
-        if(!booting || stack[0]?.includes(STRYKER_PRELOAD_FRAME) !== true) {
+        if(!booting || !isStrykerPreloadFrame(stack[0])) {
             return false;
         }
         return !stack.some(frame => ownCodeFrames.some(own => frame.includes(own)));

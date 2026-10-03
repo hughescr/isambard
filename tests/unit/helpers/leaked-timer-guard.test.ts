@@ -733,7 +733,7 @@ describe('createTimerGuard', () => {
 });
 
 describe('createTimerGuard tooling preload timers', () => {
-    const PRELOAD = `at startOrphanWatchdog (/x/node_modules/${STRYKER_PRELOAD_FRAME}-logic.js:61:33)`;
+    const PRELOAD = `at startOrphanWatchdog (/x/node_modules${STRYKER_PRELOAD_FRAME}:61:33)`;
     const TEMPLATE = 'at <anonymous> (/tmp/stryker-bun-runner/stryker-coverage-preload-1.ts:30:5)';
 
     /** Creates one interval with the given creation stack, then reports what the guard still tracks after teardown. */
@@ -772,6 +772,32 @@ describe('createTimerGuard tooling preload timers', () => {
 
     it('does not exempt a timer whose first frame is not the runner preload, even with the preload deeper in the stack', () => {
         expect(leakedDelays(['at leaky (/other/y.js:2:2)', PRELOAD])).toEqual([1000]);
+    });
+
+    it('exempts only the exact preload-logic.js file: neighbouring files in the runner directory are tracked', () => {
+        const dir = '/x/node_modules/@hughescr/stryker-bun-runner/dist/coverage';
+
+        expect(leakedDelays([`at f (${dir}/preload-unrelated.js:1:1)`])).toEqual([1000]);
+        expect(leakedDelays([`at f (${dir}/preload-logic.js.backup)`])).toEqual([1000]);
+        expect(leakedDelays([`at f (${dir}/preload-logic.js.backup:1:1)`])).toEqual([1000]);
+        expect(leakedDelays([`at f (${dir}/preload-logic.jsx:1:1)`])).toEqual([1000]);
+        expect(leakedDelays([`at f (${dir}/preload.js:1:1)`])).toEqual([1000]);
+    });
+
+    it('requires a path-segment boundary before the runner package path', () => {
+        expect(leakedDelays(['at f (/x/node_modules/evil@hughescr/stryker-bun-runner/dist/coverage/preload-logic.js:1:1)'])).toEqual([1000]);
+    });
+
+    it('accepts the preload frame with or without a line, column or closing paren', () => {
+        const file = `/x/node_modules${STRYKER_PRELOAD_FRAME}`;
+
+        expect(leakedDelays([`at f (${file}:61:33)`])).toEqual([]);
+        expect(leakedDelays([`at ${file}:61:33`])).toEqual([]);
+        expect(leakedDelays([`at f (${file}:61)`])).toEqual([]);
+        expect(leakedDelays([`at f (${file})`])).toEqual([]);
+        expect(leakedDelays([`at ${file}`])).toEqual([]);
+        expect(leakedDelays([`at f (${file}:61:33:7)`])).toEqual([1000]);
+        expect(leakedDelays([`at f (${file}:x)`])).toEqual([1000]);
     });
 
     it('honours custom project-code path fragments', () => {
