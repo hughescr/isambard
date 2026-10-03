@@ -74,7 +74,17 @@ export interface TimerGuardExtras {
     abortSignal?:   AbortSignalHost
     /** Lists the owners that are running right now */
     liveOwners?:    () => readonly LiveOwner[]
+    /** Test seam: replaces the creation-stack capture */
+    captureStack?:  () => string[]
 }
+
+/**
+ * The Stryker bun runner's own preload creates an unref'd orphan-watchdog interval before any test
+ * file loads. That is test-harness plumbing, not a timer a test created, so a timer whose creating
+ * (first) frame is in that preload is not tracked. This is not a test allowlist: only the exact
+ * creating frame inside the runner's preload file qualifies, never a library called from test code.
+ */
+export const STRYKER_PRELOAD_FRAME = '@hughescr/stryker-bun-runner/dist/coverage/preload';
 
 export type LeakedTimerKind = 'setTimeout' | 'setInterval' | 'setImmediate' | 'Bun.sleep' | 'AbortSignal.timeout' | 'timers/promises.setTimeout' | 'timers/promises.setImmediate' | 'running-owner';
 
@@ -197,8 +207,12 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
     const rawClearImmediate = host.clearImmediate;
 
     function track(entry: Omit<TrackedTimer, 'seq' | 'stack'>): void {
+        const stack = (extras.captureStack ?? captureStack)();
+        if(stack[0]?.includes(STRYKER_PRELOAD_FRAME) === true) {
+            return;
+        }
         seq += 1;
-        tracked.push({ ...entry, seq, stack: captureStack() });
+        tracked.push({ ...entry, seq, stack });
     }
 
     /** Runs `fire` on a real timer or immediate that the guard tracks; returns how to cancel it. */

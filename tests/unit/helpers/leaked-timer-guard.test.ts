@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { createTimerGuard, formatLeakedTimers, type AbortSignalHost, type LiveOwner, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from '../../helpers/leaked-timer-guard';
+import { createTimerGuard, formatLeakedTimers, STRYKER_PRELOAD_FRAME, type AbortSignalHost, type LiveOwner, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from '../../helpers/leaked-timer-guard';
 
 interface FakeHandle { _destroyed: boolean, callback: unknown }
 
@@ -535,6 +535,24 @@ describe('createTimerGuard', () => {
         expect(abortSignal.timeout).toBe(originalTimeout);
         expect(promiseTimers.setTimeout).toBe(originalPromiseTimeout);
         expect(promiseTimers.setImmediate).toBe(originalPromiseImmediate);
+    });
+});
+
+describe('createTimerGuard tooling preload timers', () => {
+    it('does not count a timer whose creating frame is the Stryker runner preload, but still counts one from test code', () => {
+        const { host } = makeHost();
+        let frames: string[] = [`at setInterval (${STRYKER_PRELOAD_FRAME}:61:33)`, 'at preload (bunfig)'];
+        const guard = createTimerGuard(host, () => false, undefined, { captureStack: () => frames });
+        guard.install();
+        guard.markTestStart();
+
+        host.setInterval(() => undefined, 1000);
+        frames = ['at leaky (tests/y.test.ts:2:2)', `at x (${STRYKER_PRELOAD_FRAME}:1:1)`];
+        host.setInterval(() => undefined, 5);
+        const leaks = guard.collectLeaks('file');
+
+        expect(leaks.map(leak => leak.delayMs)).toEqual([5]);
+        guard.uninstall();
     });
 });
 
