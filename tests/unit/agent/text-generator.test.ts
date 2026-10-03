@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach, jest, spyOn } from 'bun:test';
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '@anthropic-ai/claude-agent-sdk';
 import { generateText, generateTextWithSystemPrompt } from '../../../src/agent/text-generator';
+import * as deadlineModule from '../../../src/utils/deadline';
 // Import the shared mocks from setup.ts (already registered via mock.module in preload)
 import {
     mockQuery,
@@ -469,6 +470,22 @@ describe('generateText', () => {
             jest.advanceTimersByTime(1);
             expect(options.abortController.signal.aborted).toBe(true);
             expect(await pending).toBe('');
+        });
+
+        test('removes its abort forwarding from the deadline signal itself once generation completes', async () => {
+            const deadlineController = new AbortController();
+            const deadlineSpy = spyOn(deadlineModule, 'createDeadline').mockReturnValue({ signal: deadlineController.signal, clear: () => undefined });
+            try {
+                await generateText('Test prompt', { timeoutMs: 100 });
+                const callArgs = mockQuery.mock.calls[0][0] as { options: { abortController: AbortController } };
+
+                // The deadline signal outlives the call here (clear() is a no-op), so only the removed listener keeps it from aborting the finished call's controller
+                deadlineController.abort();
+
+                expect(callArgs.options.abortController.signal.aborted).toBe(false);
+            } finally {
+                deadlineSpy.mockRestore();
+            }
         });
 
         test('detaches timeout abort forwarding and stands the deadline down after generation completes', async () => {

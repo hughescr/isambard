@@ -355,6 +355,38 @@ describe('fetchUnderHostPolicy (mutant kills)', () => {
             expect(jest.getTimerCount()).toBe(0);
         });
 
+        test('keeps the deadline armed while the final body is still being read, then stands it down', async () => {
+            jest.useFakeTimers();
+            const gate = Promise.withResolvers<void>();
+            const slowBody = ((_url: URL, _options: CapturedRequest['options'], onResponse: (response: http.IncomingMessage) => void) => ({
+                on:  () => undefined,
+                end: () => {
+                    onResponse({
+                        statusCode: 200,
+                        headers:    { 'content-type': 'application/pdf' },
+                        destroy:    () => undefined,
+                        async* [Symbol.asyncIterator](): AsyncGenerator<Buffer> {
+                            await gate.promise;
+                            yield Buffer.from(PDF);
+                        },
+                    } as unknown as http.IncomingMessage);
+                },
+                destroy: () => undefined,
+            })) as unknown as typeof http.request;
+
+            const pending = fetchUnderHostPolicy('https://a.test/x', baseOptions({ resolve, request: { http: slowBody, https: slowBody } }));
+            for(let tick = 0; tick < 5; tick++) {
+                // eslint-disable-next-line no-await-in-loop -- deliberate sequential microtask draining so the fetch reaches the body read
+                await Promise.resolve();
+            }
+            expect(jest.getTimerCount()).toBe(1);
+
+            gate.resolve();
+            await pending;
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
         test('leaves no deadline timer armed after a body that cannot be read', async () => {
             jest.useFakeTimers();
             const { request } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: [PDF], bodyError: new Error('reset') }));

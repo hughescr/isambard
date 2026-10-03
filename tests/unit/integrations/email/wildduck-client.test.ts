@@ -913,6 +913,24 @@ describe('WildDuckClient', () => {
 
             expect(jest.getTimerCount()).toBe(0);
         });
+
+        test('keeps the deadline armed while the response body is still being parsed, then stands it down', async () => {
+            const client = await makeInitializedClient();
+            const body = Promise.withResolvers<unknown>();
+            mockFetch.mockResolvedValueOnce({ ...makeJsonResponse({}), json: async () => body.promise });
+
+            const completion = client.search({});
+            for(let tick = 0; tick < 5; tick++) {
+                // eslint-disable-next-line no-await-in-loop -- deliberate sequential microtask draining so the request reaches the body read
+                await Promise.resolve();
+            }
+            expect(jest.getTimerCount()).toBe(1);
+
+            body.resolve({ success: true, results: [] });
+            await completion;
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
     });
 
     // -----------------------------------------------------------------------

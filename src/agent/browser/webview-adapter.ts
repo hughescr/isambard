@@ -89,10 +89,13 @@ const timerDelay: DelayFn = (ms, signal) => new Promise<void>((resolve) => {
     // `{ once: true }` drops the abort listener after it fires; the timer path never leaves a
     // listener behind that matters because the caller's controller is discarded with the race.
     const timer = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
+    const onAbort = (): void => {
         clearTimeout(timer);
+        // Stryker disable next-line CallExpression: the only caller (navigate) aborts after its race has settled and never awaits this delay again, so whether the aborted delay resolves is unobservable; the timer clear above is the behaviour under test (#183).
         resolve();
-    }, { once: true });
+    };
+    // Stryker disable next-line ObjectLiteral,BooleanLiteral: `once` only drops a listener on a signal that is discarded with the race and aborted at most once, so it is unobservable.
+    signal?.addEventListener('abort', onAbort, { once: true });
 });
 
 // ============================================================================
