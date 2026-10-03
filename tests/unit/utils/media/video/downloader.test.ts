@@ -1,12 +1,25 @@
-import { describe, it, expect, mock, afterEach, jest } from 'bun:test';
-import { rm, mkdir } from 'node:fs/promises';
+/* eslint-disable n/no-sync -- real filesystem fixtures: node:fs/promises is globally mocked in tests/setup.ts (see makeRealTempDir) */
+import { describe, it, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { MediaProcessingError } from '@/errors';
 import { isHlsUrl, downloadVideo } from '@/utils/media/video/downloader';
 import type { SpawnRunner } from '@/utils/media/video/types';
 
 const originalFetch = globalThis.fetch;
 
-const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-downloader-test-${Date.now()}`;
+/**
+ * Creates a real, process-unique temp dir. Not `mkdtemp`/`rm` from node:fs/promises: tests/setup.ts mocks
+ * that module with an in-memory fake (deterministic `mock<N>` paths, no-op `rm`), so a Date.now() dir
+ * was shared by concurrent processes and never really removed (#184).
+ * @returns The absolute path of the new directory
+ */
+function makeRealTempDir(): string {
+    return mkdtempSync(path.join(tmpdir(), 'isambard-downloader-test-'));
+}
+
+let TEST_DIR = '';
 
 /**
  * Lets one real event-loop turn elapse. `AbortSignal.timeout()` schedules a real, native
@@ -50,14 +63,14 @@ describe('isHlsUrl', () => {
 });
 
 describe('downloadVideo', () => {
-    afterEach(async () => {
+    beforeEach(() => {
+        TEST_DIR = makeRealTempDir();
+    });
+
+    afterEach(() => {
         jest.restoreAllMocks();
         globalThis.fetch = originalFetch;
-        try {
-            await rm(TEST_DIR, { recursive: true });
-        } catch{
-            // ignore cleanup errors
-        }
+        rmSync(TEST_DIR, { recursive: true, force: true });
     });
 
     it('uses ffmpeg for HLS URLs', async () => {
@@ -93,11 +106,6 @@ describe('downloadVideo', () => {
     });
 
     it('fetches directly for non-HLS URLs and writes to disk', async () => {
-        // node:fs/promises is globally mocked (see tests/setup.ts mockFsPromises); this satisfies
-        // that in-memory mock. The real on-disk write below goes through Bun.write, which creates
-        // any missing parent directories itself, so no real mkdir is required.
-        await mkdir(`${TEST_DIR}/direct`, { recursive: true });
-
         const fakeBuffer = Buffer.from('fake video data');
         const fetchMock = mock(async (_url: string, _options?: RequestInit): Promise<Response> => new Response(fakeBuffer, { status: 200 }));
         globalThis.fetch = fetchMock as unknown as typeof fetch;

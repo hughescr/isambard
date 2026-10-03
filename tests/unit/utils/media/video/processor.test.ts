@@ -1,8 +1,22 @@
-import { describe, it, expect, mock, afterEach } from 'bun:test';
-import { rm } from 'node:fs/promises';
+/* eslint-disable n/no-sync -- real filesystem fixtures: node:fs/promises is globally mocked in tests/setup.ts (see makeRealTempDir) */
+import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { mockFsPromises, resetMockFs } from '../../../../setup';
 import { processVideo, processLocalVideo } from '@/utils/media/video/processor';
 import type { SpawnRunner, BinarySpawnRunner } from '@/utils/media/video/types';
+
+/**
+ * Creates a real, process-unique temp dir. Not `mkdtemp`/`rm` from node:fs/promises: tests/setup.ts mocks
+ * that module with an in-memory fake (deterministic `mock<N>` paths, no-op `rm`), so a Date.now() dir
+ * was shared by concurrent processes and never really removed (#184).
+ * @param prefix - Directory name prefix
+ * @returns The absolute path of the new directory
+ */
+function makeRealTempDir(prefix: string): string {
+    return mkdtempSync(path.join(tmpdir(), prefix));
+}
 
 const FAKE_PNG = Buffer.from([0x89, 0x50, 0x4E, 0x47]);
 
@@ -97,15 +111,15 @@ function makeBinaryRunner(): BinarySpawnRunner {
 }
 
 describe('processLocalVideo', () => {
-    const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-local-processor-test-${Date.now()}`;
+    let TEST_DIR = '';
 
-    afterEach(async () => {
+    beforeEach(() => {
+        TEST_DIR = makeRealTempDir('isambard-local-processor-test-');
+    });
+
+    afterEach(() => {
         resetMockFs();
-        try {
-            await rm(TEST_DIR, { recursive: true });
-        } catch{
-            // ignore cleanup errors
-        }
+        rmSync(TEST_DIR, { recursive: true, force: true });
     });
 
     it('rejects when the output directory cannot be created', async () => {
@@ -215,16 +229,15 @@ describe('processLocalVideo', () => {
 });
 
 describe('processVideo', () => {
-    const TEST_DIR = `${process.env.TMPDIR ?? '/tmp'}/isambard-processor-test-${Date.now()}`;
+    let TEST_DIR = '';
 
-    afterEach(async () => {
+    beforeEach(() => {
+        TEST_DIR = makeRealTempDir('isambard-processor-test-');
+    });
+
+    afterEach(() => {
         resetMockFs();
-        // Clean up the test output directory
-        try {
-            await rm(TEST_DIR, { recursive: true });
-        } catch{
-            // ignore cleanup errors
-        }
+        rmSync(TEST_DIR, { recursive: true, force: true });
     });
 
     it('runs the full pipeline for a direct URL', async () => {

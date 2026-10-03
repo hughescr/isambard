@@ -415,10 +415,14 @@ describe('AsyncIndexer', () => {
             indexer.enqueue({ kind: 'delete', path, sourceUpdatedAt: 1 });
             await retryWarning;
             jest.advanceTimersByTime(0);
-            expect(jest.getTimerCount()).toBe(1);
+            // The delete is asleep on its backoff: tracked, and not re-run just short of the delay.
+            // Not jest.getTimerCount(): that counts every fake timer in the process, so any real async
+            // turn lets another test's leftover work add one (#184, as #180).
+            expect(indexer.trackedPathCount).toBe(1);
+            jest.advanceTimersByTime(AsyncIndexer.RETRY_BASE_DELAY_MS - 1);
+            expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(1);
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'new', ttl: undefined, sourceUpdatedAt: 2 });
-            // Superseding the sleeping retry cancels its backoff timer outright.
-            expect(jest.getTimerCount()).toBe(0);
+            // Superseding the sleeping retry cancels its backoff: the delete never re-runs, even past the delay.
             jest.advanceTimersByTime(500);
             await indexer.drain();
             expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(1);

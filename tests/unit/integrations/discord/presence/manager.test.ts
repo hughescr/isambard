@@ -98,6 +98,8 @@ describe('PresenceManager', () => {
     });
 
     afterEach(() => {
+        // Restores the globalThis setInterval/clearInterval spies even when an assertion threw
+        jest.restoreAllMocks();
         jest.clearAllTimers();
         jest.useRealTimers();
     });
@@ -425,8 +427,6 @@ describe('PresenceManager', () => {
             expect(clearIntervalSpy).not.toHaveBeenCalled();
             expect(mockIdleGenerator.generate).toHaveBeenCalledTimes(2);
             expect(mockClient.user.setActivity).toHaveBeenCalledTimes(2);
-            setIntervalSpy.mockRestore();
-            clearIntervalSpy.mockRestore();
         });
 
         it('active→active: consecutive active views never touch the idle generator or timers', async () => {
@@ -454,7 +454,6 @@ describe('PresenceManager', () => {
             expect(jest.getTimerCount()).toBe(1);
             const startedLogs = (mockLogger.debug as MockWithCalls).mock.calls.filter(call => call.at(-1) === 'Started idle status refresh');
             expect(startedLogs).toHaveLength(1);
-            setIntervalSpy.mockRestore();
         });
 
         it('idle→active calls clearInterval exactly once and leaves no timer', async () => {
@@ -466,7 +465,6 @@ describe('PresenceManager', () => {
 
             expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
             expect(jest.getTimerCount()).toBe(0);
-            clearIntervalSpy.mockRestore();
         });
 
         it('should handle stop when interval is null (no error)', () => {
@@ -479,8 +477,6 @@ describe('PresenceManager', () => {
             // Verify clearInterval was NOT called (no interval existed to clear)
             expect(clearIntervalSpy).not.toHaveBeenCalled();
             expect(mockIdleGenerator.generate).not.toHaveBeenCalled();
-
-            clearIntervalSpy.mockRestore();
         });
 
         it('should run idle refresh on interval', async () => {

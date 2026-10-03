@@ -535,7 +535,9 @@ describe('weekly vector cross-check', () => {
         jest.advanceTimersByTime(1);
         expect(index.getCrossCheckState()).toStrictEqual({ nextDueAt: 11_000 + VECTOR_CROSS_CHECK_INTERVAL_MS, lastRunAt: 11_000, lastCompletedRowid: 0 });
         await flush();
-        expect(jest.getTimerCount()).toBe(1);
+        // The week-out timer is proven by the scheduler's own state below (nothing runs a millisecond
+        // short, the next run lands exactly on the interval). Not jest.getTimerCount(): that counts every
+        // fake timer in the process, so a real async turn lets another test's leftover work add one (#184, as #180).
         jest.advanceTimersByTime(VECTOR_CROSS_CHECK_INTERVAL_MS - 1);
         expect(index.getCrossCheckState()?.lastRunAt).toBe(11_000);
         jest.advanceTimersByTime(1);
