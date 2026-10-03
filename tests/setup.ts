@@ -3,7 +3,8 @@
 import { existsSync } from 'node:fs';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Database } from 'bun:sqlite';
-import { afterEach, jest, mock, type Mock } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, jest, mock, type Mock } from 'bun:test';
+import { createTimerGuard, formatLeakedTimers, type SleepHost, type TimerGuardHost } from './helpers/leaked-timer-guard';
 
 // Configure Bun to use the Homebrew-installed libsqlite3.dylib on macOS.
 // Database.setCustomSQLite MUST be called before the first new Database() in the process.
@@ -750,8 +751,39 @@ Intl.DateTimeFormat = new Proxy(Intl.DateTimeFormat, {
 // Phase 4 runtime safety net: reset fake timers after every test to prevent
 // timer-mode leakage between tests (fake timers from test A bleeding into test B).
 // Tests that need fake timers re-enable them in their own beforeEach.
+//
+// Leaked-timer guard (see tests/helpers/leaked-timer-guard.ts). Every REAL timer a test creates
+// (setTimeout / setInterval / setImmediate / Bun.sleep — which also covers ReconnectionLoop retry
+// timers and health-coalescer flush timers) must be gone by the time the test ends. There is
+// deliberately no allowlist: clear the timer, stop the owner, or use fake timers.
+// The boundary casts below hand the guard the real global object and `Bun`; the guard only ever
+// reads and replaces the six timer creators/cancellers and `sleep`.
+const timerGuard = createTimerGuard(globalThis as unknown as TimerGuardHost, () => jest.isFakeTimers(), Bun as unknown as SleepHost);
+timerGuard.install();
+
+beforeAll(() => {
+    timerGuard.markFileStart();
+});
+
+beforeEach(() => {
+    timerGuard.markTestStart();
+});
+
+// Preload (global) hooks run after a test file's own afterEach / afterAll hooks (verified on Bun
+// 1.4.2), so the guard sees the state AFTER each file's own cleanup. Throwing here fails the test.
 afterEach(() => {
     jest.useRealTimers();
+    const leaks = timerGuard.collectLeaks('test');
+    if(leaks.length > 0) {
+        throw new Error(formatLeakedTimers(leaks, 'test'));
+    }
+});
+
+afterAll(() => {
+    const leaks = timerGuard.collectLeaks('file');
+    if(leaks.length > 0) {
+        throw new Error(formatLeakedTimers(leaks, 'file'));
+    }
 });
 
 // ---------------------------------------------------------------------------
