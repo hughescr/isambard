@@ -32,7 +32,7 @@ import {
     ZoteroServerError,
     ZoteroVersionConflictError
 } from '@/errors';
-import { retryAsync, type ErrorClassification } from '@/utils';
+import { clearDeadlineWhenBodySettles, deadlineFactory, retryAsync, type Deadline, type ErrorClassification } from '@/utils';
 
 export interface ZoteroRequestDeps {
     apiKey:            string
@@ -48,7 +48,7 @@ export interface ZoteroRequestDeps {
     fileTimeoutMs?:    number
     /** Default 60 s: a longer Backoff/Retry-After fails fast instead of waiting. */
     maxWaitMs?:        number
-    /** Test seam for the abort signal; default `AbortSignal.timeout`. */
+    /** Test seam for the abort signal; default is a cancellable `createDeadline`, stood down when the response body settles. */
     timeoutSignal?:    (ms: number) => AbortSignal
 }
 
@@ -133,7 +133,7 @@ export class ZoteroRequester {
     readonly #requestTimeoutMs: number;
     readonly #fileTimeoutMs:    number;
     readonly #maxWaitMs:        number;
-    readonly #timeoutSignal:    (ms: number) => AbortSignal;
+    readonly #deadline:         (ms: number) => Deadline;
     /** Epoch ms before which no request may be sent (shared Backoff/Retry-After deadline). */
     #notBefore = 0;
 
@@ -151,7 +151,7 @@ export class ZoteroRequester {
         this.#requestTimeoutMs = deps.requestTimeoutMs ?? 30_000;
         this.#fileTimeoutMs = deps.fileTimeoutMs ?? 120_000;
         this.#maxWaitMs = deps.maxWaitMs ?? 60_000;
-        this.#timeoutSignal = deps.timeoutSignal ?? (ms => AbortSignal.timeout(ms));
+        this.#deadline = deadlineFactory(deps.timeoutSignal);
     }
 
     /** The one group library this requester can reach. */
@@ -294,31 +294,38 @@ export class ZoteroRequester {
     async #attempt(url: string, init: RequestInit, meta: SendMeta): Promise<Response> {
         await this.#gate(meta.label);
         const timeoutMs = meta.file ? this.#fileTimeoutMs : this.#requestTimeoutMs;
-        let response: Response;
+        const deadline = this.#deadline(timeoutMs);
         try {
-            response = await this.#fetch(url, { ...init, signal: this.#timeoutSignal(timeoutMs) });
-        } catch (error) {
-            throw this.#transportError(error, meta, timeoutMs);
-        }
+            let response: Response;
+            try {
+                response = await this.#fetch(url, { ...init, signal: deadline.signal });
+            } catch (error) {
+                throw this.#transportError(error, meta, timeoutMs);
+            }
 
-        const backoffSeconds = intHeader(response.headers, 'Backoff');
-        if(backoffSeconds !== undefined) {
-            this.#extend(backoffSeconds * 1000);
+            const backoffSeconds = intHeader(response.headers, 'Backoff');
+            if(backoffSeconds !== undefined) {
+                this.#extend(backoffSeconds * 1000);
+            }
+            if(response.status === 429 || response.status === 503) {
+                const retryAfterSeconds = intHeader(response.headers, 'Retry-After');
+                const waitMs = retryAfterSeconds === undefined ? DEFAULT_RATE_LIMIT_WAIT_MS : retryAfterSeconds * 1000;
+                this.#extend(waitMs);
+                await response.body?.cancel();
+                throw new ZoteroRateLimitError(
+                    `Zotero rate-limited ${meta.label} (HTTP ${response.status}); retry after ~${Math.ceil(waitMs / 1000)}s`,
+                    { retryAfterMs: waitMs, overBudget: waitMs > this.#maxWaitMs }
+                );
+            }
+            if(response.status >= 500 || (meta.mapClientErrors && response.status >= 400)) {
+                throw await this.#statusError(response, meta);
+            }
+            // The caller reads the body after this returns, and the deadline keeps guarding that read until the body settles
+            return clearDeadlineWhenBodySettles(response, deadline);
+        } catch (error) {
+            deadline.clear();
+            throw error;
         }
-        if(response.status === 429 || response.status === 503) {
-            const retryAfterSeconds = intHeader(response.headers, 'Retry-After');
-            const waitMs = retryAfterSeconds === undefined ? DEFAULT_RATE_LIMIT_WAIT_MS : retryAfterSeconds * 1000;
-            this.#extend(waitMs);
-            await response.body?.cancel();
-            throw new ZoteroRateLimitError(
-                `Zotero rate-limited ${meta.label} (HTTP ${response.status}); retry after ~${Math.ceil(waitMs / 1000)}s`,
-                { retryAfterMs: waitMs, overBudget: waitMs > this.#maxWaitMs }
-            );
-        }
-        if(response.status >= 500 || (meta.mapClientErrors && response.status >= 400)) {
-            throw await this.#statusError(response, meta);
-        }
-        return response;
     }
 
     #transportError(error: unknown, meta: SendMeta, timeoutMs: number): ZoteroServerError {

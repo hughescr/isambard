@@ -33,6 +33,7 @@ import { intHeader } from './request';
 import { zoteroTimestamp } from './timestamp';
 import type { FetchLike } from './types';
 import { ZoteroMetadataError } from '@/errors';
+import { deadlineFactory, type Deadline } from '@/utils';
 
 const QUERY_URL = 'https://export.arxiv.org/api/query';
 const ABS_URL = 'https://arxiv.org/abs/';
@@ -238,11 +239,11 @@ type ApiOutcome = { found: Map<string, MappedItem> } | { reason: string };
  * when the API is throttled, down or fails in transit. At most one request every 3 s across both.
  */
 export class ArxivResolver {
-    readonly #fetch:         FetchLike;
-    readonly #sleep:         (ms: number) => Promise<void>;
-    readonly #now:           () => number;
-    readonly #timeoutMs:     number;
-    readonly #timeoutSignal: (ms: number) => AbortSignal;
+    readonly #fetch:     FetchLike;
+    readonly #sleep:     (ms: number) => Promise<void>;
+    readonly #now:       () => number;
+    readonly #timeoutMs: number;
+    readonly #deadline:  (ms: number) => Deadline;
     #nextAllowedAt = 0;
     /** Epoch ms before which the export API is skipped (an integer `Retry-After`); never lowered. */
     #apiBackoffUntil = Number.NEGATIVE_INFINITY;
@@ -256,7 +257,7 @@ export class ArxivResolver {
         this.#sleep = deps.sleep ?? (async ms => Bun.sleep(ms));
         this.#now = deps.now ?? (() => Date.now());
         this.#timeoutMs = deps.timeoutMs ?? 30_000;
-        this.#timeoutSignal = deps.timeoutSignal ?? (ms => AbortSignal.timeout(ms));
+        this.#deadline = deadlineFactory(deps.timeoutSignal);
     }
 
     /**
@@ -319,14 +320,18 @@ export class ArxivResolver {
         let response: Response | undefined;
         // Stryker disable next-line StringLiteral: equivalent; `body` is read only after `response.ok`, and that path always assigns it from `response.text()` first.
         let body = '';
+        // The deadline covers reading the body too, so it stands down only once the body is in
+        const deadline = this.#deadline(this.#timeoutMs);
         try {
-            response = await this.#fetch(url.href, { headers: { 'User-Agent': USER_AGENT }, signal: this.#timeoutSignal(this.#timeoutMs) });
+            response = await this.#fetch(url.href, { headers: { 'User-Agent': USER_AGENT }, signal: deadline.signal });
             if(response.ok) {
                 body = await response.text();
             }
         } catch (error) {
             await cancelBody(response);
             return { reason: describeError(error) };
+        } finally {
+            deadline.clear();
         }
         if(!response.ok) {
             this.#noteRetryAfter(response, 'api');
@@ -385,14 +390,18 @@ export class ArxivResolver {
         }
         let response: Response | undefined;
         let page: string | undefined;
+        // The deadline covers reading the body too, so it stands down only once the page is in
+        const deadline = this.#deadline(this.#timeoutMs);
         try {
-            response = await this.#fetch(`${ABS_URL}${id}`, { headers: { 'User-Agent': USER_AGENT, Accept: 'text/html' }, signal: this.#timeoutSignal(this.#timeoutMs) });
+            response = await this.#fetch(`${ABS_URL}${id}`, { headers: { 'User-Agent': USER_AGENT, Accept: 'text/html' }, signal: deadline.signal });
             if(response.status === 200) {
                 page = await response.text();
             }
         } catch (error) {
             await cancelBody(response);
             throw absFailure(apiReason, id, describeError(error));
+        } finally {
+            deadline.clear();
         }
         if(response.status !== 200) {
             this.#noteRetryAfter(response, 'abs');

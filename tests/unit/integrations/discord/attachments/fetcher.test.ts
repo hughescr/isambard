@@ -511,10 +511,17 @@ describe('Attachment Fetcher', () => {
                 contentType: 'application/pdf',
                 size:        4096,
             };
-            const fileData = Buffer.from('pdf-content');
-            mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: async () => fileData.buffer } as Response);
+            // A stalled request that only ever settles if the signal handed to fetch aborts
+            mockFetch.mockImplementationOnce(async (_url: string, options?: RequestInit): Promise<Response> => new Promise<Response>((_resolve, reject) => {
+                options?.signal?.addEventListener('abort', () => {
+                    reject(new Error('The operation was aborted'));
+                });
+            }));
 
-            await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
+            const pending = saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
+            // let the mkdir resolve so fetch has been called and its signal is observable
+            await Promise.resolve();
+            await Promise.resolve();
 
             const fetchOptions = mockFetch.mock.calls[0]?.[1];
             expect(fetchOptions?.signal?.aborted).toBe(false);
@@ -522,6 +529,52 @@ describe('Attachment Fetcher', () => {
             expect(fetchOptions?.signal?.aborted).toBe(false);
             jest.advanceTimersByTime(1);
             expect(fetchOptions?.signal?.aborted).toBe(true);
+            expect(await pending).toBeNull();
+        });
+
+        describe('deadline cleanup', () => {
+            const metadata: AttachmentMetadata = {
+                url:         'https://example.com/document.pdf',
+                filename:    'document.pdf',
+                contentType: 'application/pdf',
+                size:        4096,
+            };
+
+            test('leaves no deadline timer armed after a successful save', async () => {
+                jest.useFakeTimers();
+                mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: async () => Buffer.from('x').buffer } as Response);
+
+                await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
+
+                expect(jest.getTimerCount()).toBe(0);
+            });
+
+            test('leaves no deadline timer armed after a non-ok response', async () => {
+                jest.useFakeTimers();
+                mockFetch.mockResolvedValueOnce({ ok: false } as Response);
+
+                await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
+
+                expect(jest.getTimerCount()).toBe(0);
+            });
+
+            test('leaves no deadline timer armed after the fetch rejects', async () => {
+                jest.useFakeTimers();
+                mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+                await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
+
+                expect(jest.getTimerCount()).toBe(0);
+            });
+
+            test('leaves no deadline timer armed when the directory cannot be created', async () => {
+                jest.useFakeTimers();
+                mockFsPromises.mkdir.mockRejectedValueOnce(new Error('Directory creation failed'));
+
+                await saveNonImageAttachment(metadata, '/tmp/scratch', 'msg123');
+
+                expect(jest.getTimerCount()).toBe(0);
+            });
         });
 
         test('creates nested directory structure', async () => {

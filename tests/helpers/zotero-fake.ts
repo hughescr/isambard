@@ -104,6 +104,30 @@ export function status(code: number, body = '', headers: Record<string, string> 
     return new Response(code === 204 || code === 304 ? null : body, { status: code, headers });
 }
 
+/**
+ * A fetch that never answers: its first call hangs until the signal it was given aborts, then
+ * rejects with the abort reason. Any later call fails at once, so a fallback request after the
+ * timeout does not hang the test. `inFlight` resolves with the first call's signal.
+ */
+export function hangingFetch(): { fetch: FetchLike, inFlight: Promise<AbortSignal> } {
+    const inFlight = Promise.withResolvers<AbortSignal>();
+    let calls = 0;
+    const fetch: FetchLike = async (_input, init) => {
+        calls += 1;
+        if(calls > 1) {
+            throw new Error('a later request is not under test');
+        }
+        const signal = init.signal!;
+        inFlight.resolve(signal);
+        return new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener('abort', () => {
+                reject(signal.reason as Error);
+            });
+        });
+    };
+    return { fetch, inFlight: inFlight.promise };
+}
+
 /** A promise with its resolve function exposed. */
 export function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void } {
     const { promise, resolve } = Promise.withResolvers<T>();

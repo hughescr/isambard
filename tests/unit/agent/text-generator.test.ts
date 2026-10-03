@@ -89,6 +89,7 @@ describe('generateText', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         resetMockFs();
         mockGenerateText.mockReset();
         mockGenerateText.mockImplementation(originalGenerateText);
@@ -440,43 +441,51 @@ describe('generateText', () => {
                 yield { type: 'assistant', message: { content: [{ type: 'text', text: 'ready' }] } };
                 yield { type: 'result', subtype: 'success' };
             }
-            mockQuery.mockImplementation(() => delayedGenerator());
-            // An already-fired deadline: were a nonpositive timeout ever to arm one, the query would abort.
-            const timeoutSpy = spyOn(AbortSignal, 'timeout').mockReturnValue(AbortSignal.abort());
-            try {
-                expect(await generateText('Test prompt', { timeoutMs: 0 })).toBe('ready');
-                expect(await generateText('Test prompt', { timeoutMs: -1 })).toBe('ready');
-                expect(timeoutSpy).not.toHaveBeenCalled();
-            } finally {
-                timeoutSpy.mockRestore();
-            }
+            jest.useFakeTimers();
+            // Counts the deadline timers armed while the query is running: a nonpositive timeout must arm none.
+            const armedDuringQuery: number[] = [];
+            mockQuery.mockImplementation(() => {
+                armedDuringQuery.push(jest.getTimerCount());
+                return delayedGenerator();
+            });
+            expect(await generateText('Test prompt', { timeoutMs: 0 })).toBe('ready');
+            expect(await generateText('Test prompt', { timeoutMs: -1 })).toBe('ready');
+            expect(armedDuringQuery).toEqual([0, 0]);
         });
 
         test('uses a 15-second deadline when no timeout is provided', async () => {
-            const timeoutController = new AbortController();
-            const timeoutSpy = spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
-            try {
-                await generateText('Test prompt');
-                expect(timeoutSpy).toHaveBeenCalledWith(15_000);
-            } finally {
-                timeoutSpy.mockRestore();
-            }
+            jest.useFakeTimers();
+            const started = Promise.withResolvers<void>();
+            mockQuery.mockImplementation((params: unknown) => {
+                started.resolve();
+                return makeAbortAwareMockQuery()(params);
+            });
+            const pending = generateText('Test prompt');
+            await started.promise;
+            const { options } = mockQuery.mock.calls[0][0] as { options: { abortController: AbortController } };
+
+            jest.advanceTimersByTime(14_999);
+            expect(options.abortController.signal.aborted).toBe(false);
+            jest.advanceTimersByTime(1);
+            expect(options.abortController.signal.aborted).toBe(true);
+            expect(await pending).toBe('');
         });
 
-        test('detaches timeout abort forwarding after generation completes', async () => {
-            const timeoutController = new AbortController();
-            const timeoutSpy = spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutController.signal);
-            const removeListener = spyOn(timeoutController.signal, 'removeEventListener');
-            try {
-                await generateText('Test prompt', { timeoutMs: 100 });
-                const callArgs = mockQuery.mock.calls[0][0] as { options: { abortController: AbortController } };
-                expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
-                timeoutController.abort();
-                expect(callArgs.options.abortController.signal.aborted).toBe(false);
-            } finally {
-                removeListener.mockRestore();
-                timeoutSpy.mockRestore();
-            }
+        test('detaches timeout abort forwarding and stands the deadline down after generation completes', async () => {
+            jest.useFakeTimers();
+            let armedDuringQuery = 0;
+            mockQuery.mockImplementation(() => {
+                armedDuringQuery = jest.getTimerCount();
+                return makeQueryGenerator('  Hello, world!  ');
+            });
+
+            await generateText('Test prompt', { timeoutMs: 100 });
+            const callArgs = mockQuery.mock.calls[0][0] as { options: { abortController: AbortController } };
+
+            expect(armedDuringQuery).toBe(1);
+            expect(jest.getTimerCount()).toBe(0);
+            jest.advanceTimersByTime(1000);
+            expect(callArgs.options.abortController.signal.aborted).toBe(false);
         });
 
         test('should rethrow non-abort errors from the generator', async () => {
@@ -811,6 +820,7 @@ describe('empty-result diagnostics', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         jest.restoreAllMocks();
         resetMockFs();
         mockLogger.warn.mockClear();
@@ -883,11 +893,17 @@ describe('empty-result diagnostics', () => {
     });
 
     test('warns with reason "timeout" when the internal deadline fires with no caller controller', async () => {
-        // The deadline is AbortSignal.timeout, which fake timers cannot drive; 1ms is the
-        // smallest real deadline that still distinguishes the timeout path from a caller abort.
-        mockQuery.mockImplementation(makeAbortAwareMockQuery());
+        jest.useFakeTimers();
+        const started = Promise.withResolvers<void>();
+        mockQuery.mockImplementation((params: unknown) => {
+            started.resolve();
+            return makeAbortAwareMockQuery()(params);
+        });
+        const pending = generateText('Test prompt', { timeoutMs: 1 });
+        await started.promise;
 
-        const result = await generateText('Test prompt', { timeoutMs: 1 });
+        jest.advanceTimersByTime(1);
+        const result = await pending;
 
         expect(result).toBe('');
         expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ reason: 'timeout' }));

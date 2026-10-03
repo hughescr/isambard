@@ -1,4 +1,5 @@
 export { assertNever } from './assert-never';
+export { clearDeadlineWhenBodySettles, createDeadline, deadlineFactory, type Deadline } from './deadline';
 export type { QuotaFetch, QuotaFetchResponse } from './http-fetch';
 export { asRecord, stringValue, booleanValue, finiteNumber, dateValue, scopeLabel } from './quota-wire';
 

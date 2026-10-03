@@ -3,6 +3,7 @@ import { convert } from 'html-to-text';
 import { EmailFolder } from '@/config';
 import { WildDuckError, WildDuckAuthError } from '@/errors';
 import { formatMailboxMessageRef, parseMailboxMessageRef, type EmailMetadata, type EmailAddress, type EmailHeaders, type SearchEmailAddress, type VerificationResults } from '@/integrations/email/types';
+import { createDeadline } from '@/utils';
 
 export { WildDuckError, WildDuckAuthError } from '@/errors';
 
@@ -1079,24 +1080,29 @@ export class WildDuckClient {
             headers['X-Access-Token'] = this.token;
         }
 
-        const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-        const response = await fetch(`${this.options.url}${path}`, {
-            ...options,
-            headers,
-            signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
-        });
+        // The deadline covers reading the body too, so it stands down only once the response is fully consumed
+        const deadline = createDeadline(REQUEST_TIMEOUT_MS);
+        try {
+            const response = await fetch(`${this.options.url}${path}`, {
+                ...options,
+                headers,
+                signal: options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal,
+            });
 
-        if(response.status === 401) {
-            throw new WildDuckAuthError('WildDuck authentication failed (401)');
+            if(response.status === 401) {
+                throw new WildDuckAuthError('WildDuck authentication failed (401)');
+            }
+
+            if(!response.ok) {
+                const body = await response.text();
+                // Stryker disable next-line llm: response.text returns a string whose only falsy value is the same empty string.
+                const bodySuffix = body ? `: ${body}` : '';
+                throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`, undefined, { status: response.status });
+            }
+
+            return await (response.json() as Promise<T>);
+        } finally {
+            deadline.clear();
         }
-
-        if(!response.ok) {
-            const body = await response.text();
-            // Stryker disable next-line llm: response.text returns a string whose only falsy value is the same empty string.
-            const bodySuffix = body ? `: ${body}` : '';
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`, undefined, { status: response.status });
-        }
-
-        return response.json() as Promise<T>;
     }
 }

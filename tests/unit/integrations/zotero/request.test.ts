@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { z } from 'zod';
 import {
     API,
@@ -6,6 +6,7 @@ import {
     TEST_API_KEY,
     deferred,
     fakeClock,
+    hangingFetch,
     json,
     recordingFetch,
     status,
@@ -695,5 +696,93 @@ describe('ZoteroRequester raw and external requests', () => {
         expect(await caught(requester.external('GET', 'http://storage.test/f', { idempotent: true }))).toBeInstanceOf(InvariantViolationError);
         expect(await caught(requester.external('GET', 'not a url', { idempotent: true }))).toBeInstanceOf(InvariantViolationError);
         expect(calls).toHaveLength(0);
+    });
+});
+
+describe('ZoteroRequester default deadline', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    /** A requester using the default (real, cancellable) deadline over `handler`, on the fake clock. */
+    function withDefaultDeadline(handler: FakeHandler, extra: { requestTimeoutMs?: number, fileTimeoutMs?: number } = {}): ZoteroRequester {
+        const clock = fakeClock();
+        const { fetch } = recordingFetch(handler, clock);
+        return new ZoteroRequester({ apiKey: TEST_API_KEY, groupId: 6_692_257, fetch, sleep: clock.sleep, now: clock.now, ...extra });
+    }
+
+    /** A requester whose fetch hangs until its signal aborts; resolves with that signal once the request is in flight. */
+    async function startHungRequest(extra: { requestTimeoutMs?: number, fileTimeoutMs?: number }, run: (requester: ZoteroRequester) => Promise<unknown>): Promise<{ signal: AbortSignal, settled: Promise<unknown> }> {
+        const clock = fakeClock();
+        const { fetch, inFlight } = hangingFetch();
+        const requester = new ZoteroRequester({ apiKey: TEST_API_KEY, groupId: 6_692_257, fetch, sleep: clock.sleep, now: clock.now, ...extra });
+        const settled = run(requester).catch((error: unknown) => error);
+        return { signal: await inFlight, settled };
+    }
+
+    test('aborts a request at exactly requestTimeoutMs, not a millisecond earlier', async () => {
+        jest.useFakeTimers();
+        const { signal, settled } = await startHungRequest({ requestTimeoutMs: 700 }, async requester => requester.request('GET', ITEMS, { idempotent: false }));
+
+        jest.advanceTimersByTime(699);
+        expect(signal.aborted).toBe(false);
+        jest.advanceTimersByTime(1);
+
+        expect(signal.aborted).toBe(true);
+        expect(await settled).toBeInstanceOf(ZoteroServerError);
+    });
+
+    test('defaults to 30 seconds for an API call and 120 seconds for a file', async () => {
+        jest.useFakeTimers();
+        const api = await startHungRequest({}, async requester => requester.request('GET', ITEMS, { idempotent: false }));
+        jest.advanceTimersByTime(29_999);
+        expect(api.signal.aborted).toBe(false);
+        jest.advanceTimersByTime(1);
+        expect(api.signal.aborted).toBe(true);
+        await api.settled;
+
+        const file = await startHungRequest({}, async requester => requester.requestRaw('GET', ITEMS, { idempotent: false, file: true }));
+        jest.advanceTimersByTime(119_999);
+        expect(file.signal.aborted).toBe(false);
+        jest.advanceTimersByTime(1);
+        expect(file.signal.aborted).toBe(true);
+        await file.settled;
+    });
+
+    test('leaves no deadline timer armed after a parsed request', async () => {
+        jest.useFakeTimers();
+
+        await withDefaultDeadline(() => json([])).request('GET', ITEMS, { idempotent: true });
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('keeps guarding a raw response body until the caller has read it', async () => {
+        jest.useFakeTimers();
+        const response = await withDefaultDeadline(() => new Response('file bytes')).requestRaw('GET', ITEMS, { idempotent: true, file: true });
+        expect(jest.getTimerCount()).toBe(1);
+
+        expect(await response.text()).toBe('file bytes');
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('leaves no deadline timer armed after a rate-limit, a server error, a client error or a transport failure', async () => {
+        jest.useFakeTimers();
+        const failures: FakeHandler[] = [
+            () => status(429, 'slow down', { 'Retry-After': '1' }),
+            () => status(500, 'boom'),
+            () => status(404, 'missing'),
+            () => {
+                throw new Error('network down');
+            },
+        ];
+
+        for(const handler of failures) {
+            // eslint-disable-next-line no-await-in-loop -- sequential: each failure must be fully settled before the timer count is read
+            await caught(withDefaultDeadline(handler).requestRaw('GET', ITEMS, { idempotent: false }));
+        }
+
+        expect(jest.getTimerCount()).toBe(0);
     });
 });

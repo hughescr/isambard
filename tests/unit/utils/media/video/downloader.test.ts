@@ -69,8 +69,41 @@ describe('downloadVideo', () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+        jest.useRealTimers();
         globalThis.fetch = originalFetch;
         rmSync(TEST_DIR, { recursive: true, force: true });
+    });
+
+    describe('deadline cleanup', () => {
+        it('leaves no deadline timer armed after a successful direct download', async () => {
+            jest.useFakeTimers();
+            globalThis.fetch = mock(async (): Promise<Response> => new Response(Buffer.from('fake video data'), { status: 200 })) as unknown as typeof fetch;
+
+            await downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/clean-ok`, makeSuccessRunner());
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        it('leaves no deadline timer armed after an HTTP error', async () => {
+            jest.useFakeTimers();
+            globalThis.fetch = mock(async (): Promise<Response> => new Response(null, { status: 500, statusText: 'Boom' })) as unknown as typeof fetch;
+
+            await expect(downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/clean-http`, makeSuccessRunner())).rejects.toThrow('HTTP download failed');
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        it('leaves no deadline timer armed after a disk-write failure', async () => {
+            jest.useFakeTimers();
+            globalThis.fetch = mock(async (): Promise<Response> => new Response(Buffer.from('x'), { status: 200 })) as unknown as typeof fetch;
+            jest.spyOn(Bun, 'write').mockImplementationOnce(async () => {
+                throw new Error('ENOSPC');
+            });
+
+            await expect(downloadVideo('https://example.com/video.mp4', `${TEST_DIR}/clean-write`, makeSuccessRunner())).rejects.toThrow('ENOSPC');
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
     });
 
     it('uses ffmpeg for HLS URLs', async () => {

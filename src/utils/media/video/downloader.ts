@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createDeadline } from '../../deadline';
 import type { SpawnRunner } from './types';
 import { MediaProcessingError } from '@/errors';
 
@@ -42,21 +43,26 @@ export async function downloadVideo(
         return outputPath;
     }
 
-    // Direct HTTP download via fetch
-    const response = await fetch(url, {
-        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-    });
+    // Direct HTTP download via fetch; the deadline covers the body stream too, so it stands down only once the write is over
+    const deadline = createDeadline(DOWNLOAD_TIMEOUT_MS);
+    try {
+        const response = await fetch(url, {
+            signal: deadline.signal,
+        });
 
-    if(!response.ok) {
-        throw new MediaProcessingError(
-            `HTTP download failed: ${response.status} ${response.statusText}`,
-            'http-download',
-            `${response.status} ${response.statusText}`
-        );
+        if(!response.ok) {
+            throw new MediaProcessingError(
+                `HTTP download failed: ${response.status} ${response.statusText}`,
+                'http-download',
+                `${response.status} ${response.statusText}`
+            );
+        }
+
+        // Stream response body directly to disk without buffering in memory
+        await Bun.write(outputPath, response);
+
+        return outputPath;
+    } finally {
+        deadline.clear();
     }
-
-    // Stream response body directly to disk without buffering in memory
-    await Bun.write(outputPath, response);
-
-    return outputPath;
 }

@@ -886,6 +886,33 @@ describe('WildDuckClient', () => {
             expect(state.aborted).toBe(true);
             await expect(completion).rejects.toThrow();
         });
+
+        test('leaves no deadline timer armed after a successful request', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.search({});
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('leaves no deadline timer armed after an HTTP error response', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: false }, 500));
+
+            await expect(client.search({})).rejects.toThrow();
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('leaves no deadline timer armed after the fetch rejects', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockRejectedValueOnce(new Error('network down'));
+
+            await expect(client.search({})).rejects.toThrow('network down');
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
     });
 
     // -----------------------------------------------------------------------

@@ -1,8 +1,8 @@
 /* eslint-disable sonarjs/no-clear-text-protocols -- the captured Crossref response really carries an http:// PDF link, and the test asserts it is passed through for the host policy to judge */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, jest, test } from 'bun:test';
 import invalidFixture from '../../../fixtures/zotero/crossref-works-select-invalid.json';
 import okFixture from '../../../fixtures/zotero/crossref-works-select-ok.json';
-import { json, recordingFetch, status, type FakeHandler } from '../../../helpers/zotero-fake';
+import { hangingFetch, json, recordingFetch, status, type FakeHandler } from '../../../helpers/zotero-fake';
 import { ZoteroMetadataError } from '@/errors';
 import { CROSSREF_SELECT, CrossrefResolver } from '@/integrations/zotero/crossref';
 
@@ -107,6 +107,69 @@ describe('CrossrefResolver request', () => {
         for(const field of CROSSREF_SELECT.split(',')) {
             expect(valid).toContain(field);
         }
+    });
+});
+
+describe('CrossrefResolver default deadline', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('aborts the request signal at exactly the configured timeout, not a millisecond earlier', async () => {
+        jest.useFakeTimers();
+        const { fetch, inFlight } = hangingFetch();
+        const settled = new CrossrefResolver({ fetch, timeoutMs: 2000 }).lookupDois(['10.1234/x']).catch((error: unknown) => error);
+        const signal = await inFlight;
+
+        jest.advanceTimersByTime(1999);
+        expect(signal.aborted).toBe(false);
+        jest.advanceTimersByTime(1);
+
+        expect(signal.aborted).toBe(true);
+        expect(await settled).toBeInstanceOf(ZoteroMetadataError);
+    });
+
+    test('defaults to a 30-second deadline', async () => {
+        jest.useFakeTimers();
+        const { fetch, inFlight } = hangingFetch();
+        const settled = new CrossrefResolver({ fetch }).lookupDois(['10.1234/x']).catch((error: unknown) => error);
+        const signal = await inFlight;
+
+        jest.advanceTimersByTime(29_999);
+        expect(signal.aborted).toBe(false);
+        jest.advanceTimersByTime(1);
+
+        expect(signal.aborted).toBe(true);
+        await settled;
+    });
+
+    test('leaves no deadline timer armed after a successful lookup', async () => {
+        jest.useFakeTimers();
+        const { fetch } = recordingFetch(() => worksResponse([work({})]));
+
+        await new CrossrefResolver({ fetch }).lookupDois(['10.1234/x']);
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('leaves no deadline timer armed after the fetch fails', async () => {
+        jest.useFakeTimers();
+        const { fetch } = recordingFetch(() => {
+            throw new Error('network down');
+        });
+
+        await expect(new CrossrefResolver({ fetch }).lookupDois(['10.1234/x'])).rejects.toThrow('Crossref lookup failed: network down');
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('leaves no deadline timer armed after an error response', async () => {
+        jest.useFakeTimers();
+        const { fetch } = recordingFetch(() => status(500));
+
+        await expect(new CrossrefResolver({ fetch }).lookupDois(['10.1234/x'])).rejects.toBeInstanceOf(ZoteroMetadataError);
+
+        expect(jest.getTimerCount()).toBe(0);
     });
 });
 

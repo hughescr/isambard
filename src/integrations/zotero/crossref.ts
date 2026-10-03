@@ -11,6 +11,7 @@ import type { MappedCreator, MappedItem } from './item-fields';
 import { zoteroTimestamp } from './timestamp';
 import type { FetchLike } from './types';
 import { ZoteroMetadataError } from '@/errors';
+import { deadlineFactory, type Deadline } from '@/utils';
 
 /**
  * Only fields in the valid-select list Crossref itself returned (2026-09-27). `select` stays because
@@ -225,11 +226,11 @@ function mapWork(work: CrossrefWork, accessDate: string): MappedItem {
 
 /** Resolves DOIs through Crossref in one request per call. */
 export class CrossrefResolver {
-    readonly #fetch:         FetchLike;
-    readonly #userAgent:     string;
-    readonly #now:           () => number;
-    readonly #timeoutMs:     number;
-    readonly #timeoutSignal: (ms: number) => AbortSignal;
+    readonly #fetch:     FetchLike;
+    readonly #userAgent: string;
+    readonly #now:       () => number;
+    readonly #timeoutMs: number;
+    readonly #deadline:  (ms: number) => Deadline;
 
     constructor(deps: CrossrefDeps) {
         // Stryker disable next-line all: production default; tests always inject a fake fetch (no network in tests)
@@ -238,7 +239,7 @@ export class CrossrefResolver {
         this.#userAgent = `${USER_AGENT}${contact})`;
         this.#now = deps.now ?? (() => Date.now());
         this.#timeoutMs = deps.timeoutMs ?? 30_000;
-        this.#timeoutSignal = deps.timeoutSignal ?? (ms => AbortSignal.timeout(ms));
+        this.#deadline = deadlineFactory(deps.timeoutSignal);
     }
 
     /**
@@ -256,16 +257,24 @@ export class CrossrefResolver {
         url.searchParams.set('select', CROSSREF_SELECT);
 
         let response: Response;
+        let text: string;
+        // The deadline covers reading the body too, so it stands down only once the body is in
+        const deadline = this.#deadline(this.#timeoutMs);
         try {
-            response = await this.#fetch(url.href, {
-                headers: { Accept: 'application/json', 'User-Agent': this.#userAgent },
-                signal:  this.#timeoutSignal(this.#timeoutMs),
-            });
-        } catch (error) {
-            throw new ZoteroMetadataError(`Crossref lookup failed: ${error instanceof Error ? error.message : String(error)}`, { source: 'crossref' });
+            try {
+                response = await this.#fetch(url.href, {
+                    headers: { Accept: 'application/json', 'User-Agent': this.#userAgent },
+                    signal:  deadline.signal,
+                });
+            } catch (error) {
+                throw new ZoteroMetadataError(`Crossref lookup failed: ${error instanceof Error ? error.message : String(error)}`, { source: 'crossref' });
+            }
+            text = await response.text();
+        } finally {
+            deadline.clear();
         }
 
-        const body = parseJson(await response.text());
+        const body = parseJson(text);
         const reason = rejectionReason(body);
         if(reason !== undefined) {
             throw new ZoteroMetadataError(`Crossref rejected the request: ${reason}`, { source: 'crossref', status: response.status, reason: 'request rejected' });

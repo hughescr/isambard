@@ -18,6 +18,7 @@ import https from 'node:https';
 import { isIP, isIPv6 } from 'node:net';
 import { checkResolvedAddress, validateUrl, type BrowserHostPolicy } from '../browser';
 import { ZoteroError, ZoteroFileError, ZoteroUrlFetchError } from '@/errors';
+import { createDeadline } from '@/utils';
 
 /** Zotero's fixed HTML read cap; PDF fetches instead use `maxStoredFileBytes`. */
 export const ZOTERO_MAX_PAGE_BYTES = 1_048_576;
@@ -163,7 +164,7 @@ async function pinHost(url: URL, options: UrlFetchOptions): Promise<PinnedAnswer
     return [pin(first), ...rest.map(answer => pin(answer))];
 }
 
-async function send(url: URL, pinned: PinnedAnswers, options: UrlFetchOptions): Promise<http.IncomingMessage> {
+async function send(url: URL, pinned: PinnedAnswers, options: UrlFetchOptions, signal: AbortSignal): Promise<http.IncomingMessage> {
     const transports = options.request ?? realRequest;
     const transport = url.protocol === 'https:' ? transports.https : transports.http;
     // Every lookup the transport makes gets only the validated answers; nothing resolves the host
@@ -179,7 +180,7 @@ async function send(url: URL, pinned: PinnedAnswers, options: UrlFetchOptions): 
         method:  'GET',
         agent:   false,
         lookup,
-        signal:  AbortSignal.timeout(options.timeoutMs ?? 30_000),
+        signal,
         headers: { Accept: ACCEPT[options.accept], 'Accept-Encoding': 'identity', 'User-Agent': USER_AGENT },
         ...url.protocol === 'https:' && isIP(host) === 0 ? { servername: host } : {},
     };
@@ -284,29 +285,36 @@ export async function fetchUnderHostPolicy(url: string, options: UrlFetchOptions
         }
         // eslint-disable-next-line no-await-in-loop -- sequential: each hop depends on the previous redirect
         const pinned = await pinHost(validated.url, options);
-        let response: http.IncomingMessage;
+        // Each hop has its own deadline, covering the connect, the headers and (for the final hop) the body
+        const deadline = createDeadline(options.timeoutMs ?? 30_000);
         try {
-            // eslint-disable-next-line no-await-in-loop -- sequential: each hop depends on the previous redirect
-            response = await send(validated.url, pinned, options);
-        } catch (error) {
-            throw transportFailure(current, error);
-        }
-
-        const status = response.statusCode ?? 0;
-        if(REDIRECTS.has(status)) {
-            const location = response.headers.location;
-            response.destroy();
-            if(location === undefined) {
-                throw failed(current, 'redirect without a Location', status);
+            let response: http.IncomingMessage;
+            try {
+                // eslint-disable-next-line no-await-in-loop -- sequential: each hop depends on the previous redirect
+                response = await send(validated.url, pinned, options, deadline.signal);
+            } catch (error) {
+                throw transportFailure(current, error);
             }
-            current = new URL(location, current).href;
-            continue;
+
+            const status = response.statusCode ?? 0;
+            if(REDIRECTS.has(status)) {
+                const location = response.headers.location;
+                response.destroy();
+                if(location === undefined) {
+                    throw failed(current, 'redirect without a Location', status);
+                }
+                current = new URL(location, current).href;
+                continue;
+            }
+            if(status < 200 || status > 299) {
+                response.destroy();
+                throw failed(current, `HTTP ${status}`, status);
+            }
+            // eslint-disable-next-line no-await-in-loop -- the final hop: nothing follows this return, and the deadline must outlive the body read
+            return await readBody(response, current, options);
+        } finally {
+            deadline.clear();
         }
-        if(status < 200 || status > 299) {
-            response.destroy();
-            throw failed(current, `HTTP ${status}`, status);
-        }
-        return readBody(response, current, options);
     }
     throw failed(url, 'too many redirects');
 }

@@ -129,6 +129,7 @@ async function fetchError(url: string, options: UrlFetchOptions): Promise<unknow
 
 afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
 });
 
 describe('fetchUnderHostPolicy (mutant kills)', () => {
@@ -283,13 +284,84 @@ describe('fetchUnderHostPolicy (mutant kills)', () => {
     });
 
     describe('default timeout', () => {
-        test('arms exactly a 30-second AbortSignal.timeout when timeoutMs is not given', async () => {
+        /** Starts a fetch whose request is never answered; resolves with the signal handed to the transport. */
+        async function signalOfHeldRequest(overrides: Partial<UrlFetchOptions>): Promise<AbortSignal> {
+            const sent = Promise.withResolvers<AbortSignal>();
+            const hold = ((_url: URL, options: CapturedRequest['options']) => {
+                sent.resolve(options.signal);
+                return { on: () => undefined, end: () => undefined, destroy: () => undefined };
+            }) as unknown as typeof http.request;
+            const pending = fetchUnderHostPolicy('http://a.test/x', baseOptions({ resolve, request: { http: hold, https: hold }, ...overrides }));
+            pending.catch(() => undefined);
+            return sent.promise;
+        }
+
+        test('aborts the request signal at exactly 30 seconds when timeoutMs is not given', async () => {
+            jest.useFakeTimers();
+            const signal = await signalOfHeldRequest({});
+
+            expect(signal.aborted).toBe(false);
+            jest.advanceTimersByTime(29_999);
+            expect(signal.aborted).toBe(false);
+            jest.advanceTimersByTime(1);
+            expect(signal.aborted).toBe(true);
+        });
+
+        test('aborts the request signal at a custom timeoutMs', async () => {
+            jest.useFakeTimers();
+            const signal = await signalOfHeldRequest({ timeoutMs: 1234 });
+
+            jest.advanceTimersByTime(1233);
+            expect(signal.aborted).toBe(false);
+            jest.advanceTimersByTime(1);
+            expect(signal.aborted).toBe(true);
+        });
+    });
+
+    describe('deadline cleanup', () => {
+        test('leaves no deadline timer armed after a fetched PDF', async () => {
+            jest.useFakeTimers();
             const { request } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: [PDF] }));
-            const timeoutSpy = spyOn(AbortSignal, 'timeout');
 
             await fetchUnderHostPolicy('https://a.test/x', baseOptions({ resolve, request }));
 
-            expect(timeoutSpy).toHaveBeenCalledWith(30_000);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('leaves no deadline timer armed after a redirect chain', async () => {
+            jest.useFakeTimers();
+            const { request } = fakeTransport((url): FakeReply => {
+                if(url.pathname === '/x') {
+                    return { status: 302, headers: { Location: '/y' } };
+                }
+                return { status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: [PDF] };
+            });
+
+            await fetchUnderHostPolicy('https://a.test/x', baseOptions({ resolve, request }));
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('leaves no deadline timer armed after a redirect without a Location, an HTTP error, or a transport error', async () => {
+            jest.useFakeTimers();
+            const noLocation = fakeTransport(() => ({ status: 302 }));
+            const httpError = fakeTransport(() => ({ status: 500 }));
+            const transportError = fakeTransport(() => ({ status: 0, error: new Error('socket hang up') }));
+
+            await fetchError('https://a.test/x', baseOptions({ resolve, request: noLocation.request }));
+            await fetchError('https://a.test/x', baseOptions({ resolve, request: httpError.request }));
+            await fetchError('https://a.test/x', baseOptions({ resolve, request: transportError.request }));
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('leaves no deadline timer armed after a body that cannot be read', async () => {
+            jest.useFakeTimers();
+            const { request } = fakeTransport(() => ({ status: 200, headers: { 'Content-Type': 'application/pdf' }, chunks: [PDF], bodyError: new Error('reset') }));
+
+            await fetchError('https://a.test/x', baseOptions({ resolve, request }));
+
+            expect(jest.getTimerCount()).toBe(0);
         });
     });
 

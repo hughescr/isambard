@@ -375,6 +375,42 @@ describe('Media Fetcher', () => {
                 expect(result.failure.error).toContain('aborted');
             }
         });
+
+        describe('deadline cleanup', () => {
+            const metadata: MediaFetchMetadata = {
+                url:         'https://example.com/image.jpg',
+                filename:    'image.jpg',
+                contentType: 'image/jpeg',
+                size:        1024,
+            };
+
+            test('leaves no deadline timer armed after a successful fetch', async () => {
+                jest.useFakeTimers();
+                mockFetch.mockResolvedValueOnce({ ok: true, arrayBuffer: async () => Buffer.from('x').buffer } as Response);
+
+                await fetchImage(metadata);
+
+                expect(jest.getTimerCount()).toBe(0);
+            });
+
+            test('leaves no deadline timer armed after an HTTP error response', async () => {
+                jest.useFakeTimers();
+                mockFetch.mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' } as Response);
+
+                await fetchImage(metadata);
+
+                expect(jest.getTimerCount()).toBe(0);
+            });
+
+            test('leaves no deadline timer armed after the fetch rejects', async () => {
+                jest.useFakeTimers();
+                mockFetch.mockRejectedValueOnce(new Error('network down'));
+
+                await fetchImage(metadata);
+
+                expect(jest.getTimerCount()).toBe(0);
+            });
+        });
     });
 
     describe('fetchImages', () => {

@@ -1,6 +1,6 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, jest, test } from 'bun:test';
 import { ABS_ATTENTION, ABS_MALDACENA } from '../../../fixtures/zotero/arxiv-abs-pages';
-import { deferred, fakeClock, recordingFetch, status, type FakeClock, type FakeHandler, type RecordedCall } from '../../../helpers/zotero-fake';
+import { deferred, fakeClock, hangingFetch, recordingFetch, status, type FakeClock, type FakeHandler, type RecordedCall } from '../../../helpers/zotero-fake';
 import { ZoteroMetadataError } from '@/errors';
 import { ArxivResolver } from '@/integrations/zotero/arxiv';
 import { identityKeys } from '@/integrations/zotero/identifiers';
@@ -202,6 +202,93 @@ async function caught(promise: Promise<unknown>): Promise<ZoteroMetadataError> {
     }
     throw new Error('expected a rejection');
 }
+
+describe('ArxivResolver default deadline', () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    /** A resolver using the default (real, cancellable) deadline over `handler`, on the fake clock. */
+    function withDefaultDeadline(handler: FakeHandler, timeoutMs?: number): ArxivResolver {
+        const clock = fakeClock();
+        clock.advance(NOW);
+        const { fetch } = recordingFetch(handler, clock);
+        return new ArxivResolver({ fetch, sleep: clock.sleep, now: clock.now, ...timeoutMs === undefined ? {} : { timeoutMs } });
+    }
+
+    /** Starts a lookup whose export-API request hangs until its signal aborts; resolves once that request is in flight. */
+    async function startHungLookup(timeoutMs?: number): Promise<{ signal: AbortSignal, settled: Promise<unknown> }> {
+        const clock = fakeClock();
+        clock.advance(NOW);
+        const { fetch, inFlight } = hangingFetch();
+        const resolver = new ArxivResolver({ fetch, sleep: clock.sleep, now: clock.now, ...timeoutMs === undefined ? {} : { timeoutMs } });
+        const settled = resolver.lookupIds(['1706.03762']).catch((error: unknown) => error);
+        return { signal: await inFlight, settled };
+    }
+
+    test('aborts the export-API request at exactly the configured timeout, not a millisecond earlier', async () => {
+        jest.useFakeTimers();
+        const { signal, settled } = await startHungLookup(900);
+
+        jest.advanceTimersByTime(899);
+        expect(signal.aborted).toBe(false);
+        jest.advanceTimersByTime(1);
+
+        expect(signal.aborted).toBe(true);
+        await settled;
+    });
+
+    test('defaults to a 30-second deadline', async () => {
+        jest.useFakeTimers();
+        const { signal, settled } = await startHungLookup();
+
+        jest.advanceTimersByTime(29_999);
+        expect(signal.aborted).toBe(false);
+        jest.advanceTimersByTime(1);
+
+        expect(signal.aborted).toBe(true);
+        await settled;
+    });
+
+    test('leaves no deadline timer armed after a successful export-API lookup', async () => {
+        jest.useFakeTimers();
+
+        await withDefaultDeadline(feed).lookupIds(['1706.03762']);
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('leaves no deadline timer armed after the export API fails', async () => {
+        jest.useFakeTimers();
+        const resolver = withDefaultDeadline(route(() => {
+            throw new Error('network down');
+        }, () => status(404, 'not found')));
+
+        await resolver.lookupIds(['1706.03762']);
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('leaves no deadline timer armed after an abs-page fallback succeeds', async () => {
+        jest.useFakeTimers();
+        const resolver = withDefaultDeadline(route(() => status(500, 'down'), () => html(ABS_ATTENTION)));
+
+        await resolver.lookupIds(['1706.03762']);
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('leaves no deadline timer armed after an abs-page fallback fails', async () => {
+        jest.useFakeTimers();
+        const resolver = withDefaultDeadline(route(() => status(500, 'down'), () => {
+            throw new Error('network down');
+        }));
+
+        await resolver.lookupIds(['1706.03762']).catch(() => undefined);
+
+        expect(jest.getTimerCount()).toBe(0);
+    });
+});
 
 describe('ArxivResolver', () => {
     test('sends one request for every id', async () => {

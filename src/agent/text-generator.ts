@@ -5,6 +5,7 @@ import { query, SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type SDKMessage } from '@anthrop
 import { logger } from '@hughescr/logger';
 import removeMarkdown from 'remove-markdown';
 import type { TextBlock } from './stream-extractors';
+import { createDeadline, type Deadline } from '@/utils';
 
 /**
  * Process-lifetime singleton promise for the temp directory.
@@ -117,12 +118,13 @@ function buildAbortController(options?: TextGeneratorOptions): { controller: Abo
         }
     }
 
-    // Wire timeout to our internal controller using AbortSignal.timeout (auto-cleanup)
+    // Wire a cancellable deadline to our internal controller; cleanup stands it down so no timer outlives the call
+    let deadline: Deadline | undefined;
     if(timeoutMs > 0) {
-        const timeoutSignal = AbortSignal.timeout(timeoutMs);
-        timeoutSignal.addEventListener('abort', forwardAbort);
+        deadline = createDeadline(timeoutMs);
+        deadline.signal.addEventListener('abort', forwardAbort);
         // Stryker disable next-line ArrayMethodSwap: sources is used only to remove the same listener from every signal; cleanup order is unobservable.
-        sources.push(timeoutSignal);
+        sources.push(deadline.signal);
     }
 
     return {
@@ -131,6 +133,7 @@ function buildAbortController(options?: TextGeneratorOptions): { controller: Abo
             for(const source of sources) {
                 source.removeEventListener('abort', forwardAbort);
             }
+            deadline?.clear();
         },
     };
 }
