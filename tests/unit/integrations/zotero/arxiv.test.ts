@@ -501,6 +501,15 @@ describe('ArxivResolver abs-page fallback', () => {
         expect(item?.fields).not.toHaveProperty('extra');
     });
 
+    test('a journal DOI that merely contains the arXiv DOI prefix is still a published version', async () => {
+        const page = ABS_ATTENTION.replace('</head>', '<meta name="citation_doi" content="10.5555/10.48550/arxiv.1706.03762"></head>');
+        const { resolver } = setup(route(throttled, pages({ '1706.03762': page })));
+
+        const item = await lookupOne(resolver, '1706.03762');
+
+        expect(item?.fields.extra).toBe('Published version DOI: 10.5555/10.48550/arxiv.1706.03762');
+    });
+
     test('an id the abs page answers 404 is absent, not an error', async () => {
         const { resolver, calls } = setup(route(throttled, pages({ '1706.03762': ABS_ATTENTION })));
 

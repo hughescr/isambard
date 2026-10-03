@@ -19,7 +19,8 @@ import {
     TaskBoardConfigSchema,
     DEFAULT_TASK_BOARD_CONFIG,
     guildIdSchema,
-    typesafeConfigSchema
+    typesafeConfigSchema,
+    zoteroConfigSchema
 } from '@/config/schemas';
 import { createGuildId } from '@/integrations/discord/types';
 import { resolveTimezone } from '@/utils/time';
@@ -1312,6 +1313,13 @@ describe.concurrent('typesafeConfigSchema', () => {
 
     test('accepts a one-character apiKey', () => {
         expect(typesafeConfigSchema.safeParse({ apiKey: 'x' }).success).toBe(true);
+    });
+});
+
+describe.concurrent('zoteroConfigSchema', () => {
+    test('rejects an empty apiKey and accepts a one-character one', () => {
+        expect(zoteroConfigSchema.safeParse({ apiKey: '' }).success).toBe(false);
+        expect(zoteroConfigSchema.safeParse({ apiKey: 'x' }).success).toBe(true);
     });
 });
 

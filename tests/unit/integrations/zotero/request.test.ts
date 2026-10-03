@@ -126,6 +126,14 @@ describe('ZoteroRequester construction and URLs', () => {
         expect(error).toBeInstanceOf(InvariantViolationError);
         expect(calls).toHaveLength(0);
     });
+
+    test('sends a PATCH', async () => {
+        const { requester, calls } = setup(() => status(204));
+
+        await requester.request('PATCH', { scope: 'library', path: '/items/ABCD2345' }, { idempotent: false, json: { title: 'x' } });
+
+        expect(calls.map(call => call.method)).toEqual(['PATCH']);
+    });
 });
 
 describe('ZoteroRequester bodies and responses', () => {

@@ -358,6 +358,13 @@ describe('currentCardDraftUid', () => {
         expect(currentCardDraftUid(message('email-send-approve:42', 'email-send-reject:43'))).toBeUndefined();
     });
 
+    test('reads each draft control on its own, the approve-and-allowlist button included', () => {
+        expect(currentCardDraftUid(message('email-send-approveallowlist:42'))).toBe(42);
+        expect(currentCardDraftUid(message('email-send-approve:42'))).toBe(42);
+        expect(currentCardDraftUid(message('email-send-reject:42'))).toBe(42);
+        expect(currentCardDraftUid(message('email-send-approve:42', 'email-send-approveallowlist:43'))).toBeUndefined();
+    });
+
     test('is undefined when the card has no live controls', () => {
         expect(currentCardDraftUid({ components: [] })).toBeUndefined();
         expect(currentCardDraftUid(message('other-thing:42'))).toBeUndefined();
