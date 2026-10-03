@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Database } from 'bun:sqlite';
 import { afterAll, afterEach, beforeEach, jest, mock, type Mock } from 'bun:test';
-import { createTimerGuard, formatLeakedTimers, type AbortSignalHost, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from './helpers/leaked-timer-guard';
+import { CONCURRENT_TESTS_MESSAGE, createTimerGuard, formatLeakedTimers, type AbortSignalHost, type LeakedTimerKind, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from './helpers/leaked-timer-guard';
 import { enableRunningLoopTracking, listRunningReconnectionLoops } from '../src/services/running-reconnection-loops';
 
 // Configure Bun to use the Homebrew-installed libsqlite3.dylib on macOS.
@@ -775,9 +775,13 @@ const timerGuard = createTimerGuard(
     Bun as unknown as SleepHost,
     {
         nodeTimers,
-        promiseTimers: nodeTimerPromises,
-        abortSignal:   AbortSignal as unknown as AbortSignalHost,
-        liveOwners:    () => listRunningReconnectionLoops().map(({ id, service, stop }) => ({ id, label: service, stop })),
+        promiseTimers:  nodeTimerPromises,
+        abortSignal:    AbortSignal as unknown as AbortSignalHost,
+        liveOwners:     () => listRunningReconnectionLoops().map(({ id, service, stop }) => ({ id, label: service, stop })),
+        // On Bun 1.4.2 jest.useFakeTimers() fakes every timeout/interval creator (global, node:timers,
+        // AbortSignal.timeout, Bun.sleep, node:timers/promises) but leaves setImmediate REAL; those must
+        // stay tracked while fake timers are on. tests/unit/helpers/fake-timer-coverage.test.ts pins this.
+        realInFakeMode: new Set<LeakedTimerKind>(['setImmediate', 'timers/promises.setImmediate']),
     }
 );
 timerGuard.install();
@@ -793,8 +797,15 @@ beforeEach(() => {
 afterEach(() => {
     jest.useRealTimers();
     const leaks = timerGuard.collectLeaks('test');
+    const problems: string[] = [];
+    if(timerGuard.hasConcurrentTests()) {
+        problems.push(CONCURRENT_TESTS_MESSAGE);
+    }
     if(leaks.length > 0) {
-        throw new Error(formatLeakedTimers(leaks, 'test'));
+        problems.push(formatLeakedTimers(leaks, 'test'));
+    }
+    if(problems.length > 0) {
+        throw new Error(problems.join('\n'));
     }
 });
 

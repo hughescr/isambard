@@ -8,15 +8,18 @@
  * It also checks "live owners" (running reconnection loops), which can leak with no timer armed.
  *
  * There is deliberately no allowlist and `unref()` does not exempt a timer. Fake timers
- * (`jest.useFakeTimers()`) are out of scope: while they are active the wrappers pass straight
- * through without recording anything.
+ * (`jest.useFakeTimers()`) are out of scope for the creators they really fake: while they are
+ * active those wrappers pass straight through without recording anything. That is decided PER
+ * CREATOR KIND, not once for everything: a kind listed in `extras.realInFakeMode` (on Bun,
+ * `setImmediate`, which the fake clock leaves real) keeps being tracked while fake timers are on.
  *
- * Ownership: a timer belongs to the test during which it was created. When tests overlap
- * (`test.concurrent`) the runner gives no per-test context, so the overlapping tests are treated
- * as one group: nothing is collected until the LAST overlapping test ends, and the failure is
- * reported on that last test (the creation stack still names the culprit). Timers created before
- * the first test of a file (module scope, `beforeAll`) belong to the file and are reported at
- * file teardown.
+ * Ownership: a timer belongs to the test during which it was created. Concurrent tests
+ * (`test.concurrent`) are NOT supported: the runner gives no per-test context, so a timer created
+ * by one of several overlapping tests cannot be attributed to it. The guard therefore fails every
+ * test that overlaps another (see {@link TimerGuard.hasConcurrentTests}); run such tests
+ * sequentially. (Leaks from an overlapping group are still collected and cancelled once the last
+ * test ends, so they cannot cascade into later tests.) Timers created before the first test of a
+ * file (module scope, `beforeAll`) belong to the file and are reported at file teardown.
  *
  * "Pending" is read from the handle's own `_destroyed` flag, which Bun sets when a timer fires
  * (one-shot), is cleared via `clearTimeout`/`clearInterval`/`clearImmediate`, or is `close()`d.
@@ -56,6 +59,7 @@ export interface AbortSignalHost {
 export interface PromiseTimersHost {
     setTimeout:   (delay?: unknown, value?: unknown, options?: unknown) => Promise<unknown>
     setImmediate: (value?: unknown, options?: unknown) => Promise<unknown>
+    setInterval:  (delay?: unknown, value?: unknown, options?: unknown) => AsyncIterable<unknown>
 }
 
 /** Something that can be running without any timer armed (e.g. a reconnection loop with an in-flight attempt). */
@@ -69,24 +73,40 @@ export interface LiveOwner {
 
 /** Optional extra runtime surfaces the guard covers beyond the global timers. */
 export interface TimerGuardExtras {
-    nodeTimers?:    TimerGuardHost
-    promiseTimers?: PromiseTimersHost
-    abortSignal?:   AbortSignalHost
+    nodeTimers?:     TimerGuardHost
+    promiseTimers?:  PromiseTimersHost
+    abortSignal?:    AbortSignalHost
     /** Lists the owners that are running right now */
-    liveOwners?:    () => readonly LiveOwner[]
-    /** Test seam: replaces the creation-stack capture */
-    captureStack?:  () => string[]
+    liveOwners?:     () => readonly LiveOwner[]
+    /** Test seam: replaces the creation-stack capture (returns every frame, innermost first) */
+    captureStack?:   () => string[]
+    /**
+     * Creator kinds whose timers stay REAL while fake timers are active, so they are still tracked
+     * then. Default: none (every creator is faked). On Bun the fake clock covers every timeout and
+     * interval creator but leaves `setImmediate` real.
+     */
+    realInFakeMode?: ReadonlySet<LeakedTimerKind>
+    /**
+     * Path fragments that mark a stack frame as project code (tests or source) rather than tooling.
+     * Default `['/tests/', '/src/']`. Only used to refuse the boot-time tooling exemption, see
+     * {@link STRYKER_PRELOAD_FRAME}.
+     */
+    ownCodeFrames?:  readonly string[]
 }
 
 /**
  * The Stryker bun runner's own preload creates an unref'd orphan-watchdog interval before any test
- * file loads. That is test-harness plumbing, not a timer a test created, so a timer whose creating
- * (first) frame is in that preload is not tracked. This is not a test allowlist: only the exact
- * creating frame inside the runner's preload file qualifies, never a library called from test code.
+ * file loads. That is test-harness plumbing, not a timer a test created. It is exempt only while the
+ * guard is still BOOTING (no test has started yet), only when the creating (first) frame is in that
+ * preload file, and only when no frame anywhere in the creation stack is project code. A test (or a
+ * test file's module scope) that calls the runner's `startOrphanWatchdog()` has its own file in the
+ * stack, so it is tracked; nothing created after the first test starts is ever exempt.
  */
 export const STRYKER_PRELOAD_FRAME = '@hughescr/stryker-bun-runner/dist/coverage/preload';
 
-export type LeakedTimerKind = 'setTimeout' | 'setInterval' | 'setImmediate' | 'Bun.sleep' | 'AbortSignal.timeout' | 'timers/promises.setTimeout' | 'timers/promises.setImmediate' | 'running-owner';
+const DEFAULT_OWN_CODE_FRAMES: readonly string[] = ['/tests/', '/src/'];
+
+export type LeakedTimerKind = 'setTimeout' | 'setInterval' | 'setImmediate' | 'Bun.sleep' | 'AbortSignal.timeout' | 'timers/promises.setTimeout' | 'timers/promises.setImmediate' | 'timers/promises.setInterval' | 'running-owner';
 
 /** One timer (or running owner) found still live at the end of its test. */
 export interface LeakedTimer {
@@ -121,8 +141,7 @@ function captureStack(): string[] {
         .slice(1)
         .map(line => line.trim())
         // The runner's own frames above a hook come back source-mapped onto tests/setup.ts's hook lines; they are noise
-        .filter(line => line.length > 0 && !line.includes('helpers/leaked-timer-guard.ts') && !line.includes('tests/setup.ts'))
-        .slice(0, STACK_FRAMES_SHOWN);
+        .filter(line => line.length > 0 && !line.includes('helpers/leaked-timer-guard.ts') && !line.includes('tests/setup.ts'));
 }
 
 function delayOf(value: unknown): number | undefined {
@@ -136,6 +155,10 @@ function sleepMsOf(duration: unknown): number | undefined {
         return undefined;
     }
     return Math.max(0, raw);
+}
+
+function abortError(): DOMException {
+    return new DOMException('The operation was aborted', 'AbortError');
 }
 
 function signalOf(options: unknown): AbortSignal | undefined {
@@ -170,22 +193,32 @@ export interface TimerGuard {
     install(): void
     /** Restores every original creator. */
     uninstall(): void
-    /** Marks the start of a test. Overlapping (concurrent) tests are treated as one group. */
+    /** Marks the start of a test. A test that starts while another is still running makes both "concurrent" (unsupported). */
     markTestStart(): void
     /**
      * Ends a test (`'test'`) or the file (`'file'`). Returns every still-pending timer and running
      * owner belonging to it, cancelling/stopping each so a leak is reported once and cannot cascade
      * into later tests; also forgets finished timers. For `'test'`, an empty result while other
-     * overlapping tests are still running is "not yet attributable", not "clean". `'file'` covers
-     * everything since the previous file's teardown (module scope included) and starts the next file.
+     * overlapping tests are still running is "not yet attributable", not "clean" (such a group
+     * fails anyway, see {@link TimerGuard.hasConcurrentTests}). `'file'` covers everything since
+     * the previous file's teardown (module scope included) and starts the next file.
      */
     collectLeaks(scope: 'test' | 'file'): LeakedTimer[]
+    /**
+     * True for every test of a group of overlapping tests, from the moment the overlap is seen until
+     * the next test that starts alone. Concurrent tests are unsupported (timers cannot be attributed
+     * to one of them), so the caller fails each test while this is true.
+     */
+    hasConcurrentTests(): boolean
 }
+
+/** Why a test is failed for overlapping another test. */
+export const CONCURRENT_TESTS_MESSAGE = 'Concurrent tests (test.concurrent / describe.concurrent) are not supported with the leaked-timer guard: a timer created by one of several overlapping tests cannot be attributed to it. Run these tests sequentially.';
 
 /**
  * Builds a guard bound to `host`.
  * @param host Object whose timer creators are wrapped (the global object in production)
- * @param isFakeTimers True while fake timers are active, so the wrappers must not record
+ * @param isFakeTimers True while fake timers are active; the creators they fake are then not recorded (kinds in `extras.realInFakeMode` still are)
  * @param sleepHost Object whose `sleep` is wrapped too (`Bun` in production); omit to leave sleeping untracked
  * @param extras Further runtime surfaces to cover (node:timers, node:timers/promises, AbortSignal, live owners)
  * @returns The guard controls
@@ -197,33 +230,50 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
     let groupStartSeq = 0;
     let groupBaseline = new Set<unknown>();
     let fileStartSeq = 0;
+    let groupOverlapped = false;
+    // True until the first test starts: only then may the runner's own preload timers be exempt
+    let booting = true;
     let tracked: TrackedTimer[] = [];
     const patches: (() => void)[] = [];
+    const ownCodeFrames = extras.ownCodeFrames ?? DEFAULT_OWN_CODE_FRAMES;
 
     // Captured now, before install() replaces them, so tracked sleeps/deadlines use the real timers
     const rawSetTimeout = host.setTimeout;
     const rawClearTimeout = host.clearTimeout;
+    const rawSetInterval = host.setInterval;
+    const rawClearInterval = host.clearInterval;
     const rawSetImmediate = host.setImmediate;
     const rawClearImmediate = host.clearImmediate;
 
+    /** True when a creator of `kind` currently makes a FAKE timer (so it is out of scope); real ones are tracked even while fake timers are on. */
+    function isFaked(kind: LeakedTimerKind): boolean {
+        return isFakeTimers() && extras.realInFakeMode?.has(kind) !== true;
+    }
+
+    function isTestHarnessBootTimer(stack: readonly string[]): boolean {
+        if(!booting || stack[0]?.includes(STRYKER_PRELOAD_FRAME) !== true) {
+            return false;
+        }
+        return !stack.some(frame => ownCodeFrames.some(own => frame.includes(own)));
+    }
+
     function track(entry: Omit<TrackedTimer, 'seq' | 'stack'>): void {
         const stack = (extras.captureStack ?? captureStack)();
-        if(stack[0]?.includes(STRYKER_PRELOAD_FRAME) === true) {
+        if(isTestHarnessBootTimer(stack)) {
             return;
         }
         seq += 1;
-        tracked.push({ ...entry, seq, stack });
+        tracked.push({ ...entry, seq, stack: stack.slice(0, STACK_FRAMES_SHOWN) });
     }
 
-    /** Runs `fire` on a real timer or immediate that the guard tracks; returns how to cancel it. */
-    function startTracked(kind: LeakedTimerKind, delayMs: number | undefined, how: 'timeout' | 'immediate', fire: () => void): () => void {
-        const handle = how === 'timeout' ? rawSetTimeout(fire, delayMs) : rawSetImmediate(fire);
+    /** Runs `fire` on a real timer, interval or immediate that the guard tracks; returns how to cancel it. */
+    function startTracked(kind: LeakedTimerKind, delayMs: number | undefined, how: 'timeout' | 'interval' | 'immediate', fire: () => void): () => void {
+        const create = { timeout: rawSetTimeout, interval: rawSetInterval, immediate: rawSetImmediate }[how];
+        const clear = { timeout: rawClearTimeout, interval: rawClearInterval, immediate: rawClearImmediate }[how];
+        // An immediate has no delay; passing none keeps the (undefined) delay out of its callback arguments
+        const handle = how === 'immediate' ? create(fire) : create(fire, delayMs);
         const cancel = (): void => {
-            if(how === 'timeout') {
-                rawClearTimeout(handle);
-            } else {
-                rawClearImmediate(handle);
-            }
+            clear(handle);
         };
         track({ kind, delayMs, isPending: () => isHandlePending(handle), cancel });
         return cancel;
@@ -232,7 +282,7 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
     function wrapCreator(kind: Exclude<LeakedTimerKind, 'Bun.sleep' | 'AbortSignal.timeout' | 'running-owner' | `timers/promises.${string}`>, original: TimerCreator, cancel: TimerCanceller): TimerCreator {
         return (callback, delay, ...rest) => {
             const handle = original(callback, delay, ...rest);
-            if(!isFakeTimers()) {
+            if(!isFaked(kind)) {
                 track({
                     kind,
                     delayMs:   delayOf(delay),
@@ -259,7 +309,7 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
     function wrapSleep(original: SleepFn): SleepFn {
         return async (duration) => {
             const ms = sleepMsOf(duration);
-            if(isFakeTimers() || ms === undefined) {
+            if(isFaked('Bun.sleep') || ms === undefined) {
                 return original(duration);
             }
             return new Promise<void>((resolve) => {
@@ -271,7 +321,7 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
 
     function wrapAbortTimeout(original: AbortSignalHost['timeout'], self: AbortSignalHost): AbortSignalHost['timeout'] {
         return (ms) => {
-            if(isFakeTimers()) {
+            if(isFaked('AbortSignal.timeout')) {
                 return original.call(self, ms);
             }
             const controller = new AbortController();
@@ -301,23 +351,103 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
         });
     }
 
+    /**
+     * `timers/promises.setInterval` re-implemented on one tracked real interval. Ticks that arrive
+     * while nobody is waiting are counted and handed out first (as Node does). `return()` (what
+     * `break` in a `for await` calls) and an aborting signal both clear the interval; an abort
+     * rejects the pending (or next) `next()` with an AbortError, after which the iterator is done.
+     */
+    function trackedInterval(delayMs: number | undefined, value: unknown, options: unknown): AsyncIterableIterator<unknown> {
+        const signal = signalOf(options);
+        const finished: IteratorResult<unknown> = { value: undefined, done: true };
+        let waiting: PromiseWithResolvers<IteratorResult<unknown>> | undefined;
+        let ticksNotYielded = 0;
+        let ended = false;
+        let abortPending = false;
+        let cancel: (() => void) | undefined;
+
+        const end = (): void => {
+            ended = true;
+            cancel?.();
+            signal?.removeEventListener('abort', onAbort);
+        };
+        function onAbort(): void {
+            end();
+            if(waiting === undefined) {
+                abortPending = true;
+                return;
+            }
+            waiting.reject(abortError());
+            waiting = undefined;
+        }
+
+        if(signal?.aborted === true) {
+            ended = true;
+            abortPending = true;
+        } else {
+            cancel = startTracked('timers/promises.setInterval', delayMs, 'interval', () => {
+                if(waiting === undefined) {
+                    ticksNotYielded += 1;
+                    return;
+                }
+                waiting.resolve({ value, done: false });
+                waiting = undefined;
+            });
+            signal?.addEventListener('abort', onAbort, { once: true });
+        }
+
+        return {
+            async next(): Promise<IteratorResult<unknown>> {
+                if(abortPending) {
+                    abortPending = false;
+                    throw abortError();
+                }
+                if(ended) {
+                    return finished;
+                }
+                if(ticksNotYielded > 0) {
+                    ticksNotYielded -= 1;
+                    return { value, done: false };
+                }
+                waiting = Promise.withResolvers<IteratorResult<unknown>>();
+                return waiting.promise;
+            },
+            async return(): Promise<IteratorResult<unknown>> {
+                end();
+                waiting?.resolve(finished);
+                waiting = undefined;
+                return finished;
+            },
+            [Symbol.asyncIterator](): AsyncIterableIterator<unknown> {
+                return this;
+            },
+        };
+    }
+
     function patchPromiseTimers(target: PromiseTimersHost): void {
-        const originals = { setTimeout: target.setTimeout, setImmediate: target.setImmediate };
+        const originals = { setTimeout: target.setTimeout, setImmediate: target.setImmediate, setInterval: target.setInterval };
         target.setTimeout = async (delay, value, options) => {
-            if(isFakeTimers()) {
+            if(isFaked('timers/promises.setTimeout')) {
                 return originals.setTimeout(delay, value, options);
             }
             return deferred('timers/promises.setTimeout', delayOf(delay), 'timeout', value, options);
         };
         target.setImmediate = async (value, options) => {
-            if(isFakeTimers()) {
+            if(isFaked('timers/promises.setImmediate')) {
                 return originals.setImmediate(value, options);
             }
             return deferred('timers/promises.setImmediate', undefined, 'immediate', value, options);
         };
+        target.setInterval = (delay, value, options) => {
+            if(isFaked('timers/promises.setInterval')) {
+                return originals.setInterval(delay, value, options);
+            }
+            return trackedInterval(delayOf(delay), value, options);
+        };
         patches.push(() => {
             target.setTimeout = originals.setTimeout;
             target.setImmediate = originals.setImmediate;
+            target.setInterval = originals.setInterval;
         });
     }
 
@@ -402,11 +532,19 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
         },
 
         markTestStart(): void {
+            booting = false;
             if(activeTests === 0) {
+                groupOverlapped = false;
                 groupStartSeq = seq + 1;
                 groupBaseline = new Set((extras.liveOwners?.() ?? []).map(owner => owner.id));
+            } else {
+                groupOverlapped = true;
             }
             activeTests += 1;
+        },
+
+        hasConcurrentTests(): boolean {
+            return groupOverlapped;
         },
 
         collectLeaks(scope): LeakedTimer[] {
@@ -416,6 +554,7 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
                 fileStartSeq = seq + 1;
                 groupStartSeq = seq + 1;
                 activeTests = 0;
+                groupOverlapped = false;
                 return leaks;
             }
             activeTests = Math.max(0, activeTests - 1);

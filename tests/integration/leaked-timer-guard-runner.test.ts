@@ -32,12 +32,26 @@ describe('leaked-timer guard under the real runner', () => {
             '(fail) scenarios > SCENARIO node:timers setTimeout leak',
             '(fail) scenarios > SCENARIO node:timers/promises setTimeout leak',
             '(fail) scenarios > SCENARIO reconnection loop left running with an attempt in flight',
+            '(fail) scenarios > SCENARIO setImmediate created under fake timers leak',
+            '(fail) scenarios > SCENARIO timers/promises setInterval leak',
+            '(fail) scenarios > SCENARIO runner preload watchdog started by a test leak',
+            // concurrent tests are unsupported: BOTH fail, including the one that leaks nothing
             '(fail) scenarios > concurrent overlap > SCENARIO concurrent A leaks a timer until afterAll',
+            '(fail) scenarios > concurrent overlap > SCENARIO concurrent B releases A',
         ].toSorted(byName));
         expect(output).toContain('- AbortSignal.timeout 60005ms');
         expect(output).toContain('- timers/promises.setTimeout 60004ms');
         expect(output).toContain('- Bun.sleep 30ms');
         expect(output).toContain('- running-owner "discord" is still running');
+        // finding 3: a real setImmediate created while fake timers are on is still tracked
+        expect(output).toMatch(/- setImmediate, created at:\n\s+at <anonymous> \(.*scenarios\.fixture\.ts:\d+:\d+\)/u);
+        // finding 4: the promise interval is wrapped
+        expect(output).toContain('- timers/promises.setInterval 60007ms');
+        // finding 6: a test starting the runner's watchdog is not exempt, and the stack names the runner's preload frame
+        expect(output).toContain('- setInterval 60010ms');
+        expect(output).toContain('stryker-bun-runner/dist/coverage/preload-logic.js');
+        // finding 5: the concurrent group is rejected as such
+        expect(output).toContain('Concurrent tests (test.concurrent / describe.concurrent) are not supported');
         // the module-scope timer is attributed to the file, at file teardown
         expect(output).toMatch(/after this test file finished[\s\S]*- setTimeout 60001ms/u);
     }, 60_000);

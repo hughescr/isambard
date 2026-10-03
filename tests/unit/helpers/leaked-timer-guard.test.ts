@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test';
-import { createTimerGuard, formatLeakedTimers, STRYKER_PRELOAD_FRAME, type AbortSignalHost, type LiveOwner, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from '../../helpers/leaked-timer-guard';
+import { createTimerGuard, formatLeakedTimers, STRYKER_PRELOAD_FRAME, type AbortSignalHost, type LeakedTimerKind, type LiveOwner, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from '../../helpers/leaked-timer-guard';
 
 interface FakeHandle { _destroyed: boolean, callback: unknown }
+
+/** What a native `timers/promises.setInterval` hands back in these tests: one tick, then done. */
+async function* nativeTicks(): AsyncGenerator<string> {
+    yield 'native';
+}
 
 /** Host whose "native" creators hand back `{ _destroyed }` handles and whose cancellers flip the flag. */
 function makeHost(): { host: TimerGuardHost, sleepHost: SleepHost, handles: FakeHandle[], fire: (index: number) => void, sleepCalls: unknown[] } {
@@ -112,6 +117,44 @@ describe('createTimerGuard', () => {
         expect(guard.collectLeaks('test')).toHaveLength(0);
     });
 
+    it('keeps tracking the creator kinds that stay real while fake timers are active, and ignores the faked ones', () => {
+        const { host } = makeHost();
+        const { host: nodeTimers } = makeHost();
+        const guard = createTimerGuard(host, () => true, undefined, { nodeTimers, realInFakeMode: new Set<LeakedTimerKind>(['setImmediate']) });
+        guard.install();
+        guard.markTestStart();
+
+        host.setTimeout(() => undefined, 5);
+        host.setInterval(() => undefined, 5);
+        host.setImmediate(() => undefined);
+        nodeTimers.setTimeout(() => undefined, 5);
+        nodeTimers.setImmediate(() => undefined);
+
+        expect(guard.collectLeaks('test').map(leak => leak.kind)).toEqual(['setImmediate', 'setImmediate']);
+    });
+
+    it('tracks a real Bun.sleep, AbortSignal.timeout and promise timers while fake timers are on when told they stay real', async () => {
+        const { host, sleepHost } = makeHost();
+        const abortSignal: AbortSignalHost = { timeout: () => new AbortController().signal };
+        const promiseTimers: PromiseTimersHost = {
+            setTimeout:   async () => undefined,
+            setImmediate: async () => undefined,
+            setInterval:  nativeTicks,
+        };
+        const real = new Set<LeakedTimerKind>(['Bun.sleep', 'AbortSignal.timeout', 'timers/promises.setTimeout', 'timers/promises.setImmediate', 'timers/promises.setInterval']);
+        const guard = createTimerGuard(host, () => true, sleepHost, { abortSignal, promiseTimers, realInFakeMode: real });
+        guard.install();
+        guard.markTestStart();
+
+        void sleepHost.sleep(5);
+        abortSignal.timeout(5);
+        void promiseTimers.setTimeout(5);
+        void promiseTimers.setImmediate();
+        promiseTimers.setInterval(5);
+
+        expect(guard.collectLeaks('test').map(leak => leak.kind)).toEqual(['Bun.sleep', 'AbortSignal.timeout', 'timers/promises.setTimeout', 'timers/promises.setImmediate', 'timers/promises.setInterval']);
+    });
+
     it('only counts timers created since the test start, but the file scope counts the earlier ones too', () => {
         const { host } = makeHost();
         const guard = createTimerGuard(host, () => false);
@@ -163,6 +206,48 @@ describe('createTimerGuard', () => {
         // the last overlapping test ends: the timer that outlived its creator is reported
         expect(guard.collectLeaks('test').map(leak => leak.delayMs)).toEqual([60_000]);
         expect(handles[0]?._destroyed).toBe(true);
+    });
+
+    it('flags every test of an overlapping group as concurrent (unsupported), until a test starts alone again', () => {
+        const { host } = makeHost();
+        const guard = createTimerGuard(host, () => false);
+        guard.install();
+
+        guard.markTestStart();
+        expect(guard.hasConcurrentTests()).toBe(false);
+        guard.markTestStart();
+        expect(guard.hasConcurrentTests()).toBe(true);
+        guard.collectLeaks('test');
+        expect(guard.hasConcurrentTests()).toBe(true);
+        guard.collectLeaks('test');
+        expect(guard.hasConcurrentTests()).toBe(true);
+
+        guard.markTestStart();
+        expect(guard.hasConcurrentTests()).toBe(false);
+    });
+
+    it('does not flag tests that run one after another as concurrent', () => {
+        const { host } = makeHost();
+        const guard = createTimerGuard(host, () => false);
+        guard.install();
+
+        guard.markTestStart();
+        guard.collectLeaks('test');
+        guard.markTestStart();
+
+        expect(guard.hasConcurrentTests()).toBe(false);
+    });
+
+    it('forgets a concurrent group at file teardown', () => {
+        const { host } = makeHost();
+        const guard = createTimerGuard(host, () => false);
+        guard.install();
+        guard.markTestStart();
+        guard.markTestStart();
+
+        guard.collectLeaks('file');
+
+        expect(guard.hasConcurrentTests()).toBe(false);
     });
 
     it('does not hold anything back when tests run one after another', () => {
@@ -374,6 +459,10 @@ describe('createTimerGuard', () => {
                 promiseTimers: {
                     setTimeout:   async () => { nativeCalls.push('setTimeout'); },
                     setImmediate: async () => { nativeCalls.push('setImmediate'); },
+                    setInterval:  () => {
+                        nativeCalls.push('setInterval');
+                        return nativeTicks();
+                    },
                 },
                 nativeCalls,
             };
@@ -440,9 +529,112 @@ describe('createTimerGuard', () => {
 
             await promiseTimers.setTimeout(10);
             await promiseTimers.setImmediate();
+            const first = await promiseTimers.setInterval(10)[Symbol.asyncIterator]().next();
 
-            expect(nativeCalls).toEqual(['setTimeout', 'setImmediate']);
+            expect(nativeCalls).toEqual(['setTimeout', 'setImmediate', 'setInterval']);
+            expect(first.value).toBe('native');
             expect(handles).toHaveLength(0);
+        });
+
+        describe('setInterval', () => {
+            function start(): { handles: FakeHandle[], guard: ReturnType<typeof createTimerGuard>, promiseTimers: PromiseTimersHost } {
+                const { host, handles } = makeHost();
+                const { promiseTimers } = makePromiseHost();
+                const guard = createTimerGuard(host, () => false, undefined, { promiseTimers });
+                guard.install();
+                guard.markTestStart();
+                return { handles, guard, promiseTimers };
+            }
+            const tick = (handles: FakeHandle[], index = 0): void => {
+                (handles[index]?.callback as () => void)();
+            };
+
+            it('reports an interval still pending when the test ends, with its kind and delay, and cancels it', () => {
+                const { guard, handles, promiseTimers } = start();
+
+                promiseTimers.setInterval(250, 'v');
+                const leaks = guard.collectLeaks('test');
+
+                expect(leaks.map(leak => [leak.kind, leak.delayMs])).toEqual([['timers/promises.setInterval', 250]]);
+                expect(handles[0]?._destroyed).toBe(true);
+            });
+
+            it('yields the value once per tick, counting ticks nobody was waiting for', async () => {
+                const { guard, handles, promiseTimers } = start();
+                const iterator = promiseTimers.setInterval(5, 'v')[Symbol.asyncIterator]();
+
+                const waiting = iterator.next();
+                tick(handles);
+                tick(handles);
+                tick(handles);
+
+                expect(await waiting).toEqual({ value: 'v', done: false });
+                expect(await iterator.next()).toEqual({ value: 'v', done: false });
+                expect(await iterator.next()).toEqual({ value: 'v', done: false });
+                const pending = iterator.next();
+                expect(Bun.peek.status(pending)).toBe('pending');
+                await iterator.return?.();
+                expect(await pending).toEqual({ value: undefined, done: true });
+                expect(guard.collectLeaks('test')).toHaveLength(0);
+            });
+
+            it('clears the interval when the iterator is returned (break in a for-await), and is done afterwards', async () => {
+                const { guard, handles, promiseTimers } = start();
+                const iterator = promiseTimers.setInterval(5)[Symbol.asyncIterator]();
+
+                expect(await iterator.return?.()).toEqual({ value: undefined, done: true });
+
+                expect(handles[0]?._destroyed).toBe(true);
+                expect(await iterator.next()).toEqual({ value: undefined, done: true });
+                expect(guard.collectLeaks('test')).toHaveLength(0);
+            });
+
+            it('rejects the waiting next() with an AbortError and clears the interval when its signal aborts', async () => {
+                const { guard, handles, promiseTimers } = start();
+                const controller = new AbortController();
+                const iterator = promiseTimers.setInterval(5, 'v', { signal: controller.signal })[Symbol.asyncIterator]();
+
+                const waiting = iterator.next();
+                controller.abort();
+
+                await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+                expect(handles[0]?._destroyed).toBe(true);
+                expect(await iterator.next()).toEqual({ value: undefined, done: true });
+                expect(guard.collectLeaks('test')).toHaveLength(0);
+            });
+
+            it('rejects the next next() once when the signal aborted while nobody was waiting', async () => {
+                const { guard, handles, promiseTimers } = start();
+                const controller = new AbortController();
+                const iterator = promiseTimers.setInterval(5, 'v', { signal: controller.signal })[Symbol.asyncIterator]();
+
+                controller.abort();
+
+                expect(handles[0]?._destroyed).toBe(true);
+                await expect(iterator.next()).rejects.toMatchObject({ name: 'AbortError' });
+                expect(await iterator.next()).toEqual({ value: undefined, done: true });
+                expect(guard.collectLeaks('test')).toHaveLength(0);
+            });
+
+            it('rejects at once for a signal that is already aborted, without scheduling anything', async () => {
+                const { guard, handles, promiseTimers } = start();
+                const iterator = promiseTimers.setInterval(5, 'v', { signal: AbortSignal.abort() })[Symbol.asyncIterator]();
+
+                await expect(iterator.next()).rejects.toMatchObject({ name: 'AbortError' });
+
+                expect(handles).toHaveLength(0);
+                expect(await iterator.next()).toEqual({ value: undefined, done: true });
+                expect(guard.collectLeaks('test')).toHaveLength(0);
+            });
+
+            it('is its own async iterator, and needs no signal', async () => {
+                const { promiseTimers, guard } = start();
+                const iterator = promiseTimers.setInterval(5)[Symbol.asyncIterator]() as AsyncIterableIterator<unknown>;
+
+                expect(iterator[Symbol.asyncIterator]()).toBe(iterator);
+                await iterator.return?.();
+                expect(guard.collectLeaks('test')).toHaveLength(0);
+            });
         });
     });
 
@@ -512,8 +704,8 @@ describe('createTimerGuard', () => {
         const { sleep: originalSleep } = sleepHost;
         const abortSignal: AbortSignalHost = { timeout: () => new AbortController().signal };
         const { timeout: originalTimeout } = abortSignal;
-        const promiseTimers: PromiseTimersHost = { setTimeout: async () => undefined, setImmediate: async () => undefined };
-        const { setTimeout: originalPromiseTimeout, setImmediate: originalPromiseImmediate } = promiseTimers;
+        const promiseTimers: PromiseTimersHost = { setTimeout: async () => undefined, setImmediate: async () => undefined, setInterval: nativeTicks };
+        const { setTimeout: originalPromiseTimeout, setImmediate: originalPromiseImmediate, setInterval: originalPromiseInterval } = promiseTimers;
         const guard = createTimerGuard(host, () => false, sleepHost, { nodeTimers, abortSignal, promiseTimers });
 
         guard.install();
@@ -526,6 +718,7 @@ describe('createTimerGuard', () => {
         expect(sleepHost.sleep).not.toBe(originalSleep);
         expect(abortSignal.timeout).not.toBe(originalTimeout);
         expect(promiseTimers.setTimeout).not.toBe(originalPromiseTimeout);
+        expect(promiseTimers.setInterval).not.toBe(originalPromiseInterval);
 
         guard.uninstall();
 
@@ -535,24 +728,55 @@ describe('createTimerGuard', () => {
         expect(abortSignal.timeout).toBe(originalTimeout);
         expect(promiseTimers.setTimeout).toBe(originalPromiseTimeout);
         expect(promiseTimers.setImmediate).toBe(originalPromiseImmediate);
+        expect(promiseTimers.setInterval).toBe(originalPromiseInterval);
     });
 });
 
 describe('createTimerGuard tooling preload timers', () => {
-    it('does not count a timer whose creating frame is the Stryker runner preload, but still counts one from test code', () => {
+    const PRELOAD = `at startOrphanWatchdog (/x/node_modules/${STRYKER_PRELOAD_FRAME}-logic.js:61:33)`;
+    const TEMPLATE = 'at <anonymous> (/tmp/stryker-bun-runner/stryker-coverage-preload-1.ts:30:5)';
+
+    /** Creates one interval with the given creation stack, then reports what the guard still tracks after teardown. */
+    function leakedDelays(frames: string[], beforeCreate: (guard: ReturnType<typeof createTimerGuard>) => void = () => undefined, ownCodeFrames?: string[]): (number | undefined)[] {
         const { host } = makeHost();
-        let frames: string[] = [`at setInterval (${STRYKER_PRELOAD_FRAME}:61:33)`, 'at preload (bunfig)'];
-        const guard = createTimerGuard(host, () => false, undefined, { captureStack: () => frames });
+        const guard = createTimerGuard(host, () => false, undefined, { captureStack: () => frames, ...(ownCodeFrames === undefined ? {} : { ownCodeFrames }) });
         guard.install();
-        guard.markTestStart();
-
+        beforeCreate(guard);
         host.setInterval(() => undefined, 1000);
-        frames = ['at leaky (tests/y.test.ts:2:2)', `at x (${STRYKER_PRELOAD_FRAME}:1:1)`];
-        host.setInterval(() => undefined, 5);
-        const leaks = guard.collectLeaks('file');
-
-        expect(leaks.map(leak => leak.delayMs)).toEqual([5]);
+        const delays = guard.collectLeaks('file').map(leak => leak.delayMs);
         guard.uninstall();
+        return delays;
+    }
+
+    it('exempts the runner preload watchdog created while the guard is still booting, from tooling-only frames', () => {
+        expect(leakedDelays([PRELOAD, TEMPLATE])).toEqual([]);
+    });
+
+    it('does not exempt that same watchdog once any test has started', () => {
+        const startATest = (guard: ReturnType<typeof createTimerGuard>): void => {
+            guard.markTestStart();
+        };
+
+        expect(leakedDelays([PRELOAD, TEMPLATE], startATest)).toEqual([1000]);
+    });
+
+    it('does not exempt a call to the runner preload that has project test code in its stack, even during boot (module scope of a test file)', () => {
+        expect(leakedDelays([PRELOAD, 'at <anonymous> (/repo/tests/unit/x.test.ts:3:1)'])).toEqual([1000]);
+    });
+
+    it('does not exempt one with project source code anywhere in a deep stack', () => {
+        const deep = [PRELOAD, TEMPLATE, TEMPLATE, TEMPLATE, TEMPLATE, TEMPLATE, TEMPLATE, 'at run (/repo/src/x.ts:3:1)'];
+
+        expect(leakedDelays(deep)).toEqual([1000]);
+    });
+
+    it('does not exempt a timer whose first frame is not the runner preload, even with the preload deeper in the stack', () => {
+        expect(leakedDelays(['at leaky (/other/y.js:2:2)', PRELOAD])).toEqual([1000]);
+    });
+
+    it('honours custom project-code path fragments', () => {
+        expect(leakedDelays([PRELOAD, 'at app (/work/app/main.ts:1:1)'], undefined, ['/app/'])).toEqual([1000]);
+        expect(leakedDelays([PRELOAD, 'at app (/repo/tests/main.ts:1:1)'], undefined, ['/app/'])).toEqual([]);
     });
 });
 
