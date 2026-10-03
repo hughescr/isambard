@@ -11,118 +11,141 @@ describe.concurrent('createDiscordClient', () => {
         homeGuildId:   createGuildId('111222333444555666'),
     };
 
-    test('should create a Discord Client instance', () => {
+    /**
+     * Builds a real discord.js Client, runs the assertions, then destroys it.
+     * `new Client()` starts REST sweeper intervals that only `destroy()` clears,
+     * so every client a test builds must be destroyed (the file is concurrent,
+     * so cleanup is per-test rather than in a shared afterEach).
+     */
+    async function withClient(assertions: (client: Client) => void): Promise<void> {
         const client = createDiscordClient(validConfig);
-        expect(client).toBeInstanceOf(Client);
+        try {
+            assertions(client);
+        } finally {
+            await client.destroy();
+        }
+    }
+
+    test('should create a Discord Client instance', async () => {
+        await withClient((client) => {
+            expect(client).toBeInstanceOf(Client);
+        });
     });
 
-    test('should configure client with GuildMessages intent', () => {
-        const client = createDiscordClient(validConfig);
+    test('should configure client with GuildMessages intent', async () => {
+        await withClient((client) => {
+            // discord.js stores intents as a bitfield in client.options.intents
+            const intents = client.options.intents;
+            expect(intents).toBeDefined();
 
-        // discord.js stores intents as a bitfield in client.options.intents
-        const intents = client.options.intents;
-        expect(intents).toBeDefined();
-
-        // Check that GuildMessages intent is set
-        expect(intents.has(GatewayIntentBits.GuildMessages)).toBe(true);
+            // Check that GuildMessages intent is set
+            expect(intents.has(GatewayIntentBits.GuildMessages)).toBe(true);
+        });
     });
 
-    test('should configure client with MessageContent intent', () => {
-        const client = createDiscordClient(validConfig);
+    test('should configure client with MessageContent intent', async () => {
+        await withClient((client) => {
+            const intents = client.options.intents;
+            expect(intents).toBeDefined();
 
-        const intents = client.options.intents;
-        expect(intents).toBeDefined();
-
-        // Check that MessageContent intent is set
-        expect(intents.has(GatewayIntentBits.MessageContent)).toBe(true);
+            // Check that MessageContent intent is set
+            expect(intents.has(GatewayIntentBits.MessageContent)).toBe(true);
+        });
     });
 
-    test('should configure client with Guilds intent', () => {
-        const client = createDiscordClient(validConfig);
+    test('should configure client with Guilds intent', async () => {
+        await withClient((client) => {
+            const intents = client.options.intents;
+            expect(intents).toBeDefined();
 
-        const intents = client.options.intents;
-        expect(intents).toBeDefined();
-
-        // Check that Guilds intent is set
-        expect(intents.has(GatewayIntentBits.Guilds)).toBe(true);
+            // Check that Guilds intent is set
+            expect(intents.has(GatewayIntentBits.Guilds)).toBe(true);
+        });
     });
 
-    test('should configure client with DirectMessages intent', () => {
-        const client = createDiscordClient(validConfig);
+    test('should configure client with DirectMessages intent', async () => {
+        await withClient((client) => {
+            const intents = client.options.intents;
+            expect(intents).toBeDefined();
 
-        const intents = client.options.intents;
-        expect(intents).toBeDefined();
-
-        // Check that DirectMessages intent is set
-        expect(intents.has(GatewayIntentBits.DirectMessages)).toBe(true);
+            // Check that DirectMessages intent is set
+            expect(intents.has(GatewayIntentBits.DirectMessages)).toBe(true);
+        });
     });
 
-    test('should configure client with GuildMessageReactions intent', () => {
-        const client = createDiscordClient(validConfig);
+    test('should configure client with GuildMessageReactions intent', async () => {
+        await withClient((client) => {
+            const intents = client.options.intents;
+            expect(intents).toBeDefined();
 
-        const intents = client.options.intents;
-        expect(intents).toBeDefined();
-
-        // Check that GuildMessageReactions intent is set
-        expect(intents.has(GatewayIntentBits.GuildMessageReactions)).toBe(true);
+            // Check that GuildMessageReactions intent is set
+            expect(intents.has(GatewayIntentBits.GuildMessageReactions)).toBe(true);
+        });
     });
 
-    test('should configure client with DirectMessageReactions intent', () => {
-        const client = createDiscordClient(validConfig);
+    test('should configure client with DirectMessageReactions intent', async () => {
+        await withClient((client) => {
+            const intents = client.options.intents;
+            expect(intents).toBeDefined();
 
-        const intents = client.options.intents;
-        expect(intents).toBeDefined();
-
-        // Check that DirectMessageReactions intent is set
-        expect(intents.has(GatewayIntentBits.DirectMessageReactions)).toBe(true);
+            // Check that DirectMessageReactions intent is set
+            expect(intents.has(GatewayIntentBits.DirectMessageReactions)).toBe(true);
+        });
     });
 
-    test('should configure client with GuildPresences intent', () => {
-        const client = createDiscordClient(validConfig);
+    test('should configure client with GuildPresences intent', async () => {
+        await withClient((client) => {
+            const intents = client.options.intents;
+            expect(intents).toBeDefined();
 
-        const intents = client.options.intents;
-        expect(intents).toBeDefined();
-
-        // Check that GuildPresences intent is set
-        expect(intents.has(GatewayIntentBits.GuildPresences)).toBe(true);
+            // Check that GuildPresences intent is set
+            expect(intents.has(GatewayIntentBits.GuildPresences)).toBe(true);
+        });
     });
 
-    test('should configure client with all seven required intents', () => {
-        const client = createDiscordClient(validConfig);
+    test('should configure client with all seven required intents', async () => {
+        await withClient((client) => {
+            const intents = client.options.intents;
+            expect(intents).toBeDefined();
 
-        const intents = client.options.intents;
-        expect(intents).toBeDefined();
+            // Check all seven intents are set together
+            const expectedIntents = [
+                GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildMessages,
+                GatewayIntentBits.MessageContent,
+                GatewayIntentBits.DirectMessages,
+                GatewayIntentBits.GuildMessageReactions,
+                GatewayIntentBits.DirectMessageReactions,
+                GatewayIntentBits.GuildPresences,
+            ];
 
-        // Check all seven intents are set together
-        const expectedIntents = [
-            GatewayIntentBits.Guilds,
-            GatewayIntentBits.GuildMessages,
-            GatewayIntentBits.MessageContent,
-            GatewayIntentBits.DirectMessages,
-            GatewayIntentBits.GuildMessageReactions,
-            GatewayIntentBits.DirectMessageReactions,
-            GatewayIntentBits.GuildPresences,
-        ];
-
-        expect(intents.has(expectedIntents)).toBe(true);
+            expect(intents.has(expectedIntents)).toBe(true);
+        });
     });
 
-    test('should configure client with Channel partial for DM support', () => {
-        const client = createDiscordClient(validConfig);
-
-        const partials = client.options.partials;
-        expect(partials).toBeDefined();
-        expect(partials).toContain(Partials.Channel);
+    test('should configure client with Channel partial for DM support', async () => {
+        await withClient((client) => {
+            const partials = client.options.partials;
+            expect(partials).toBeDefined();
+            expect(partials).toContain(Partials.Channel);
+        });
     });
 
-    test('should create client without calling login', () => {
-        const client = createDiscordClient(validConfig);
-
-        // The client should not be logged in yet (no ready state)
-        expect(client.isReady()).toBe(false);
+    test('should create client without calling login', async () => {
+        await withClient((client) => {
+            // The client should not be logged in yet (no ready state)
+            expect(client.isReady()).toBe(false);
+        });
     });
 
-    test('should not throw error when creating client', () => {
-        expect(() => createDiscordClient(validConfig)).not.toThrow();
+    test('should not throw error when creating client', async () => {
+        let created: Client | undefined;
+        try {
+            expect(() => {
+                created = createDiscordClient(validConfig);
+            }).not.toThrow();
+        } finally {
+            await created?.destroy();
+        }
     });
 });

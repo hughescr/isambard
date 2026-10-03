@@ -317,16 +317,21 @@ describe('createDiscordBot', () => {
         return coordinator;
     }
 
-    test('should return an object with start and stop methods', () => {
+    test('should return an object with start and stop methods', async () => {
         const bot = createDiscordBot({
             config: mockConfig,
 
             channelRegistry: mockChannelRegistry,
         });
 
-        expect(bot).toBeDefined();
-        expect(typeof bot.start).toBe('function');
-        expect(typeof bot.stop).toBe('function');
+        try {
+            expect(bot).toBeDefined();
+            expect(typeof bot.start).toBe('function');
+            expect(typeof bot.stop).toBe('function');
+        } finally {
+            // The bot built a real discord.js Client (REST sweeper intervals); stop() destroys it.
+            await bot.stop();
+        }
     });
 
     test('should call client.login with bot token when start() is called', async () => {
