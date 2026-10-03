@@ -113,15 +113,19 @@ describe('scenarios', () => {
 
     // Concurrent tests cannot be attributed, so BOTH must fail (even B, which leaks nothing)
     describe('concurrent overlap', () => {
-        const gate = Promise.withResolvers<void>();
+        // Each waits for the other, so they overlap whichever order the (randomized) runner starts them in
+        const aStarted = Promise.withResolvers<void>();
+        const bFinished = Promise.withResolvers<void>();
 
         test.concurrent('SCENARIO concurrent A leaks a timer until afterAll', async () => {
             pendingFixtureTimers.push(setTimeout(() => undefined, LEAK_MS + 6));
-            await gate.promise;
+            aStarted.resolve();
+            await bFinished.promise;
         });
 
-        test.concurrent('SCENARIO concurrent B releases A', () => {
-            gate.resolve();
+        test.concurrent('SCENARIO concurrent B releases A', async () => {
+            await aStarted.promise;
+            bFinished.resolve();
         });
     });
 
