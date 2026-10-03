@@ -1,5 +1,6 @@
 /* eslint-disable sonarjs/no-hardcoded-ip -- the fetcher's DNS answers and pinned addresses are literal IP addresses by definition */
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { once } from 'node:events';
 import http from 'node:http';
 import type https from 'node:https';
 import type { AddressInfo } from 'node:net';
@@ -541,6 +542,21 @@ describe('fetchUnderHostPolicy', () => {
         let server: http.Server;
         let port: number;
         const hosts: (string | undefined)[] = [];
+        // The real `http.request`, observed: each client request's 'close' promise is awaited after the
+        // test, because Bun's node:net defers the client socket teardown to a setImmediate that would
+        // otherwise still be pending when the test returns.
+        const closed: Promise<unknown>[] = [];
+        const realHttp: typeof http.request = ((...args: Parameters<typeof http.request>) => {
+            const clientRequest = http.request(...args);
+            closed.push(once(clientRequest, 'close'));
+            return clientRequest;
+        }) as typeof http.request;
+        const observedTransport: NonNullable<UrlFetchOptions['request']> = {
+            http:  realHttp,
+            https: () => {
+                throw new Error('https is not used by the real-socket tests');
+            },
+        };
 
         beforeAll(async () => {
             server = http.createServer((request, response) => {
@@ -556,6 +572,11 @@ describe('fetchUnderHostPolicy', () => {
 
         beforeEach(() => {
             hosts.length = 0;
+            closed.length = 0;
+        });
+
+        afterEach(async () => {
+            await Promise.all(closed);
         });
 
         afterAll(async () => {
@@ -569,6 +590,7 @@ describe('fetchUnderHostPolicy', () => {
         test('falls back past a refusing answer on the real transport', async () => {
             const resolved: string[] = [];
             const result = await fetchUnderHostPolicy(`http://fallback.invalid:${port}/a.pdf`, baseOptions({
+                request: observedTransport,
                 resolve: async (host) => {
                     resolved.push(host);
                     return [{ address: '::1', family: 6 }, { address: '127.0.0.1', family: 4 }];
@@ -588,6 +610,7 @@ describe('fetchUnderHostPolicy', () => {
 
         test('connects to the pinned address, not a fresh resolution', async () => {
             const result = await fetchUnderHostPolicy(`http://pinned.invalid:${port}/a.pdf`, baseOptions({
+                request:      observedTransport,
                 resolve:      async () => [{ address: '127.0.0.1', family: 4 }],
                 checkAddress: raw => (raw === '127.0.0.1' ? { ok: true, address: raw, family: 4 } : { ok: false, reason: 'only loopback in this test' }),
             }));
