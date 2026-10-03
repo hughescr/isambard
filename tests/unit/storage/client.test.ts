@@ -332,6 +332,7 @@ describe('buildTimingMiddleware', () => {
     });
 
     afterEach(() => {
+        jest.useRealTimers();
         mockLogger.debug.mockRestore();
     });
 
