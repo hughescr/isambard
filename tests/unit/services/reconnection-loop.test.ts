@@ -442,6 +442,7 @@ describe('createReconnectionLoop', () => {
             const delay2 = fail2Payload.nextRetryAt!.getTime() - baseNow;
 
             expect(delay2).toBeGreaterThan(delay1);
+            loop.stop();
         });
     });
 
