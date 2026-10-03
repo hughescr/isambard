@@ -325,10 +325,11 @@ describe('AsyncIndexer', () => {
             jest.advanceTimersByTime(0);
             expect(mockEmbedder.encode).toHaveBeenCalledTimes(1);
             expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ path: createMemoryPath('/retry/embed'), attempt: 1, nextAttempt: 2, delayMs: 250, msg: 'AsyncIndexer job failed: retrying with bounded backoff' }));
-            jest.advanceTimersByTime(249);
+            // 150, not 249: Bun's fake clock folds real elapsed ms into every advance, so "1ms short" is flaky.
+            jest.advanceTimersByTime(150);
             await Promise.resolve();
             expect(mockEmbedder.encode).toHaveBeenCalledTimes(1);
-            jest.advanceTimersByTime(1);
+            jest.advanceTimersByTime(100);
             await indexer.drain();
             expect(mockEmbedder.encode).toHaveBeenCalledTimes(2);
             expect(mockVectorIndex.upsert).toHaveBeenCalledTimes(1);
@@ -419,7 +420,9 @@ describe('AsyncIndexer', () => {
             // Not jest.getTimerCount(): that counts every fake timer in the process, so any real async
             // turn lets another test's leftover work add one (#184, as #180).
             expect(indexer.trackedPathCount).toBe(1);
-            jest.advanceTimersByTime(AsyncIndexer.RETRY_BASE_DELAY_MS - 1);
+            // Bun's fake clock folds real elapsed ms into every advance (even advanceTimersByTime(0)), so
+            // "1ms short" can land on the delay on a cold or loaded run; stay well clear of it.
+            jest.advanceTimersByTime(AsyncIndexer.RETRY_BASE_DELAY_MS - 100);
             expect(mockVectorIndex.deleteAndTombstone).toHaveBeenCalledTimes(1);
             indexer.enqueue({ kind: 'upsert', layer: createIndexLayer('identity'), path, content: 'new', ttl: undefined, sourceUpdatedAt: 2 });
             // Superseding the sleeping retry cancels its backoff: the delete never re-runs, even past the delay.
