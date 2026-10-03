@@ -802,6 +802,34 @@ describe.concurrent('LiveSignals.snapshot()', () => {
             }
         });
 
+        test('a cold fetch that beats the bootstrap timeout cancels the timeout timer (#181)', async () => {
+            const client = makeBskyClient({
+                getFeed: async () => ({ items: [makeFeedItem('Post', 'alice.bsky')] }),
+            });
+            // Swap in recording timers: a bootstrap timer left pending outlives the snapshot (and,
+            // in tests, the test that took it) by up to BOOTSTRAP_TIMEOUT_MS.
+            const originalSetTimeout = globalThis.setTimeout;
+            const originalClearTimeout = globalThis.clearTimeout;
+            const bootstrapTimer = Symbol('bootstrap timer');
+            const cleared: unknown[] = [];
+            (globalThis as unknown as Record<string, unknown>).setTimeout = () => bootstrapTimer;
+            (globalThis as unknown as Record<string, unknown>).clearTimeout = (handle: unknown) => {
+                cleared.push(handle);
+            };
+            try {
+                const ls = new LiveSignals(makeDefaultDeps({
+                    bskyClient:        client,
+                    idleSignalsConfig: { ...FULL_CONFIG, bskyForYouEnabled: false, bskyNotificationsEnabled: false, activityLogEnabled: false },
+                }));
+                const signals = await ls.snapshot();
+                expect(signals.filter(s => s.kind === 'bsky-discover')).toHaveLength(1);
+                expect(cleared).toEqual([bootstrapTimer]);
+            } finally {
+                (globalThis as unknown as Record<string, unknown>).setTimeout = originalSetTimeout;
+                (globalThis as unknown as Record<string, unknown>).clearTimeout = originalClearTimeout;
+            }
+        });
+
         test('feature flag off: no fetch, no signals', async () => {
             const client = makeBskyClient({
                 getFeed: async () => ({ items: [makeFeedItem('Post', 'alice.bsky')] }),

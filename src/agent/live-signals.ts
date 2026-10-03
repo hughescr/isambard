@@ -76,12 +76,21 @@ export interface RecentChannel {
 /** Initial bootstrap fetch timeout (ms): wait at most this long on the very first call. */
 const BOOTSTRAP_TIMEOUT_MS = 2000;
 
-/** Give a cold signal fetch one short chance to finish without delaying idle status indefinitely. */
+/**
+ * Give a cold signal fetch one short chance to finish without delaying idle status indefinitely.
+ * Cancels the timeout once the race settles, so a fetch that wins does not leave a timer pending
+ * for the rest of the window.
+ */
 async function waitForBootstrap(refresh: Promise<void>): Promise<void> {
-    await Promise.race([
-        refresh,
-        new Promise<void>((resolve) => { setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS); }),
-    ]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        await Promise.race([
+            refresh,
+            new Promise<void>((resolve) => { timer = setTimeout(resolve, BOOTSTRAP_TIMEOUT_MS); }),
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 /**
