@@ -22,11 +22,13 @@ const strykerConfig = await withMutators({
     incremental:      true,
     reporters:        isCI ? ['clear-text', 'progress', 'dashboard'] : ['llm-mutator', 'progress', 'json', 'html'],
     testRunner:       'bun',
-    // timeout is per mutant run. A static mutant runs the WHOLE suite, which takes ~26-29 s under
-    // local concurrency 18 — so 30 s turned slow static runs (including real survivors) into
-    // false Timeouts (#181). 60 s, as in CI, leaves 2x headroom; only genuinely hanging mutants
-    // wait the extra time.
-    bun:              { inspectorTimeout: isCI ? 30_000 : 5000, timeout: 60_000 },
+    // timeout is per mutant run. A static mutant runs the WHOLE suite: ~26-29 s at local
+    // concurrency 18 when static runs are a minority, but when most runs are static (a cold cache,
+    // or many static verdicts invalidated at once) bailed static runs took up to 42 s for ~13k of
+    // the ~15k tests, so a full static run (any static survivor) needs ~50-60 s. Below that, slow
+    // static runs — real survivors included — came back as false Timeouts (#181). 120 s keeps 2x
+    // headroom; only genuinely hanging mutants wait the extra time, and their verdicts are cached.
+    bun:              { inspectorTimeout: isCI ? 30_000 : 5000, timeout: isCI ? 60_000 : 120_000 },
     plugins:          isCI ? ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'] : ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker', '@hughescr/stryker-llm-mutator'],
     coverageAnalysis: 'perTest',
     // Bun runner's dry run remains full; mutant runs stop after the first failing test.
