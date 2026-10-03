@@ -96,9 +96,11 @@ export async function withDynamoTimeout<T>(
 ): Promise<T> {
     const { timeoutMs, operation: operationName, logger } = options;
 
-    // Create timeout promise
+    // Create timeout promise; the timer is cleared in the `finally` below once the race settles,
+    // so a fast operation does not leave a `timeoutMs` timer pending (#183).
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
-        setTimeout(() => {
+        timer = setTimeout(() => {
             const error = new DynamoTimeoutError(operationName, timeoutMs);
 
             // Log timeout if logger provided
@@ -125,6 +127,8 @@ export async function withDynamoTimeout<T>(
             _healthNotifier(err);
         }
         throw err;
+    } finally {
+        clearTimeout(timer);
     }
 }
 

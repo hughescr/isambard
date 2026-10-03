@@ -62,6 +62,41 @@ describe('withDynamoTimeout', () => {
             expect(mockLogger.error).not.toHaveBeenCalled();
         });
 
+        it('should leave no timeout timer pending after the operation succeeds', async () => {
+            await withDynamoTimeout(() => Promise.resolve('success'), {
+                timeoutMs: 5000,
+                operation: 'GetItem',
+                logger:    mockLogger,
+            });
+
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        it('should leave no timeout timer pending after the operation rejects', async () => {
+            const resultPromise = withDynamoTimeout(() => Promise.reject(new Error('boom')), {
+                timeoutMs: 5000,
+                operation: 'PutItem',
+                logger:    mockLogger,
+            });
+
+            await expect(resultPromise).rejects.toThrow('boom');
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        it('should leave no timer pending after the timeout fires', async () => {
+            const resultPromise = withDynamoTimeout(() => new Promise<string>(() => {}), {
+                timeoutMs: 500,
+                operation: 'Query',
+                logger:    mockLogger,
+            });
+
+            expect(jest.getTimerCount()).toBe(1);
+            jest.advanceTimersByTime(500);
+
+            await expect(resultPromise).rejects.toThrow(DynamoTimeoutError);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
         it('should work without logger', async () => {
             const operation = mock(() => Promise.resolve(42));
 
