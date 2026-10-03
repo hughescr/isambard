@@ -81,6 +81,7 @@ const realCreateHealthNotificationListener = importedCreateHealthNotificationLis
 const realCreateSessionAmbience = importedCreateSessionAmbience;
 const realCreateApprovedActionRetryListener = staticServicesModule.createApprovedActionRetryListener;
 const realCreateApp = staticIndexModule.createApp;
+const realCreateReconnectionLoop = staticServicesModule.createReconnectionLoop;
 
 /**
  * The #41 session-host members of a mocked DiscordBot. `ready` NEVER resolves, so app.start()'s
@@ -355,6 +356,41 @@ describe('createApp', () => {
             error: 'listener stop failed',
             msg:   'Best-effort shutdown failed: email listener',
         });
+    });
+
+    test('a failed DynamoDB startup probe starts the reconnection loop exactly once (#182)', async () => {
+        wireHappyPath(spies);
+        // wireHappyPath's mock client cannot answer the startup probe, so it fails. The offline
+        // health subscriber starts the loop on the resulting CONNECT_FAIL; the probe's catch block
+        // must not start it a second time (a second start() resets attemptCount and sends a second
+        // RECONNECT_ATTEMPT before the first backoff).
+        let dynamoStarts = 0;
+        spies.push(spyOn(staticServicesModule, 'createReconnectionLoop').mockImplementation((options) => {
+            const loop = realCreateReconnectionLoop(options);
+            if(options.service !== 'dynamodb') {
+                return loop;
+            }
+            return {
+                ...loop,
+                start: () => {
+                    dynamoStarts += 1;
+                    loop.start();
+                },
+            };
+        }));
+        let dynamoReconnectAttempts = 0;
+        const realSendEvent = staticServicesModule.ServiceHealthRegistryImpl.prototype.sendEvent;
+        spies.push(spyOn(staticServicesModule.ServiceHealthRegistryImpl.prototype, 'sendEvent').mockImplementation(function(this: unknown, ...args: Parameters<typeof realSendEvent>) {
+            if(args[0] === 'dynamodb' && args[1].type === 'RECONNECT_ATTEMPT') {
+                dynamoReconnectAttempts += 1;
+            }
+            realSendEvent.apply(this as never, args);
+        }));
+
+        await staticIndexModule.createApp();
+
+        expect(dynamoStarts).toBe(1);
+        expect(dynamoReconnectAttempts).toBe(1);
     });
 
     test('continues cleanup after a best-effort failure and propagates a later fatal failure', async () => {
