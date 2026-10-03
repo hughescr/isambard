@@ -1,6 +1,7 @@
 import { describe, test, expect, mock, jest, beforeEach, afterEach, type Mock } from 'bun:test';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
 import { createReconnectionLoop } from '@/services/reconnection-loop';
+import { listRunningReconnectionLoops } from '@/services/running-reconnection-loops';
 import type { ServiceName } from '@/services/types';
 
 function createMockRegistry(): ServiceHealthRegistry {
@@ -991,6 +992,103 @@ describe('createReconnectionLoop', () => {
             // running=false when catch ran, so outer if(running) guard prevented timer
             expect(jest.getTimerCount()).toBe(0);
             expect(connectFn).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // Running-loop registry (lets the test preload fail a test that leaves a loop running)
+    // -------------------------------------------------------------------------
+
+    describe('running-loop registry', () => {
+        const runningServices = (): ServiceName[] => listRunningReconnectionLoops().map(entry => entry.service);
+        const pending = async (): Promise<void> => Promise.withResolvers<void>().promise;
+
+        test('start() lists the loop with its service until stop()', () => {
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn: mock(pending), policy: DETERMINISTIC_POLICY });
+
+            loop.start();
+            expect(runningServices()).toEqual([SERVICE]);
+
+            loop.stop();
+            expect(runningServices()).toEqual([]);
+        });
+
+        test('a loop with a connect attempt in flight stays listed', () => {
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn: mock(pending), policy: DETERMINISTIC_POLICY });
+
+            loop.start();
+
+            expect(runningServices()).toEqual([SERVICE]);
+            loop.stop();
+        });
+
+        test('a successful connect delists the loop', async () => {
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn: mock(async () => undefined), policy: DETERMINISTIC_POLICY });
+
+            loop.start();
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(runningServices()).toEqual([]);
+        });
+
+        test('restart() after a successful connect lists the loop again', async () => {
+            let attempts = 0;
+            const connectFn = mock(async () => {
+                attempts += 1;
+                if(attempts > 1) {
+                    await pending();
+                }
+            });
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn, policy: DETERMINISTIC_POLICY });
+            loop.start();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(runningServices()).toEqual([]);
+
+            loop.restart();
+
+            expect(runningServices()).toEqual([SERVICE]);
+            loop.stop();
+        });
+
+        test('a failing loop waiting on its retry timer stays listed until stop()', async () => {
+            const failing = mock(async () => {
+                throw new Error('offline');
+            });
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn: failing, policy: DETERMINISTIC_POLICY });
+
+            loop.start();
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(runningServices()).toEqual([SERVICE]);
+
+            loop.stop();
+            expect(runningServices()).toEqual([]);
+        });
+
+        test('the registered stop function stops the loop itself', () => {
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn: mock(pending), policy: DETERMINISTIC_POLICY });
+            loop.start();
+
+            listRunningReconnectionLoops()[0]?.stop();
+
+            expect(loop.isRunning()).toBe(false);
+            expect(runningServices()).toEqual([]);
+        });
+
+        test('a stopped loop whose in-flight attempt fails late neither re-lists nor arms a retry', async () => {
+            const deferred = Promise.withResolvers<void>();
+            const loop = createReconnectionLoop({ service: SERVICE, registry, connectFn: mock(async () => deferred.promise), policy: DETERMINISTIC_POLICY });
+            loop.start();
+            loop.stop();
+
+            deferred.reject(new Error('late'));
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(runningServices()).toEqual([]);
+            expect(jest.getTimerCount()).toBe(0);
         });
     });
 

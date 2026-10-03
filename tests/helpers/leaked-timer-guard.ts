@@ -1,16 +1,28 @@
 /**
- * Leaked real-timer guard. Wraps the global timer creators so every REAL timer a test creates is
+ * Leaked real-timer guard. Wraps every real timer creator the runtime offers (the global
+ * `setTimeout`/`setInterval`/`setImmediate`, the same three on `node:timers`, `Bun.sleep`,
+ * `node:timers/promises`, and `AbortSignal.timeout`) so each REAL timer a test creates is
  * remembered with a short creation stack, and reports any that is still pending once the test
  * (or, at file scope, the test file) is over. A pending real timer after a test is a leak: it can
  * fire into a later test, keep the process alive, or hide a missing `stop()`/`clearTimeout()`.
+ * It also checks "live owners" (running reconnection loops), which can leak with no timer armed.
  *
  * There is deliberately no allowlist and `unref()` does not exempt a timer. Fake timers
- * (`jest.useFakeTimers()`) are out of scope: while they are active the wrapper passes straight
+ * (`jest.useFakeTimers()`) are out of scope: while they are active the wrappers pass straight
  * through without recording anything.
+ *
+ * Ownership: a timer belongs to the test during which it was created. When tests overlap
+ * (`test.concurrent`) the runner gives no per-test context, so the overlapping tests are treated
+ * as one group: nothing is collected until the LAST overlapping test ends, and the failure is
+ * reported on that last test (the creation stack still names the culprit). Timers created before
+ * the first test of a file (module scope, `beforeAll`) belong to the file and are reported at
+ * file teardown.
  *
  * "Pending" is read from the handle's own `_destroyed` flag, which Bun sets when a timer fires
  * (one-shot), is cleared via `clearTimeout`/`clearInterval`/`clearImmediate`, or is `close()`d.
- * That makes the guard independent of how the timer was cancelled.
+ * That makes the guard independent of how the timer was cancelled. `Bun.sleep`,
+ * `AbortSignal.timeout` and the promise timers are re-implemented on a real tracked timer so that
+ * cancelling them truly cancels them (a cancelled sleep never resumes its caller).
  *
  * @module tests/helpers/leaked-timer-guard
  */
@@ -20,7 +32,7 @@ type TimerCreator = (callback: unknown, delay?: unknown, ...rest: unknown[]) => 
 type TimerCanceller = (handle: unknown) => unknown;
 type SleepFn = (duration: unknown) => Promise<unknown>;
 
-/** The slice of the global object (and `Bun`) the guard patches; injectable so it is unit-testable. */
+/** The slice of the global object (and `node:timers`) the guard patches; injectable so it is unit-testable. */
 export interface TimerGuardHost {
     setTimeout:     TimerCreator
     setInterval:    TimerCreator
@@ -35,14 +47,45 @@ export interface SleepHost {
     sleep: SleepFn
 }
 
-export type LeakedTimerKind = 'setTimeout' | 'setInterval' | 'setImmediate' | 'Bun.sleep';
+/** `AbortSignal`'s patchable static deadline. */
+export interface AbortSignalHost {
+    timeout: (ms: number) => AbortSignal
+}
 
-/** One timer found still pending at the end of its test. */
+/** The `node:timers/promises` creators the guard patches. */
+export interface PromiseTimersHost {
+    setTimeout:   (delay?: unknown, value?: unknown, options?: unknown) => Promise<unknown>
+    setImmediate: (value?: unknown, options?: unknown) => Promise<unknown>
+}
+
+/** Something that can be running without any timer armed (e.g. a reconnection loop with an in-flight attempt). */
+export interface LiveOwner {
+    /** Stable identity, used to tell owners that predate a test from ones the test started */
+    readonly id:    unknown
+    readonly label: string
+    /** Stops the owner so a leak is reported once and cannot cascade into later tests */
+    stop():         void
+}
+
+/** Optional extra runtime surfaces the guard covers beyond the global timers. */
+export interface TimerGuardExtras {
+    nodeTimers?:    TimerGuardHost
+    promiseTimers?: PromiseTimersHost
+    abortSignal?:   AbortSignalHost
+    /** Lists the owners that are running right now */
+    liveOwners?:    () => readonly LiveOwner[]
+}
+
+export type LeakedTimerKind = 'setTimeout' | 'setInterval' | 'setImmediate' | 'Bun.sleep' | 'AbortSignal.timeout' | 'timers/promises.setTimeout' | 'timers/promises.setImmediate' | 'running-owner';
+
+/** One timer (or running owner) found still live at the end of its test. */
 export interface LeakedTimer {
     readonly kind:    LeakedTimerKind
     readonly delayMs: number | undefined
     /** The first few caller frames at creation, guard frames removed */
     readonly stack:   readonly string[]
+    /** Set for a running owner: its name */
+    readonly label?:  string
 }
 
 interface TrackedTimer extends LeakedTimer {
@@ -76,11 +119,32 @@ function delayOf(value: unknown): number | undefined {
     return typeof value === 'number' ? value : undefined;
 }
 
+/** How long to wait for a `Bun.sleep` argument, or undefined when it is not something this guard can schedule. */
+function sleepMsOf(duration: unknown): number | undefined {
+    const raw = duration instanceof Date ? duration.getTime() - Date.now() : duration;
+    if(typeof raw !== 'number' || !Number.isFinite(raw)) {
+        return undefined;
+    }
+    return Math.max(0, raw);
+}
+
+function signalOf(options: unknown): AbortSignal | undefined {
+    if(typeof options !== 'object' || options === null) {
+        return undefined;
+    }
+    const { signal } = options as { signal?: unknown };
+    return signal instanceof AbortSignal ? signal : undefined;
+}
+
 /** Renders leaks as one failure message naming every offender's kind, delay and creation frames. */
 export function formatLeakedTimers(leaks: readonly LeakedTimer[], scope: 'test' | 'file'): string {
     const where = scope === 'test' ? 'this test finished' : 'this test file finished';
-    const lines = [`${leaks.length} real timer(s) still pending after ${where}. Every timer must be cleared (clearTimeout / clearInterval / stop()) or replaced with fake timers:`];
+    const lines = [`${leaks.length} leaked timer(s) or running owner(s) after ${where}. Every timer must be cleared (clearTimeout / clearInterval / stop()) or replaced with fake timers:`];
     for(const leak of leaks) {
+        if(leak.label !== undefined) {
+            lines.push(`  - ${leak.kind} "${leak.label}" is still running (stop() it)`);
+            continue;
+        }
         const delay = leak.delayMs === undefined ? '' : ` ${leak.delayMs}ms`;
         lines.push(`  - ${leak.kind}${delay}, created at:`);
         for(const frame of leak.stack) {
@@ -94,15 +158,16 @@ export function formatLeakedTimers(leaks: readonly LeakedTimer[], scope: 'test' 
 export interface TimerGuard {
     /** Patches the host's timer creators. Idempotent. */
     install(): void
-    /** Restores the host's original timer creators. */
+    /** Restores every original creator. */
     uninstall(): void
-    /** Marks the start of a test: only timers created from here on count against it. */
+    /** Marks the start of a test. Overlapping (concurrent) tests are treated as one group. */
     markTestStart(): void
-    /** Marks the start of a test file: only timers created from here on count against it. */
-    markFileStart(): void
     /**
-     * Returns every still-pending timer created since the matching mark, cancelling each one so a
-     * leak is reported once and cannot cascade into later tests; also forgets finished timers.
+     * Ends a test (`'test'`) or the file (`'file'`). Returns every still-pending timer and running
+     * owner belonging to it, cancelling/stopping each so a leak is reported once and cannot cascade
+     * into later tests; also forgets finished timers. For `'test'`, an empty result while other
+     * overlapping tests are still running is "not yet attributable", not "clean". `'file'` covers
+     * everything since the previous file's teardown (module scope included) and starts the next file.
      */
     collectLeaks(scope: 'test' | 'file'): LeakedTimer[]
 }
@@ -110,34 +175,53 @@ export interface TimerGuard {
 /**
  * Builds a guard bound to `host`.
  * @param host Object whose timer creators are wrapped (the global object in production)
- * @param isFakeTimers True while fake timers are active, so the wrapper must not record
+ * @param isFakeTimers True while fake timers are active, so the wrappers must not record
  * @param sleepHost Object whose `sleep` is wrapped too (`Bun` in production); omit to leave sleeping untracked
+ * @param extras Further runtime surfaces to cover (node:timers, node:timers/promises, AbortSignal, live owners)
  * @returns The guard controls
  */
-export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boolean, sleepHost?: SleepHost): TimerGuard {
+export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boolean, sleepHost?: SleepHost, extras: TimerGuardExtras = {}): TimerGuard {
     let installed = false;
     let seq = 0;
-    let testStartSeq = 0;
+    let activeTests = 0;
+    let groupStartSeq = 0;
+    let groupBaseline = new Set<unknown>();
     let fileStartSeq = 0;
     let tracked: TrackedTimer[] = [];
+    const patches: (() => void)[] = [];
 
-    const originals = {
-        setTimeout:   host.setTimeout,
-        setInterval:  host.setInterval,
-        setImmediate: host.setImmediate,
-        sleep:        sleepHost?.sleep,
-    };
+    // Captured now, before install() replaces them, so tracked sleeps/deadlines use the real timers
+    const rawSetTimeout = host.setTimeout;
+    const rawClearTimeout = host.clearTimeout;
+    const rawSetImmediate = host.setImmediate;
+    const rawClearImmediate = host.clearImmediate;
 
-    function wrapCreator(kind: Exclude<LeakedTimerKind, 'Bun.sleep'>, original: TimerCreator, cancel: TimerCanceller): TimerCreator {
+    function track(entry: Omit<TrackedTimer, 'seq' | 'stack'>): void {
+        seq += 1;
+        tracked.push({ ...entry, seq, stack: captureStack() });
+    }
+
+    /** Runs `fire` on a real timer or immediate that the guard tracks; returns how to cancel it. */
+    function startTracked(kind: LeakedTimerKind, delayMs: number | undefined, how: 'timeout' | 'immediate', fire: () => void): () => void {
+        const handle = how === 'timeout' ? rawSetTimeout(fire, delayMs) : rawSetImmediate(fire);
+        const cancel = (): void => {
+            if(how === 'timeout') {
+                rawClearTimeout(handle);
+            } else {
+                rawClearImmediate(handle);
+            }
+        };
+        track({ kind, delayMs, isPending: () => isHandlePending(handle), cancel });
+        return cancel;
+    }
+
+    function wrapCreator(kind: Exclude<LeakedTimerKind, 'Bun.sleep' | 'AbortSignal.timeout' | 'running-owner' | `timers/promises.${string}`>, original: TimerCreator, cancel: TimerCanceller): TimerCreator {
         return (callback, delay, ...rest) => {
             const handle = original(callback, delay, ...rest);
             if(!isFakeTimers()) {
-                seq += 1;
-                tracked.push({
-                    seq,
+                track({
                     kind,
                     delayMs:   delayOf(delay),
-                    stack:     captureStack(),
                     isPending: () => isHandlePending(handle),
                     cancel:    () => { cancel(handle); },
                 });
@@ -146,36 +230,124 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
         };
     }
 
+    function patchCreators(target: TimerGuardHost): void {
+        const originals = { setTimeout: target.setTimeout, setInterval: target.setInterval, setImmediate: target.setImmediate };
+        target.setTimeout = wrapCreator('setTimeout', originals.setTimeout, target.clearTimeout);
+        target.setInterval = wrapCreator('setInterval', originals.setInterval, target.clearInterval);
+        target.setImmediate = wrapCreator('setImmediate', originals.setImmediate, target.clearImmediate);
+        patches.push(() => {
+            target.setTimeout = originals.setTimeout;
+            target.setInterval = originals.setInterval;
+            target.setImmediate = originals.setImmediate;
+        });
+    }
+
     function wrapSleep(original: SleepFn): SleepFn {
         return async (duration) => {
-            const sleeping = original(duration);
-            if(!isFakeTimers()) {
-                let settled = false;
-                const markSettled = (): void => {
-                    settled = true;
-                };
-                const watch = async (): Promise<void> => {
-                    try {
-                        await sleeping;
-                    } catch{
-                        // a rejected sleep is still over; the caller sees the rejection via `sleeping`
-                    } finally {
-                        markSettled();
-                    }
-                };
-                void watch();
-                seq += 1;
-                tracked.push({
-                    seq,
-                    kind:      'Bun.sleep',
-                    delayMs:   delayOf(duration),
-                    stack:     captureStack(),
-                    isPending: () => !settled,
-                    cancel:    markSettled,
-                });
+            const ms = sleepMsOf(duration);
+            if(isFakeTimers() || ms === undefined) {
+                return original(duration);
             }
-            return sleeping;
+            return new Promise<void>((resolve) => {
+                // A cancelled sleep never resolves, so a leaked continuation cannot run into a later test
+                startTracked('Bun.sleep', ms, 'timeout', resolve);
+            });
         };
+    }
+
+    function wrapAbortTimeout(original: AbortSignalHost['timeout'], self: AbortSignalHost): AbortSignalHost['timeout'] {
+        return (ms) => {
+            if(isFakeTimers()) {
+                return original.call(self, ms);
+            }
+            const controller = new AbortController();
+            startTracked('AbortSignal.timeout', ms, 'timeout', () => {
+                controller.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+            });
+            return controller.signal;
+        };
+    }
+
+    function deferred(kind: 'timers/promises.setTimeout' | 'timers/promises.setImmediate', delayMs: number | undefined, how: 'timeout' | 'immediate', value: unknown, options: unknown): Promise<unknown> {
+        const signal = signalOf(options);
+        if(signal?.aborted === true) {
+            return Promise.reject(new DOMException('The operation was aborted', 'AbortError'));
+        }
+        return new Promise((resolve, reject) => {
+            const timer: { cancel?: () => void } = {};
+            const onAbort = (): void => {
+                timer.cancel?.();
+                reject(new DOMException('The operation was aborted', 'AbortError'));
+            };
+            timer.cancel = startTracked(kind, delayMs, how, () => {
+                signal?.removeEventListener('abort', onAbort);
+                resolve(value);
+            });
+            signal?.addEventListener('abort', onAbort, { once: true });
+        });
+    }
+
+    function patchPromiseTimers(target: PromiseTimersHost): void {
+        const originals = { setTimeout: target.setTimeout, setImmediate: target.setImmediate };
+        target.setTimeout = async (delay, value, options) => {
+            if(isFakeTimers()) {
+                return originals.setTimeout(delay, value, options);
+            }
+            return deferred('timers/promises.setTimeout', delayOf(delay), 'timeout', value, options);
+        };
+        target.setImmediate = async (value, options) => {
+            if(isFakeTimers()) {
+                return originals.setImmediate(value, options);
+            }
+            return deferred('timers/promises.setImmediate', undefined, 'immediate', value, options);
+        };
+        patches.push(() => {
+            target.setTimeout = originals.setTimeout;
+            target.setImmediate = originals.setImmediate;
+        });
+    }
+
+    function liveOwnerLeaks(isExcluded: (owner: LiveOwner) => boolean): TrackedTimer[] {
+        const leaks: TrackedTimer[] = [];
+        for(const owner of extras.liveOwners?.() ?? []) {
+            if(isExcluded(owner)) {
+                continue;
+            }
+            seq += 1;
+            leaks.push({
+                seq,
+                kind:      'running-owner',
+                delayMs:   undefined,
+                stack:     [],
+                label:     owner.label,
+                isPending: () => true,
+                cancel:    () => {
+                    owner.stop();
+                },
+            });
+        }
+        return leaks;
+    }
+
+    function collect(since: number, isOwnerExcluded: (owner: LiveOwner) => boolean): LeakedTimer[] {
+        const leaks: TrackedTimer[] = [];
+        const keep: TrackedTimer[] = [];
+        for(const timer of tracked) {
+            if(!timer.isPending()) {
+                continue;
+            }
+            if(timer.seq >= since) {
+                leaks.push(timer);
+            } else {
+                keep.push(timer);
+            }
+        }
+        leaks.push(...liveOwnerLeaks(isOwnerExcluded));
+        for(const leak of leaks) {
+            leak.cancel();
+        }
+        tracked = keep;
+        return leaks;
     }
 
     return {
@@ -184,51 +356,59 @@ export function createTimerGuard(host: TimerGuardHost, isFakeTimers: () => boole
                 return;
             }
             installed = true;
-            host.setTimeout = wrapCreator('setTimeout', originals.setTimeout, host.clearTimeout);
-            host.setInterval = wrapCreator('setInterval', originals.setInterval, host.clearInterval);
-            host.setImmediate = wrapCreator('setImmediate', originals.setImmediate, host.clearImmediate);
-            if(sleepHost !== undefined && originals.sleep !== undefined) {
-                sleepHost.sleep = wrapSleep(originals.sleep);
+            patchCreators(host);
+            if(extras.nodeTimers !== undefined) {
+                patchCreators(extras.nodeTimers);
+            }
+            if(sleepHost !== undefined) {
+                const { sleep: originalSleep } = sleepHost;
+                sleepHost.sleep = wrapSleep(originalSleep);
+                patches.push(() => {
+                    sleepHost.sleep = originalSleep;
+                });
+            }
+            if(extras.abortSignal !== undefined) {
+                const { abortSignal } = extras;
+                const { timeout: originalTimeout } = abortSignal;
+                abortSignal.timeout = wrapAbortTimeout(originalTimeout, abortSignal);
+                patches.push(() => {
+                    abortSignal.timeout = originalTimeout;
+                });
+            }
+            if(extras.promiseTimers !== undefined) {
+                patchPromiseTimers(extras.promiseTimers);
             }
         },
 
         uninstall(): void {
             installed = false;
-            host.setTimeout = originals.setTimeout;
-            host.setInterval = originals.setInterval;
-            host.setImmediate = originals.setImmediate;
-            if(sleepHost !== undefined && originals.sleep !== undefined) {
-                sleepHost.sleep = originals.sleep;
+            for(const restore of patches.splice(0)) {
+                restore();
             }
         },
 
         markTestStart(): void {
-            testStartSeq = seq + 1;
-        },
-
-        markFileStart(): void {
-            fileStartSeq = seq + 1;
+            if(activeTests === 0) {
+                groupStartSeq = seq + 1;
+                groupBaseline = new Set((extras.liveOwners?.() ?? []).map(owner => owner.id));
+            }
+            activeTests += 1;
         },
 
         collectLeaks(scope): LeakedTimer[] {
-            const since = scope === 'test' ? testStartSeq : fileStartSeq;
-            const leaks: TrackedTimer[] = [];
-            const keep: TrackedTimer[] = [];
-            for(const timer of tracked) {
-                if(!timer.isPending()) {
-                    continue;
-                }
-                if(timer.seq >= since) {
-                    leaks.push(timer);
-                } else {
-                    keep.push(timer);
-                }
+            if(scope === 'file') {
+                const leaks = collect(fileStartSeq, () => false);
+                // The next file starts here: its module-scope timers count against it, and no test of this file is still "active"
+                fileStartSeq = seq + 1;
+                groupStartSeq = seq + 1;
+                activeTests = 0;
+                return leaks;
             }
-            for(const leak of leaks) {
-                leak.cancel();
+            activeTests = Math.max(0, activeTests - 1);
+            if(activeTests > 0) {
+                return [];
             }
-            tracked = keep;
-            return leaks;
+            return collect(groupStartSeq, owner => groupBaseline.has(owner.id));
         },
     };
 }

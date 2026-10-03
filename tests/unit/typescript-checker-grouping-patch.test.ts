@@ -4,29 +4,15 @@ import { fileURLToPath } from 'node:url';
 describe('patched TypeScript checker grouping', () => {
     test('preserves grouping semantics while caching ancestor traversals per invocation', async () => {
         const fixture = fileURLToPath(new URL('../helpers/typescript-checker-grouping-fixture.mjs', import.meta.url));
-        const child = Bun.spawn(['node', fixture], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' });
-        const result = await Promise.race([
-            child.exited.then(exitCode => ({ kind: 'exit' as const, exitCode })),
-            new Promise<{ kind: 'timeout' }>((resolve) => {
-                AbortSignal.timeout(4000).addEventListener('abort', () => resolve({ kind: 'timeout' }), { once: true });
-            }),
-        ]);
-        if(result.kind === 'timeout') {
-            child.kill();
-            const exitCode = await child.exited;
-            const [stdout, stderr] = await Promise.all([
-                new Response(child.stdout).text(),
-                new Response(child.stderr).text(),
-            ]);
-            throw new Error(`TypeScript checker grouping fixture timed out and was reaped (exit ${exitCode})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
-        }
+        // Bun's own spawn timeout reaps a wedged fixture; it is a native timer, so no test-side timer is left behind
+        const child = Bun.spawn(['node', fixture], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe', timeout: 4000, killSignal: 'SIGKILL' });
         const [exitCode, stdout, stderr] = await Promise.all([
-            result.exitCode,
+            child.exited,
             new Response(child.stdout).text(),
             new Response(child.stderr).text(),
         ]);
         if(exitCode !== 0) {
-            throw new Error(`TypeScript checker grouping fixture failed (exit ${exitCode})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+            throw new Error(`TypeScript checker grouping fixture failed or timed out and was reaped (exit ${exitCode}, signal ${child.signalCode ?? 'none'})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
         }
         const metrics = JSON.parse(stdout) as {
             cachedAncestorCalls:         number

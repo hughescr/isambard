@@ -1,4 +1,5 @@
 import type { ServiceHealthRegistry } from './health-registry';
+import { markLoopRunning, markLoopStopped } from './running-reconnection-loops';
 import type { ServiceName } from './types';
 import { setupRetryContext, calculateDelay, type RetryDeps, type RetryPolicy } from '@/utils';
 
@@ -34,11 +35,21 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
         options.deps ?? {}
     );
 
+    // Identity under which the running-loop registry knows this loop (see running-reconnection-loops.ts)
+    const registryId = {};
     let running = false;
     let stopped = true;
     let pendingTimer: ReturnType<typeof setTimeout> | undefined;
     let attemptCount = 0;
     let currentAttemptPromise: Promise<boolean> | undefined;
+
+    function stopLoop(): void {
+        stopped = true;
+        running = false;
+        markLoopStopped(registryId);
+        clearTimeout(pendingTimer);
+        pendingTimer = undefined;
+    }
 
     function attemptConnect(): Promise<boolean> {
         if(currentAttemptPromise !== undefined) {
@@ -50,6 +61,7 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
                 await connectFn();
                 registry.sendEvent(service, { type: 'CONNECT_SUCCESS' });
                 running = false;
+                markLoopStopped(registryId);
                 currentAttemptPromise = undefined;
                 return true;
             } catch (err: unknown) {
@@ -83,6 +95,7 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
             pendingTimer = undefined;
             stopped = false;
             running = true;
+            markLoopRunning(registryId, service, stopLoop);
             attemptCount = 0;
             registry.sendEvent(service, { type: 'RECONNECT_ATTEMPT' });
             void attemptConnect();
@@ -99,18 +112,14 @@ export function createReconnectionLoop(options: ReconnectionLoopOptions): Reconn
             }
             // Re-engage the loop, preserving attemptCount so backoff continues to grow.
             running = true;
+            markLoopRunning(registryId, service, stopLoop);
             clearTimeout(pendingTimer);
             pendingTimer = undefined;
             registry.sendEvent(service, { type: 'RECONNECT_ATTEMPT' });
             void attemptConnect();
         },
 
-        stop(): void {
-            stopped = true;
-            running = false;
-            clearTimeout(pendingTimer);
-            pendingTimer = undefined;
-        },
+        stop: stopLoop,
 
         async triggerNow(): Promise<boolean> {
             if(currentAttemptPromise !== undefined) {

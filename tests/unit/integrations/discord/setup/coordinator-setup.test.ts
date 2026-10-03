@@ -358,6 +358,9 @@ describe('setupCoordinatorIntegration — conductor branch', () => {
     test('limits exchange summarization input to 500 characters per side', async () => {
         const activityLogger = { log: mock(() => Promise.resolve()) };
         const params = makeConductorParams({ activityLogger });
+        // Without a stub the shared mock calls through to the real generator, which would still be
+        // in flight (with its deadline timer armed) when this test ends
+        mockGenerateText.mockResolvedValueOnce('');
         spies.push(spyOn(responseSenderModule, 'sendEnvelopeResponse').mockResolvedValue({ status: 'sent', channelId: 'channel-1' as never, messageIds: [] }));
         const config = captureConfig(params);
         const userContent = 'u'.repeat(501);

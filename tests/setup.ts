@@ -1,10 +1,12 @@
 // Test setup and configuration
 /* eslint-disable import-x/order -- imports are intentionally interleaved with mock.module() calls to ensure correct mock ordering */
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Database } from 'bun:sqlite';
-import { afterAll, afterEach, beforeAll, beforeEach, jest, mock, type Mock } from 'bun:test';
-import { createTimerGuard, formatLeakedTimers, type SleepHost, type TimerGuardHost } from './helpers/leaked-timer-guard';
+import { afterAll, afterEach, beforeEach, jest, mock, type Mock } from 'bun:test';
+import { createTimerGuard, formatLeakedTimers, type AbortSignalHost, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from './helpers/leaked-timer-guard';
+import { listRunningReconnectionLoops } from '../src/services/running-reconnection-loops';
 
 // Configure Bun to use the Homebrew-installed libsqlite3.dylib on macOS.
 // Database.setCustomSQLite MUST be called before the first new Database() in the process.
@@ -753,17 +755,32 @@ Intl.DateTimeFormat = new Proxy(Intl.DateTimeFormat, {
 // Tests that need fake timers re-enable them in their own beforeEach.
 //
 // Leaked-timer guard (see tests/helpers/leaked-timer-guard.ts). Every REAL timer a test creates
-// (setTimeout / setInterval / setImmediate / Bun.sleep — which also covers ReconnectionLoop retry
-// timers and health-coalescer flush timers) must be gone by the time the test ends. There is
-// deliberately no allowlist: clear the timer, stop the owner, or use fake timers.
-// The boundary casts below hand the guard the real global object and `Bun`; the guard only ever
-// reads and replaces the six timer creators/cancellers and `sleep`.
-const timerGuard = createTimerGuard(globalThis as unknown as TimerGuardHost, () => jest.isFakeTimers(), Bun as unknown as SleepHost);
+// (setTimeout / setInterval / setImmediate, the same on node:timers and node:timers/promises,
+// Bun.sleep, AbortSignal.timeout — which also covers ReconnectionLoop retry timers and
+// health-coalescer flush timers) must be gone by the time the test ends, and no ReconnectionLoop
+// may still be running (it can have an attempt in flight and no timer armed). There is
+// deliberately no allowlist: clear the timer, stop the owner, or use fake timers. Timers created at
+// module scope or in beforeAll belong to the file and are checked at file teardown.
+// The boundary casts below hand the guard the real global object, `node:timers`, `Bun` and
+// `AbortSignal`; the guard only ever reads and replaces their timer creators/cancellers.
+// node:timers and node:timers/promises are fetched through createRequire, NOT imported: importing a
+// builtin first would freeze its ESM namespace before the guard patches it, and a test file's later
+// `import { setTimeout } from 'node:timers'` would then bind to the unwrapped function.
+const requireBuiltin = createRequire(import.meta.url);
+const nodeTimers = requireBuiltin('node:timers') as TimerGuardHost;
+const nodeTimerPromises = requireBuiltin('node:timers/promises') as PromiseTimersHost;
+const timerGuard = createTimerGuard(
+    globalThis as unknown as TimerGuardHost,
+    () => jest.isFakeTimers(),
+    Bun as unknown as SleepHost,
+    {
+        nodeTimers,
+        promiseTimers: nodeTimerPromises,
+        abortSignal:   AbortSignal as unknown as AbortSignalHost,
+        liveOwners:    () => listRunningReconnectionLoops().map(({ id, service, stop }) => ({ id, label: service, stop })),
+    }
+);
 timerGuard.install();
-
-beforeAll(() => {
-    timerGuard.markFileStart();
-});
 
 beforeEach(() => {
     timerGuard.markTestStart();

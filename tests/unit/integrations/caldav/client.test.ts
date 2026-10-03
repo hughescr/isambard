@@ -1480,28 +1480,16 @@ describe('CalDAVClient cache key rounding', () => {
         const parentTimeZone = process.env.TZ;
         const parentEffectiveZone = DateTime.local().zoneName;
         const child = Bun.spawn(['bun', 'tests/fixtures/caldav-cache-dst-probe.ts'], {
-            cwd:    process.cwd(),
-            env:    { ...process.env, TZ: 'America/Los_Angeles' },
-            stdout: 'pipe',
-            stderr: 'pipe',
+            cwd:        process.cwd(),
+            env:        { ...process.env, TZ: 'America/Los_Angeles' },
+            stdout:     'pipe',
+            stderr:     'pipe',
+            // Bun's own spawn timeout reaps a wedged fixture; it is a native timer, so no test-side timer is left behind
+            timeout:    4000,
+            killSignal: 'SIGKILL',
         });
-        const result = await Promise.race([
-            child.exited.then(exitCode => ({ kind: 'exit' as const, exitCode })),
-            new Promise<{ kind: 'timeout' }>((resolve) => {
-                AbortSignal.timeout(4000).addEventListener('abort', () => resolve({ kind: 'timeout' }), { once: true });
-            }),
-        ]);
-        if(result.kind === 'timeout') {
-            child.kill('SIGKILL');
-            const exitCode = await child.exited;
-            const [stdout, stderr] = await Promise.all([
-                new Response(child.stdout).text(),
-                new Response(child.stderr).text(),
-            ]);
-            throw new Error(`CalDAV DST fixture timed out and was reaped (exit ${exitCode})\nstdout:\n${stdout}\nstderr:\n${stderr}`);
-        }
         const [exitCode, stdout, stderr] = await Promise.all([
-            result.exitCode,
+            child.exited,
             new Response(child.stdout).text(),
             new Response(child.stderr).text(),
         ]);
