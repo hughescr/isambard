@@ -41,6 +41,7 @@ import { createSessionAmbience as importedCreateSessionAmbience } from '@/app/se
 import * as staticSessionsModule from '@/app/sessions';
 import type { SessionConfig } from '@/config';
 import * as staticConfigModule from '@/config/loader';
+import type { App } from '@/index';
 import * as staticIndexModule from '@/index';
 import * as staticBskyModule from '@/integrations/bsky';
 import * as staticDiscordModule from '@/integrations/discord/bot';
@@ -79,6 +80,7 @@ const realCreateHealthOutageCoalescer = importedCreateHealthOutageCoalescer;
 const realCreateHealthNotificationListener = importedCreateHealthNotificationListener;
 const realCreateSessionAmbience = importedCreateSessionAmbience;
 const realCreateApprovedActionRetryListener = staticServicesModule.createApprovedActionRetryListener;
+const realCreateApp = staticIndexModule.createApp;
 
 /**
  * The #41 session-host members of a mocked DiscordBot. `ready` NEVER resolves, so app.start()'s
@@ -299,6 +301,8 @@ function wireHappyPath(spies: ReturnType<typeof spyOn>[], sessionOverrides: Part
 
 describe('createApp', () => {
     let spies: ReturnType<typeof spyOn>[];
+    /** Every app a test builds, so afterEach can stop it (#181). */
+    const builtApps: App[] = [];
 
     beforeEach(() => {
         spies = [];
@@ -306,9 +310,29 @@ describe('createApp', () => {
         mockLogger.info.mockClear();
         mockLogger.error.mockClear();
         mockLogger.debug.mockClear();
+        // Calls through to the real createApp, recording each app so afterEach can stop it.
+        // createApp() arms process-global work that only app.stop() cancels: the DynamoDB
+        // reconnection loop (wireHappyPath's mock client cannot answer the startup probe, so the
+        // loop starts and retries on real ~1-4 s backoff timers), the health-outage coalescer's
+        // 5 s flush timer, and the 60 s DynamoDB probe interval. Left running, those timers fire
+        // during whichever test runs next and land in its fake-timer count (#180/#181).
+        spies.push(spyOn(staticIndexModule, 'createApp').mockImplementation(async () => {
+            const app = await realCreateApp();
+            builtApps.push(app);
+            return app;
+        }));
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        // Stop the apps first: their shutdown steps call into the spies restored below.
+        await Promise.all(builtApps.splice(0).map(async (app) => {
+            try {
+                await app.stop();
+            } catch{
+                // Teardown only: a test that cares how stop() settles asserts it itself, and
+                // stop() runs every shutdown step even when an earlier one fails.
+            }
+        }));
         for(const spy of spies) {
             try {
                 spy.mockRestore();
