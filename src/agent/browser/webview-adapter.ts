@@ -78,6 +78,23 @@ type WebViewFactory = (opts: WebViewOptions) => RawWebView;
 const CONSOLE_RING_BUFFER_SIZE = 200;
 const WAIT_FOR_SELECTOR_POLL_MS = 50;
 
+/**
+ * Async delay seam. When `signal` aborts, the delay clears its timer and resolves early,
+ * so a delay that lost a race leaves nothing pending.
+ */
+type DelayFn = (ms: number, signal?: AbortSignal) => Promise<void>;
+
+/** Real setTimeout-backed delay; aborting `signal` clears the timer and resolves immediately. */
+const timerDelay: DelayFn = (ms, signal) => new Promise<void>((resolve) => {
+    // `{ once: true }` drops the abort listener after it fires; the timer path never leaves a
+    // listener behind that matters because the caller's controller is discarded with the race.
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        resolve();
+    }, { once: true });
+});
+
 // ============================================================================
 // Implementation
 // ============================================================================
@@ -94,7 +111,7 @@ const WAIT_FOR_SELECTOR_POLL_MS = 50;
 export function createWebViewAdapter(
     config: WebViewAdapterConfig,
     webViewFactory?: WebViewFactory,
-    delayFn?: (ms: number) => Promise<void>
+    delayFn?: DelayFn
 ): BrowserAdapter {
     // @types/bun (via bun-types) types Bun.WebView; no `any` cast needed.
     // Cast opts to ConstructorOptions: local WebViewOptions.backend is string|{type,path}
@@ -105,9 +122,7 @@ export function createWebViewAdapter(
     const bunWebView = (opts: WebViewOptions): RawWebView =>
         new Bun.WebView(opts as Bun.WebView.ConstructorOptions) as unknown as RawWebView;
     const factory: WebViewFactory = webViewFactory ?? bunWebView;
-    const delay: (ms: number) => Promise<void> = delayFn ?? (ms => new Promise<void>((resolve) => {
-        setTimeout(resolve, ms);
-    }));
+    const delay: DelayFn = delayFn ?? timerDelay;
 
     let view:    RawWebView | null = null;
 
@@ -239,11 +254,19 @@ export function createWebViewAdapter(
             const { promise: attemptPromise, view: nextView } = startAttempt(attempt, v, url);
             v = nextView;
 
-            // eslint-disable-next-line no-await-in-loop -- sequential navigation attempts with timeout
-            const raceResult = await Promise.race([
-                attemptPromise,
-                delay(timeoutMs).then((): 'timeout' => 'timeout'),
-            ]);
+            // The timeout delay is cancelled as soon as the race settles, so a navigation that
+            // wins does not leave a navigationTimeoutMs timer pending (#183).
+            const timeoutGuard = new AbortController();
+            let raceResult: void | 'timeout';
+            try {
+                // eslint-disable-next-line no-await-in-loop -- sequential navigation attempts with timeout
+                raceResult = await Promise.race([
+                    attemptPromise,
+                    delay(timeoutMs, timeoutGuard.signal).then((): 'timeout' => 'timeout'),
+                ]);
+            } finally {
+                timeoutGuard.abort();
+            }
 
             if(raceResult !== 'timeout') {
                 return;

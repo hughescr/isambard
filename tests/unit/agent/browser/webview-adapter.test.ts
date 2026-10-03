@@ -1,5 +1,5 @@
 // Tests for createWebViewAdapter — fake Bun.WebView injected via factory parameter
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from 'bun:test';
 import { type WebViewAdapterConfig, createWebViewAdapter } from '../../../../src/agent/browser/webview-adapter';
 import { BrowserNavigateTimeoutError } from '../../../../src/errors/browser';
 import { mockLogger } from '../../../setup';
@@ -82,11 +82,11 @@ const immediateDelay = async (_ms: number): Promise<void> => {};
  * Each call to fakeDelay(ms) enqueues a { ms, resolve } entry in delayCalls.
  * Test code can manually resolve entries to simulate timer firing.
  */
-interface DelayCall { ms: number, resolve: () => void }
+interface DelayCall { ms: number, resolve: () => void, signal: AbortSignal | undefined }
 function makeControllableDelay() {
     const delayCalls: DelayCall[] = [];
-    const fakeDelay = (ms: number): Promise<void> => new Promise<void>((resolve) => {
-        delayCalls.push({ ms, resolve });
+    const fakeDelay = (ms: number, signal?: AbortSignal): Promise<void> => new Promise<void>((resolve) => {
+        delayCalls.push({ ms, resolve, signal });
     });
     return { delayCalls, fakeDelay };
 }
@@ -804,15 +804,117 @@ describe('createWebViewAdapter — navigate timeout recovery', () => {
         expect(mockLogger.warn).toHaveBeenCalledWith('reload() failed with pending-slot conflict; closing view and retrying navigate');
     });
 
-    test('uses the production timer-backed delay when no delay seam is supplied', async () => {
-        const timerSpy = spyOn(globalThis, 'setTimeout');
+    describe('production timer-backed delay (no delay seam supplied)', () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        test('arms the navigation timeout and cancels it once a successful navigate settles', async () => {
+            const timerSpy = spyOn(globalThis, 'setTimeout');
+            const factory = makeFactory();
+            const adapter = createWebViewAdapter(timeoutConfig, factory);
+
+            await adapter.navigate('https://example.com');
+
+            expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), timeoutConfig.navigationTimeoutMs);
+            // #183: the losing timeout must not stay pending for navigationTimeoutMs
+            expect(jest.getTimerCount()).toBe(0);
+            timerSpy.mockRestore();
+        });
+
+        test('still times out a hanging navigate and retries with reload, leaving no timer pending', async () => {
+            const factory = makeFactory();
+            const adapter = createWebViewAdapter(timeoutConfig, factory);
+            await adapter.evaluate('init');
+            fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
+
+            const navigateP = adapter.navigate('https://example.com');
+            await Promise.resolve();
+            expect(jest.getTimerCount()).toBe(1);
+            expect(fakeView.reload).not.toHaveBeenCalled();
+
+            jest.advanceTimersByTime(timeoutConfig.navigationTimeoutMs);
+            await navigateP;
+
+            expect(fakeView.reload).toHaveBeenCalledTimes(1);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('clears the timer when the final attempt times out and navigate throws', async () => {
+            const factory = makeFactory();
+            const adapter = createWebViewAdapter(timeoutConfig, factory);
+            await adapter.evaluate('init');
+            fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
+            fakeView.reload = mock(async (): Promise<void> => new Promise(() => {}));
+
+            const navigateP = adapter.navigate('https://example.com').catch((error: unknown) => error);
+            for(let i = 0; i < 3; i++) {
+                for(let tick = 0; tick < 5; tick++) {
+                    // eslint-disable-next-line no-await-in-loop -- deliberate sequential microtask draining so each attempt arms its timer before time advances
+                    await Promise.resolve();
+                }
+                jest.advanceTimersByTime(timeoutConfig.navigationTimeoutMs);
+            }
+
+            expect(await navigateP).toBeInstanceOf(BrowserNavigateTimeoutError);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+    });
+
+    test('aborts the delay signal of an attempt once a successful navigate settles', async () => {
+        const { delayCalls, fakeDelay } = makeControllableDelay();
         const factory = makeFactory();
-        const adapter = createWebViewAdapter(timeoutConfig, factory);
+        const adapter = createWebViewAdapter(timeoutConfig, factory, fakeDelay);
 
         await adapter.navigate('https://example.com');
 
-        expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), timeoutConfig.navigationTimeoutMs);
-        timerSpy.mockRestore();
+        expect(delayCalls).toHaveLength(1);
+        expect(delayCalls[0]?.signal).toBeInstanceOf(AbortSignal);
+        expect(delayCalls[0]?.signal?.aborted).toBe(true);
+    });
+
+    test('does not abort an attempt delay signal while the race is still pending', async () => {
+        const { delayCalls, fakeDelay } = makeControllableDelay();
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(timeoutConfig, factory, fakeDelay);
+        await adapter.evaluate('init');
+        fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
+
+        const navigateP = adapter.navigate('https://example.com');
+        await Promise.resolve();
+
+        expect(delayCalls[0]?.signal?.aborted).toBe(false);
+
+        delayCalls[0]?.resolve();
+        await navigateP;
+    });
+
+    test('gives every attempt its own delay signal and aborts each once its race settles', async () => {
+        const { delayCalls, fakeDelay } = makeControllableDelay();
+        const factory = makeFactory();
+        const adapter = createWebViewAdapter(timeoutConfig, factory, fakeDelay);
+        await adapter.evaluate('init');
+        fakeView.navigate = mock(async (): Promise<void> => new Promise(() => {}));
+        fakeView.reload = mock(async (): Promise<void> => new Promise(() => {}));
+
+        const navigateP = adapter.navigate('https://example.com').catch((error: unknown) => error);
+        for(let i = 0; i < 3; i++) {
+            for(let tick = 0; tick < 5; tick++) {
+                // eslint-disable-next-line no-await-in-loop -- deliberate sequential microtask draining so attempt i registers its delay
+                await Promise.resolve();
+            }
+            delayCalls[i]?.resolve();
+        }
+        expect(await navigateP).toBeInstanceOf(BrowserNavigateTimeoutError);
+
+        expect(delayCalls).toHaveLength(3);
+        const signals = delayCalls.map(call => call.signal);
+        expect(new Set(signals).size).toBe(3);
+        expect(signals.every(signal => signal?.aborted === true)).toBe(true);
     });
 
     test('navigate: reload() throws non-pending error — error propagates out of navigate', async () => {
