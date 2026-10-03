@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { inboxConfigSchema, DEFAULT_INBOX_CONFIG } from '@/integrations/discord/inbox/config';
 
-describe.concurrent('inboxConfigSchema', () => {
+describe('inboxConfigSchema', () => {
     test.each([
         ['accepts valid config with all fields',      { minGapDurationMs: 300_000, maxCatchUpMessages: 50,   maxCatchUpAgeDays: 3 },   true],
         ['rejects negative minGapDurationMs',         { minGapDurationMs: -1,      maxCatchUpMessages: 50,   maxCatchUpAgeDays: 3 },   false],
@@ -65,7 +65,7 @@ describe.concurrent('inboxConfigSchema', () => {
     });
 });
 
-describe.concurrent('DEFAULT_INBOX_CONFIG', () => {
+describe('DEFAULT_INBOX_CONFIG', () => {
     test('should have correct default values', () => {
         expect(DEFAULT_INBOX_CONFIG.minGapDurationMs).toBe(10 * 1000);
         expect(DEFAULT_INBOX_CONFIG.maxCatchUpMessages).toBe(100);

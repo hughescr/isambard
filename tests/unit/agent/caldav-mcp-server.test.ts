@@ -49,7 +49,7 @@ const mockEvent = (overrides: Partial<CalendarEvent> & { end?: Date, timezone?: 
     };
 };
 
-describe.concurrent('createCaldavMCPServer', () => {
+describe('createCaldavMCPServer', () => {
     let mockClient:   CalDAVClient;
     let mockRegistry: CalendarRegistryBackend;
 

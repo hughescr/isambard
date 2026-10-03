@@ -28,7 +28,7 @@ const createMockTagIndexItem = (overrides: Partial<TagIndexReadItem> = {}): TagI
     ...overrides,
 });
 
-describe.concurrent('Memory MCP Server Pagination', () => {
+describe('Memory MCP Server Pagination', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {

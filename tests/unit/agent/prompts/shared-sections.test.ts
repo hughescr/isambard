@@ -7,7 +7,7 @@ import { describe, test, expect } from 'bun:test';
 import { assertPromptHygiene } from '../../../helpers/prompt-hygiene';
 import { MANAGING_QUOTA_SECTION } from '@/agent/prompts/shared-sections';
 
-describe.concurrent('shared-sections', () => {
+describe('shared-sections', () => {
     describe('MANAGING_QUOTA_SECTION', () => {
         test('opens with its own "## Managing quota" heading', () => {
             expect(MANAGING_QUOTA_SECTION.startsWith('## Managing quota\n')).toBe(true);

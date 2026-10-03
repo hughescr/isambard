@@ -3,7 +3,7 @@ import {
     splitMessage
 } from '@/integrations/discord/messages';
 
-describe.concurrent('Discord Message Splitting', () => {
+describe('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('word splitting', () => {
             test('should split long sentence at words when sentence too long', () => {

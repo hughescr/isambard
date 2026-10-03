@@ -19,7 +19,7 @@ import { buildSubagentSystemPrompt } from '@/agent/prompts/subagent-prompt';
 
 const IDENTITY = 'I am Isambard, Craig\'s thought partner. IDENTITY-BODY';
 
-describe.concurrent('subagent-prompt', () => {
+describe('subagent-prompt', () => {
     describe('buildSubagentSystemPrompt', () => {
         test('opens by naming the sub-agent relationship and the report contract', () => {
             const prompt = buildSubagentSystemPrompt({ identity: IDENTITY });

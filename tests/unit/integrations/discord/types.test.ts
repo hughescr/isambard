@@ -25,7 +25,7 @@ const idSchemas = [
     ['UserId', userIdSchema, '111222333444555666', 11_122, createUserId, isUserId, 'User ID cannot be empty'],
 ] as const;
 
-describe.concurrent('branded ID schemas', () => {
+describe('branded ID schemas', () => {
     test.each(idSchemas)('%s schema should accept valid ID', (_name, schema, validId) => {
         const result = schema.safeParse(validId);
         expect(result.success).toBe(true);

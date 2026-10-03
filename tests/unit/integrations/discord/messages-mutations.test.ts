@@ -3,7 +3,7 @@ import {
     splitMessage
 } from '@/integrations/discord/messages';
 
-describe.concurrent('Discord Message Splitting', () => {
+describe('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('mutation coverage - sentence regex patterns', () => {
             test('should match sentence at end of string without trailing space', () => {

@@ -76,7 +76,7 @@ describe('formatEnvelopeStamp', () => {
     });
 });
 
-describe.concurrent('timeOfDaySchema', () => {
+describe('timeOfDaySchema', () => {
     test.each(['morning', 'afternoon', 'evening', 'night'])('should accept valid time of day "%s"', (timeOfDay) => {
         expect(timeOfDaySchema.safeParse(timeOfDay).success).toBe(true);
     });

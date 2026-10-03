@@ -3,7 +3,7 @@ import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 import { ConfigValidationError } from '@/errors/config';
 
-describe.concurrent('ConfigValidationError', () => {
+describe('ConfigValidationError', () => {
     test('should be an instance of ConfigValidationError, IsambardError, and Error', () => {
         const error = new ConfigValidationError('Config validation failed', [{ path: 'app.port', message: 'Invalid number' }]);
         expect(error).toBeInstanceOf(ConfigValidationError);

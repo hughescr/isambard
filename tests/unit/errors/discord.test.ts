@@ -16,7 +16,7 @@ import {
     ResponseUnavailableError
 } from '@/errors/discord';
 
-describe.concurrent('DiscordError', () => {
+describe('DiscordError', () => {
     test('should have correct inheritance chain', () => {
         const error = new DiscordError('Test error');
         expect(error).toBeInstanceOf(DiscordError);
@@ -37,7 +37,7 @@ describe.concurrent('DiscordError', () => {
     });
 });
 
-describe.concurrent('ChannelNotFoundByIdError', () => {
+describe('ChannelNotFoundByIdError', () => {
     test.each([
         '987654321098765432',
         '111111111111111111',
@@ -52,7 +52,7 @@ describe.concurrent('ChannelNotFoundByIdError', () => {
     });
 });
 
-describe.concurrent('ChannelNotAccessibleError', () => {
+describe('ChannelNotAccessibleError', () => {
     test('should have correct properties', () => {
         const error = new ChannelNotAccessibleError('123456789');
         expect(error).toBeInstanceOf(ChannelNotAccessibleError);
@@ -64,7 +64,7 @@ describe.concurrent('ChannelNotAccessibleError', () => {
     });
 });
 
-describe.concurrent('MessageFetchError', () => {
+describe('MessageFetchError', () => {
     test('should have correct properties', () => {
         const error = new MessageFetchError('123', 'timeout');
         expect(error).toBeInstanceOf(MessageFetchError);
@@ -77,7 +77,7 @@ describe.concurrent('MessageFetchError', () => {
     });
 });
 
-describe.concurrent('InvalidSnowflakeError', () => {
+describe('InvalidSnowflakeError', () => {
     test('should have correct properties', () => {
         const error = new InvalidSnowflakeError('invalid');
         expect(error).toBeInstanceOf(InvalidSnowflakeError);
@@ -89,7 +89,7 @@ describe.concurrent('InvalidSnowflakeError', () => {
     });
 });
 
-describe.concurrent('ChannelRegistryError', () => {
+describe('ChannelRegistryError', () => {
     test('should have correct inheritance chain', () => {
         const error = new ChannelRegistryError('Test error');
         expect(error).toBeInstanceOf(ChannelRegistryError);
@@ -105,7 +105,7 @@ describe.concurrent('ChannelRegistryError', () => {
     });
 });
 
-describe.concurrent('ChannelNotFoundByNameError', () => {
+describe('ChannelNotFoundByNameError', () => {
     test('should have correct properties', () => {
         const error = new ChannelNotFoundByNameError('general');
         expect(error).toBeInstanceOf(ChannelNotFoundByNameError);
@@ -118,7 +118,7 @@ describe.concurrent('ChannelNotFoundByNameError', () => {
     });
 });
 
-describe.concurrent('AmbiguousChannelError', () => {
+describe('AmbiguousChannelError', () => {
     test('should have correct properties', () => {
         const error = new AmbiguousChannelError('general', 3);
         expect(error).toBeInstanceOf(AmbiguousChannelError);
@@ -132,7 +132,7 @@ describe.concurrent('AmbiguousChannelError', () => {
     });
 });
 
-describe.concurrent('WellKnownChannelNotFoundError', () => {
+describe('WellKnownChannelNotFoundError', () => {
     test('should have correct properties', () => {
         const error = new WellKnownChannelNotFoundError('general');
         expect(error).toBeInstanceOf(WellKnownChannelNotFoundError);
@@ -145,7 +145,7 @@ describe.concurrent('WellKnownChannelNotFoundError', () => {
     });
 });
 
-describe.concurrent('PresenceError', () => {
+describe('PresenceError', () => {
     test('should have correct inheritance chain and properties', () => {
         const error = new PresenceError('Test presence error');
         expect(error).toBeInstanceOf(PresenceError);
@@ -167,7 +167,7 @@ describe.concurrent('PresenceError', () => {
     });
 });
 
-describe.concurrent('StatusGenerationError', () => {
+describe('StatusGenerationError', () => {
     test('should have correct inheritance chain and properties', () => {
         const error = new StatusGenerationError('Status generation failed');
         expect(error).toBeInstanceOf(StatusGenerationError);
@@ -188,7 +188,7 @@ describe.concurrent('StatusGenerationError', () => {
     });
 });
 
-describe.concurrent('ResponseUnavailableError', () => {
+describe('ResponseUnavailableError', () => {
     test('has a stable name for response delivery error handling', () => {
         const error = new ResponseUnavailableError();
 
@@ -196,7 +196,7 @@ describe.concurrent('ResponseUnavailableError', () => {
     });
 });
 
-describe.concurrent('Error instanceof cross-checks', () => {
+describe('Error instanceof cross-checks', () => {
     test('ChannelNotFoundByNameError is not ChannelNotFoundByIdError', () => {
         const error = new ChannelNotFoundByNameError('test');
         expect(error).not.toBeInstanceOf(ChannelNotFoundByIdError);
@@ -213,7 +213,7 @@ describe.concurrent('Error instanceof cross-checks', () => {
     });
 });
 
-describe.concurrent('Error.captureStackTrace handling', () => {
+describe('Error.captureStackTrace handling', () => {
     test('should call captureStackTrace for subclass', () => {
         const spy = spyOn(Error, 'captureStackTrace');
         const error = new ChannelNotFoundByIdError('123456789012345678');

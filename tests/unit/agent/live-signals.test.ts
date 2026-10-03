@@ -61,7 +61,7 @@ async function settlesWithoutWaitingForRefresh(pending: Promise<unknown>): Promi
 // Tests
 // ---------------------------------------------------------------------------
 
-describe.concurrent('LiveSignals.snapshot()', () => {
+describe('LiveSignals.snapshot()', () => {
     const spies: ReturnType<typeof spyOn>[] = [];
 
     afterEach(() => {
@@ -79,7 +79,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // perch signal
     // -------------------------------------------------------------------------
-    describe.concurrent('perch signal', () => {
+    describe('perch signal', () => {
         test('returns the current slot hint when in a named slot', async () => {
             const signals = await new LiveSignals(makeDefaultDeps({ now: makeClock(10) })).snapshot();
             const perch = signals.find(s => s.kind === 'perch');
@@ -122,7 +122,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // perch-next signal
     // -------------------------------------------------------------------------
-    describe.concurrent('perch-next signal', () => {
+    describe('perch-next signal', () => {
         test('shows next slot with hours-until prefix (from mid-morning → wikipedia in ~2h)', async () => {
             // mid-morning (9-11), hour 9 → next is wikipedia (starts 12), 3h away
             const signals = await new LiveSignals(makeDefaultDeps({ now: makeClock(9) })).snapshot();
@@ -162,7 +162,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // time signal
     // -------------------------------------------------------------------------
-    describe.concurrent('time signal', () => {
+    describe('time signal', () => {
         test.each<[number, string]>([
             [0, 'deep night'],
             [3, 'deep night'],
@@ -196,7 +196,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // day signal
     // -------------------------------------------------------------------------
-    describe.concurrent('day signal', () => {
+    describe('day signal', () => {
         test('falls back to Monday when the configured timezone cannot produce a weekday', async () => {
             const signals = await new LiveSignals(makeDefaultDeps({ timezone: 'Invalid/Zone', now: undefined })).snapshot();
             expect(signals.find(s => s.kind === 'day')?.content).toContain('Monday');
@@ -238,7 +238,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // tool signal
     // -------------------------------------------------------------------------
-    describe.concurrent('tool signal', () => {
+    describe('tool signal', () => {
         test('returns undefined (signal omitted) when ring buffer is empty', async () => {
             const signals = await new LiveSignals(makeDefaultDeps({ getRecentTools: () => [] })).snapshot();
             expect(signals.find(s => s.kind === 'tool')).toBeUndefined();
@@ -316,7 +316,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // channel signal
     // -------------------------------------------------------------------------
-    describe.concurrent('channel signal', () => {
+    describe('channel signal', () => {
         const chanId = createChannelId('123456789');
 
         test('returns undefined when ring buffer is empty', async () => {
@@ -391,7 +391,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // previous signal
     // -------------------------------------------------------------------------
-    describe.concurrent('previous signal', () => {
+    describe('previous signal', () => {
         test('is omitted when getPreviousStatus returns undefined', async () => {
             const signals = await new LiveSignals(makeDefaultDeps({ getPreviousStatus: () => undefined })).snapshot();
             expect(signals.find(s => s.kind === 'previous')).toBeUndefined();
@@ -411,7 +411,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // fail-soft behaviour
     // -------------------------------------------------------------------------
-    describe.concurrent('fail-soft when a signal source throws', () => {
+    describe('fail-soft when a signal source throws', () => {
         test('omits throwing signal but returns all others', async () => {
             const debugSpy = spyOn(loggerModule.logger, 'debug');
             spies.push(debugSpy);
@@ -483,7 +483,7 @@ describe.concurrent('LiveSignals.snapshot()', () => {
     // -------------------------------------------------------------------------
     // overall snapshot shape
     // -------------------------------------------------------------------------
-    describe.concurrent('snapshot shape', () => {
+    describe('snapshot shape', () => {
         test('with no ring-buffer entries or previous status, returns exactly perch+perch-next+time+day', async () => {
             const signals = await new LiveSignals(makeDefaultDeps()).snapshot();
             const kinds = signals.map(s => s.kind);

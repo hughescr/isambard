@@ -3,7 +3,7 @@ import {
     splitMessage
 } from '@/integrations/discord/messages';
 
-describe.concurrent('Discord Message Splitting', () => {
+describe('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('mutation coverage - splitByParagraphs', () => {
             test('should return empty string for content that becomes empty after processing', () => {

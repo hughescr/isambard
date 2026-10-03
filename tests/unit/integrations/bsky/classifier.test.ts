@@ -3,8 +3,8 @@ import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError } fro
 import { createBskyClassifier } from '@/integrations/bsky/classifier';
 import { retryAsync } from '@/utils';
 
-describe.concurrent('createBskyClassifier', () => {
-    describe.concurrent('BskyRateLimitError classification', () => {
+describe('createBskyClassifier', () => {
+    describe('BskyRateLimitError classification', () => {
         it('classifies BskyRateLimitError as rate_limited', () => {
             const classifier = createBskyClassifier();
             const error      = new BskyRateLimitError('Too many requests');
@@ -52,7 +52,7 @@ describe.concurrent('createBskyClassifier', () => {
         });
     });
 
-    describe.concurrent('BskyAuthError classification', () => {
+    describe('BskyAuthError classification', () => {
         it('classifies BskyAuthError as permanent (auth needs re-login, not retry)', () => {
             const classifier = createBskyClassifier();
             const error      = new BskyAuthError('Authentication required');
@@ -63,7 +63,7 @@ describe.concurrent('createBskyClassifier', () => {
         });
     });
 
-    describe.concurrent('BskyError classification', () => {
+    describe('BskyError classification', () => {
         it('supplies a message for a domain error with an empty message', () => {
             expect(createBskyClassifier()(new BskyError(''))).toEqual({
                 category: 'permanent', message: 'Bluesky error',
@@ -88,7 +88,7 @@ describe.concurrent('createBskyClassifier', () => {
         });
     });
 
-    describe.concurrent('Non-Bsky error fallback to HTTP status classifier', () => {
+    describe('Non-Bsky error fallback to HTTP status classifier', () => {
         it('classifies non-Error value as transient (default classifier fallback)', () => {
             const classifier = createBskyClassifier();
             const result     = classifier('something went wrong');

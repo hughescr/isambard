@@ -3,7 +3,7 @@ import {
     splitMessage
 } from '@/integrations/discord/messages';
 
-describe.concurrent('Discord Message Splitting', () => {
+describe('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('mixed content', () => {
             test('should handle mix of paragraphs, sentences, and words', () => {

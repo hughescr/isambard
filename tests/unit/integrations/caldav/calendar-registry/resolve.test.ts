@@ -19,7 +19,7 @@ function makeServer(overrides: Partial<CalendarServerEntry> & { serverId: Calend
 
 // ─── resolveServer ────────────────────────────────────────────────────────────
 
-describe.concurrent('resolveServer()', () => {
+describe('resolveServer()', () => {
     test('returns matching server on exact UUID match', () => {
         const server1 = makeServer({ serverId: SERVER_UUID_1, description: 'iCloud' });
         const server2 = makeServer({ serverId: SERVER_UUID_2, description: 'Google' });
@@ -112,7 +112,7 @@ describe.concurrent('resolveServer()', () => {
 
 // ─── resolveCalendar ──────────────────────────────────────────────────────────
 
-describe.concurrent('resolveCalendar()', () => {
+describe('resolveCalendar()', () => {
     const server = makeServer({
         serverId:    SERVER_UUID_1,
         description: 'iCloud',

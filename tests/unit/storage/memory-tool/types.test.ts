@@ -31,7 +31,7 @@ import {
     SEARCHABLE_NAMESPACES
 } from '@/storage/memory-tool/types';
 
-describe.concurrent('host-owned memory metadata', () => {
+describe('host-owned memory metadata', () => {
     const fallback = '2025-01-01T00:00:00.000Z';
     const accessed = '2025-02-01T00:00:00.000Z';
 
@@ -54,7 +54,7 @@ describe.concurrent('host-owned memory metadata', () => {
     });
 });
 
-describe.concurrent('memoryPathSchema', () => {
+describe('memoryPathSchema', () => {
     test.each([
         { name: 'valid simple path', path: '/notes' },
         { name: 'valid nested path', path: '/projects/isambard/todo' },
@@ -91,7 +91,7 @@ describe.concurrent('memoryPathSchema', () => {
     });
 });
 
-describe.concurrent('memory path namespaces', () => {
+describe('memory path namespaces', () => {
     test('a path namespace is one non-empty path segment', () => {
         expect(pathNamespaceSchema.safeParse('').error?.issues.map(issue => issue.message)).toEqual(['Namespace cannot be empty']);
         expect(pathNamespaceSchema.safeParse('users/other').error?.issues.map(issue => issue.message)).toEqual(['Namespace cannot contain /']);
@@ -146,7 +146,7 @@ describe.concurrent('memory path namespaces', () => {
     });
 });
 
-describe.concurrent('createMemoryPath', () => {
+describe('createMemoryPath', () => {
     test('should create MemoryPath from valid string', () => {
         const path = createMemoryPath('/notes/todo');
         expect(path).toBe('/notes/todo' as MemoryPath);
@@ -169,7 +169,7 @@ describe.concurrent('createMemoryPath', () => {
     });
 });
 
-describe.concurrent('isMemoryPath', () => {
+describe('isMemoryPath', () => {
     test('should return true for valid MemoryPath', () => {
         const path = createMemoryPath('/notes');
         expect(isMemoryPath(path)).toBe(true);
@@ -191,7 +191,7 @@ describe.concurrent('isMemoryPath', () => {
     });
 });
 
-describe.concurrent('contentTypeSchema', () => {
+describe('contentTypeSchema', () => {
     test.each([
         'text/plain',
         'text/markdown',
@@ -207,7 +207,7 @@ describe.concurrent('contentTypeSchema', () => {
     });
 });
 
-describe.concurrent('layerNameSchema', () => {
+describe('layerNameSchema', () => {
     test.each([
         'identity',
         'state',
@@ -243,7 +243,7 @@ describe.concurrent('layerNameSchema', () => {
     });
 });
 
-describe.concurrent('createLayerName', () => {
+describe('createLayerName', () => {
     test('should create LayerName from "identity"', () => {
         const layer = createLayerName('identity');
         expect(layer).toBe('identity' as LayerName);
@@ -272,7 +272,7 @@ describe.concurrent('createLayerName', () => {
     });
 });
 
-describe.concurrent('isLayerName', () => {
+describe('isLayerName', () => {
     test('should return true for valid layer names', () => {
         expect(isLayerName('identity')).toBe(true);
         expect(isLayerName('state')).toBe(true);
@@ -295,7 +295,7 @@ describe.concurrent('isLayerName', () => {
     });
 });
 
-describe.concurrent('createContentType', () => {
+describe('createContentType', () => {
     test('should create ContentType from "text/plain"', () => {
         const type = createContentType('text/plain');
         expect(type).toBe('text/plain' as ContentType);
@@ -324,7 +324,7 @@ describe.concurrent('createContentType', () => {
     });
 });
 
-describe.concurrent('isContentType', () => {
+describe('isContentType', () => {
     test('should return true for valid content types', () => {
         expect(isContentType('text/plain')).toBe(true);
         expect(isContentType('text/markdown')).toBe(true);
@@ -347,7 +347,7 @@ describe.concurrent('isContentType', () => {
     });
 });
 
-describe.concurrent('memoryToolItemSchema - content field bounds', () => {
+describe('memoryToolItemSchema - content field bounds', () => {
     const baseItem = {
         path:        '/test/file.md',
         contentType: 'text/plain',
@@ -384,7 +384,7 @@ describe.concurrent('memoryToolItemSchema - content field bounds', () => {
     });
 });
 
-describe.concurrent('memoryToolItemSchema - contentPreview field bounds', () => {
+describe('memoryToolItemSchema - contentPreview field bounds', () => {
     const baseItem = {
         path:        '/test/file.md',
         content:     'Test content',
@@ -404,7 +404,7 @@ describe.concurrent('memoryToolItemSchema - contentPreview field bounds', () => 
     });
 });
 
-describe.concurrent('memoryToolItemSchema - tags field', () => {
+describe('memoryToolItemSchema - tags field', () => {
     const baseItem = {
         path:        '/test/file.md',
         content:     'Test content',

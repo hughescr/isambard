@@ -5,7 +5,7 @@ import {
     formatOptionalSection
 } from '@/agent/prompts/helpers';
 
-describe.concurrent('PROMPT_SECTION_SEPARATOR', () => {
+describe('PROMPT_SECTION_SEPARATOR', () => {
     test('should be a double-newline-surrounded horizontal rule', () => {
         expect(PROMPT_SECTION_SEPARATOR).toBe('\n\n---\n\n');
     });
@@ -23,7 +23,7 @@ describe.concurrent('PROMPT_SECTION_SEPARATOR', () => {
     });
 });
 
-describe.concurrent('formatBanner', () => {
+describe('formatBanner', () => {
     test('should wrap text in --- delimiters', () => {
         expect(formatBanner('PERCH TIME RESUMED')).toBe('--- PERCH TIME RESUMED ---');
     });
@@ -45,7 +45,7 @@ describe.concurrent('formatBanner', () => {
     });
 });
 
-describe.concurrent('formatOptionalSection', () => {
+describe('formatOptionalSection', () => {
     test('should return label and content joined with newline when content is present', () => {
         const result = formatOptionalSection('[Your thinking:]', 'I was exploring memory patterns');
         expect(result).toBe('[Your thinking:]\nI was exploring memory patterns');

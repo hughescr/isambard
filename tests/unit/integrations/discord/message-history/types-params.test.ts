@@ -4,7 +4,7 @@ import {
 } from '@/integrations/discord/message-history/types';
 import type { ChannelId } from '@/integrations/discord/types';
 
-describe.concurrent('searchParamsSchema', () => {
+describe('searchParamsSchema', () => {
     const validParams = {
         channelId: '123456789012345678' as ChannelId,
     };

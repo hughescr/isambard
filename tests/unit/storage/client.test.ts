@@ -21,7 +21,7 @@ function getConfiguredHandlerOptions(handler: NodeHttpHandler): Promise<NodeHttp
     return (handler as unknown as NodeHttpHandlerWithConfigProvider).configProvider;
 }
 
-describe.concurrent('SLOW_READ_MS', () => {
+describe('SLOW_READ_MS', () => {
     // Pinning test: the threshold tests elsewhere in this file compute their elapsed-time
     // fixtures from SLOW_READ_MS symbolically (SLOW_READ_MS - 1 / SLOW_READ_MS / SLOW_READ_MS + 1),
     // so they pass unchanged no matter what the constant's actual value is. This test pins the
@@ -31,7 +31,7 @@ describe.concurrent('SLOW_READ_MS', () => {
     });
 });
 
-describe.concurrent('buildClientConfig', () => {
+describe('buildClientConfig', () => {
     test('should set maxAttempts to 3', () => {
         const clientConfig = buildClientConfig();
 
@@ -74,7 +74,7 @@ describe.concurrent('buildClientConfig', () => {
     });
 });
 
-describe.concurrent('createDynamoDBClient', () => {
+describe('createDynamoDBClient', () => {
     test('registers timing middleware with the AWS client stack', () => {
         const add = mock(() => undefined);
         const client = { middlewareStack: { add } } as unknown as DynamoDBClient;
@@ -114,7 +114,7 @@ describe.concurrent('createDynamoDBClient', () => {
         expect(clients.tableName).toBe('MyTable');
     });
 
-    describe.concurrent('DynamoDBClient configuration', () => {
+    describe('DynamoDBClient configuration', () => {
         test('should configure maxAttempts to 3', async () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
@@ -151,7 +151,7 @@ describe.concurrent('createDynamoDBClient', () => {
         });
     });
 
-    describe.concurrent('DynamoDBDocumentClient configuration', () => {
+    describe('DynamoDBDocumentClient configuration', () => {
         test('should configure marshallOptions.removeUndefinedValues to true', () => {
             const config: DynamoDBConfig = {
                 tableName: 'TestTable',
@@ -259,7 +259,7 @@ describe.concurrent('createDynamoDBClient', () => {
     });
 });
 
-describe.concurrent('DynamoDBDocumentClient marshalling', () => {
+describe('DynamoDBDocumentClient marshalling', () => {
     const ddbMock = mockClient(DynamoDBDocumentClient);
 
     beforeEach(() => {
@@ -335,7 +335,7 @@ describe('buildTimingMiddleware', () => {
         mockLogger.debug.mockRestore();
     });
 
-    describe.concurrent('DescribeTableCommand (routine read)', () => {
+    describe('DescribeTableCommand (routine read)', () => {
         test('under threshold → no debug log', async () => {
             await runMiddleware('DescribeTableCommand', SLOW_READ_MS - 1);
 
@@ -360,7 +360,7 @@ describe('buildTimingMiddleware', () => {
         });
     });
 
-    describe.concurrent('QueryCommand (routine read)', () => {
+    describe('QueryCommand (routine read)', () => {
         test('under threshold → no debug log', async () => {
             await runMiddleware('QueryCommand', SLOW_READ_MS - 1);
 
@@ -377,7 +377,7 @@ describe('buildTimingMiddleware', () => {
         });
     });
 
-    describe.concurrent('Write commands → always log regardless of duration', () => {
+    describe('Write commands → always log regardless of duration', () => {
         test.each([
             ['PutItemCommand', 10],
             ['UpdateItemCommand', 5],
@@ -391,7 +391,7 @@ describe('buildTimingMiddleware', () => {
         });
     });
 
-    describe.concurrent('GetItemCommand (non-routine read) → always logs', () => {
+    describe('GetItemCommand (non-routine read) → always logs', () => {
         test('under threshold → debug log emitted', async () => {
             await runMiddleware('GetItemCommand', SLOW_READ_MS - 1);
 
@@ -401,7 +401,7 @@ describe('buildTimingMiddleware', () => {
         });
     });
 
-    describe.concurrent('undefined commandName → always logs with fallback message', () => {
+    describe('undefined commandName → always logs with fallback message', () => {
         test('treats undefined commandName as non-routine → always logs', async () => {
             await runMiddleware(undefined, 10);
 
@@ -412,7 +412,7 @@ describe('buildTimingMiddleware', () => {
         });
     });
 
-    describe.concurrent('Error path — always logs and re-throws', () => {
+    describe('Error path — always logs and re-throws', () => {
         test('failing fast DescribeTableCommand is logged and error propagates', async () => {
             const error = new Error('ResourceNotFoundException');
             await expect(runMiddlewareThatThrows('DescribeTableCommand', SLOW_READ_MS - 1, error)).rejects.toThrow('ResourceNotFoundException');
@@ -505,7 +505,7 @@ describe('buildTimingMiddleware', () => {
         });
     });
 
-    describe.concurrent('Pass-through and duration accuracy', () => {
+    describe('Pass-through and duration accuracy', () => {
         test('middleware passes args through to next and returns its result', async () => {
             jest.useFakeTimers();
             try {

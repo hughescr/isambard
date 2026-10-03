@@ -31,8 +31,7 @@ const NOTIF_KEY: OperationalStateKey = { owner: 'bsky', name: 'notifications/che
 const DM_KEY: OperationalStateKey = { owner: 'bsky', name: 'dm/checkpoint' };
 
 /**
- * A fresh fake store and manager per test: the suite runs concurrently, so nothing mutable is
- * shared between tests.
+ * A fresh fake store and manager per test, so nothing mutable is shared between tests.
  */
 function setup(): { store: FakeOperationalStateStore, manager: BskyCheckpointManager } {
     const store = createFakeOperationalStateStore();
@@ -76,7 +75,7 @@ const DM_CHECKPOINT: BskyDmCheckpoint = {
 
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
-describe.concurrent('BskyCheckpointManager', () => {
+describe('BskyCheckpointManager', () => {
     // -----------------------------------------------------------------------
     // loadFeedCheckpoint
     // -----------------------------------------------------------------------

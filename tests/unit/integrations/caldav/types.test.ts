@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createCalendarTimeRange, createLocalDate, createLocalDateTime, type CalendarTimeRange } from '@/integrations/caldav/types';
 
-describe.concurrent('createLocalDate', () => {
+describe('createLocalDate', () => {
     test('createLocalDate accepts a real calendar date including a leap day', () => {
         expect(String(createLocalDate('2026-03-01'))).toBe('2026-03-01');
         expect(String(createLocalDate('2028-02-29'))).toBe('2028-02-29');
@@ -22,7 +22,7 @@ describe.concurrent('createLocalDate', () => {
     });
 });
 
-describe.concurrent('createLocalDateTime', () => {
+describe('createLocalDateTime', () => {
     test('createLocalDateTime accepts an offset-free wall-clock time', () => {
         expect(String(createLocalDateTime('2026-03-01T09:00:00'))).toBe('2026-03-01T09:00:00');
     });
@@ -67,7 +67,7 @@ describe('createLocalDateTime under a DST host zone', () => {
     });
 });
 
-describe.concurrent('createCalendarTimeRange', () => {
+describe('createCalendarTimeRange', () => {
     test('createCalendarTimeRange builds a one-day all-day range', () => {
         expect(createCalendarTimeRange({ kind: 'all_day', start: '2026-03-01', endExclusive: '2026-03-02' }))
             .toEqual({ kind: 'all_day', start: createLocalDate('2026-03-01'), endExclusive: createLocalDate('2026-03-02') });

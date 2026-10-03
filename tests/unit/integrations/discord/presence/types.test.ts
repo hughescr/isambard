@@ -4,7 +4,7 @@ import { ToolStatusMap } from '@/integrations/discord/presence/types';
 
 // ToolDescriptions and getToolDescription moved to the session core with the turn synopsis
 // generator (#39); their own tests live in tests/unit/agent/session/synopsis-generator.test.ts.
-describe.concurrent('types.ts', () => {
+describe('types.ts', () => {
     describe('ToolStatusMap vs ToolDescriptions alignment', () => {
         test('should have ToolDescriptions entries for all memory tools in ToolStatusMap', () => {
             // All memory tools in ToolStatusMap should have descriptions

@@ -16,7 +16,7 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
     ...overrides,
 });
 
-describe.concurrent('Memory MCP Server Search and List Tools', () => {
+describe('Memory MCP Server Search and List Tools', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {

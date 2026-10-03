@@ -9,7 +9,7 @@ import {
 } from '@/integrations/discord/inbox/types';
 import { createChannelId, createGuildId } from '@/integrations/discord/types';
 
-describe.concurrent('discordChannelCheckpointSchema', () => {
+describe('discordChannelCheckpointSchema', () => {
     const validCheckpoint = {
         service:           'discord' as const,
         channelId:         createChannelId('123456789'),
@@ -115,7 +115,7 @@ describe('inbox schema metadata', () => {
     });
 });
 
-describe.concurrent('unreadMessageSchema', () => {
+describe('unreadMessageSchema', () => {
     const validMessage = {
         id:          '123456789',
         channelId:   createChannelId('987654321'),
@@ -175,7 +175,7 @@ describe.concurrent('unreadMessageSchema', () => {
     });
 });
 
-describe.concurrent('channelSummarySchema', () => {
+describe('channelSummarySchema', () => {
     const validSummary = {
         channelId:    createChannelId('123456789'),
         channelName:  'general',
@@ -254,7 +254,7 @@ describe.concurrent('channelSummarySchema', () => {
     });
 });
 
-describe.concurrent('messageMetadataSchema', () => {
+describe('messageMetadataSchema', () => {
     const validMetadata = {
         id:        '123456789',
         author:    'TestUser',
@@ -298,7 +298,7 @@ describe.concurrent('messageMetadataSchema', () => {
     });
 });
 
-describe.concurrent('channelSummaryResponseSchema', () => {
+describe('channelSummaryResponseSchema', () => {
     const validResponse = {
         channelId:    createChannelId('123456789'),
         channelName:  'general',
@@ -373,7 +373,7 @@ describe.concurrent('channelSummaryResponseSchema', () => {
     });
 });
 
-describe.concurrent('unreadOverviewSchema', () => {
+describe('unreadOverviewSchema', () => {
     const validOverview = {
         totalUnread: 10,
         channels:    [

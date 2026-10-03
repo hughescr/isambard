@@ -3,7 +3,7 @@ import {
     splitMessage
 } from '@/integrations/discord/messages';
 
-describe.concurrent('Discord Message Splitting', () => {
+describe('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('Codex-targeted mutation killing tests', () => {
             test(String.raw`should collapse multiple spaces when splitting words (kills /\s+/ -> /\s/)`, () => {

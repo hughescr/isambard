@@ -6,7 +6,7 @@ import {
     createCid
 } from '@/integrations/bsky/types';
 
-describe.concurrent('atUriSchema', () => {
+describe('atUriSchema', () => {
     test('should accept a valid at:// URI', () => {
         const result = atUriSchema.safeParse('at://did:plc:abc123/app.bsky.feed.post/xyz');
         expect(result.success).toBe(true);
@@ -63,7 +63,7 @@ describe('createAtUri', () => {
     });
 });
 
-describe.concurrent('cidSchema', () => {
+describe('cidSchema', () => {
     test('should accept a non-empty CID string', () => {
         const result = cidSchema.safeParse('bafyreiabc123');
         expect(result.success).toBe(true);

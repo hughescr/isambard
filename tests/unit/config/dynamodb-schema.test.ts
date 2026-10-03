@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { dynamoDBConfigSchema } from '../../../src/config/schemas';
 
-describe.concurrent('dynamoDBConfigSchema', () => {
+describe('dynamoDBConfigSchema', () => {
     test('validates valid DynamoDB configuration', () => {
         const validConfig = {
             tableName: 'isambard-conversations',

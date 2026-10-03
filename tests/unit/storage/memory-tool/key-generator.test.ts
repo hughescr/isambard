@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { MemoryToolKeyGenerator, generateContentPreview, normalizeTags } from '@/storage/memory-tool/key-generator';
 import type { MemoryPath } from '@/storage/memory-tool/types';
 
-describe.concurrent('MemoryToolKeyGenerator', () => {
+describe('MemoryToolKeyGenerator', () => {
     test.each([
         { parse: () => MemoryToolKeyGenerator.parsePath('BAD#/state', 'FILE#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },
         { parse: () => MemoryToolKeyGenerator.parsePath('DIR#/state', 'BAD#note.md'), location: 'MemoryToolKeyGenerator.parsePath' },

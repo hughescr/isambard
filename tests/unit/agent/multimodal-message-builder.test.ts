@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { buildMultimodalContent, hasImages } from '@/agent/multimodal-message-builder';
 import type { PlatformImage } from '@/agent/types';
 
-describe.concurrent('multimodal-message-builder', () => {
+describe('multimodal-message-builder', () => {
     describe('buildMultimodalContent', () => {
         test('should return single text block when no images provided', () => {
             const text = 'Hello, world!';

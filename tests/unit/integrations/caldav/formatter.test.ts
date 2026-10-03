@@ -29,7 +29,7 @@ function makeFloating(summary: string, start: string, end: string): CalendarEven
     };
 }
 
-describe.concurrent('formatCalendarContext', () => {
+describe('formatCalendarContext', () => {
     it('returns empty string for empty events array', () => {
         expect(formatCalendarContext([], NOW, TZ)).toBe('');
     });

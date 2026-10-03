@@ -13,7 +13,7 @@ import {
     parseMailboxMessageRef
 } from '@/integrations/email/types';
 
-describe.concurrent('EmailFolder', () => {
+describe('EmailFolder', () => {
     test('should have correct values', () => {
         expect(EmailFolder.Inbox).toBe('INBOX');
         expect(EmailFolder.CleanInbox).toBe('CleanInbox');
@@ -41,7 +41,7 @@ describe.concurrent('EmailFolder', () => {
     });
 });
 
-describe.concurrent('ClassifierVerdictType', () => {
+describe('ClassifierVerdictType', () => {
     test('should have correct values', () => {
         expect(ClassifierVerdictType.Safe).toBe('safe');
         expect(ClassifierVerdictType.Spam).toBe('spam');
@@ -59,7 +59,7 @@ describe.concurrent('ClassifierVerdictType', () => {
     });
 });
 
-describe.concurrent('emailSenderProfileSchema', () => {
+describe('emailSenderProfileSchema', () => {
     test('accepts the formal and informal sender profiles', () => {
         expect(emailSenderProfileSchema.safeParse('formal').success).toBe(true);
         expect(emailSenderProfileSchema.safeParse('informal').success).toBe(true);
@@ -70,7 +70,7 @@ describe.concurrent('emailSenderProfileSchema', () => {
     });
 });
 
-describe.concurrent('formatAddressForDisplay', () => {
+describe('formatAddressForDisplay', () => {
     test('renders normal, name-only, and absent search addresses unambiguously', () => {
         expect(formatAddressForDisplay({ address: 'person@example.com' })).toBe('person@example.com');
         expect(formatAddressForDisplay({ name: 'Person', address: 'person@example.com' })).toBe('Person <person@example.com>');
@@ -79,7 +79,7 @@ describe.concurrent('formatAddressForDisplay', () => {
     });
 });
 
-describe.concurrent('MailboxMessageRef', () => {
+describe('MailboxMessageRef', () => {
     test('round trips folders through the shared codec', () => {
         const refs = [
             { folder: EmailFolder.CleanInbox, uid: 42 },
@@ -114,7 +114,7 @@ describe.concurrent('MailboxMessageRef', () => {
     });
 });
 
-describe.concurrent('classifierVerdictSchema', () => {
+describe('classifierVerdictSchema', () => {
     const validVerdict = {
         verdict:    'safe',
         confidence: 0.95,

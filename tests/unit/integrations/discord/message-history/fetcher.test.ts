@@ -180,7 +180,7 @@ function createMockChannel(
     } as unknown as TextChannel;
 }
 
-describe.concurrent('createMessageFetcher', () => {
+describe('createMessageFetcher', () => {
     describe('fetchMessages', () => {
         describe('message transformation', () => {
             test('should transform message to DiscordSearchResult format', async () => {

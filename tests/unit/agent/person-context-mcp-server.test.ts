@@ -42,7 +42,7 @@ const makeContact = (overrides: Partial<Omit<Contact, '_internal'>> = {}): Omit<
     ...overrides,
 });
 
-describe.concurrent('createPersonContextMCPServer', () => {
+describe('createPersonContextMCPServer', () => {
     let mockCoordinator: { getPersonHistory: ReturnType<typeof mock> };
 
     beforeEach(() => {

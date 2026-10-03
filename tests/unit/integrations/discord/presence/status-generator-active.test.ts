@@ -19,7 +19,7 @@ const createMockLogger = (): MockedLogger => ({
 });
 
 describe('ActiveStatusGenerator', () => {
-    describe.concurrent('generate', () => {
+    describe('generate', () => {
         // Core phase behavior: every phase renders its static label (a turn synopsis, when there
         // is one, replaces this in PresenceManager.applyView, never here)
         test.each([

@@ -7,7 +7,7 @@ import {
 import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 
-describe.concurrent('EmailError', () => {
+describe('EmailError', () => {
     test('should have correct inheritance chain', () => {
         const error = new EmailError('Test error');
         expect(error).toBeInstanceOf(EmailError);
@@ -43,7 +43,7 @@ describe.concurrent('EmailError', () => {
     });
 });
 
-describe.concurrent('ClassifierError', () => {
+describe('ClassifierError', () => {
     test('should have correct inheritance chain', () => {
         const error = new ClassifierError('Classification failed');
         expect(error).toBeInstanceOf(ClassifierError);
@@ -75,7 +75,7 @@ describe.concurrent('ClassifierError', () => {
     });
 });
 
-describe.concurrent('EmailProcessingError', () => {
+describe('EmailProcessingError', () => {
     test('should have correct inheritance chain', () => {
         const error = new EmailProcessingError('Processing failed');
         expect(error).toBeInstanceOf(EmailProcessingError);
@@ -107,7 +107,7 @@ describe.concurrent('EmailProcessingError', () => {
     });
 });
 
-describe.concurrent('Error instanceof cross-checks', () => {
+describe('Error instanceof cross-checks', () => {
     test('ClassifierError is not EmailProcessingError', () => {
         const error = new ClassifierError('Classification failed');
         expect(error).not.toBeInstanceOf(EmailProcessingError);
@@ -129,7 +129,7 @@ describe.concurrent('Error instanceof cross-checks', () => {
     });
 });
 
-describe.concurrent('Error.captureStackTrace handling', () => {
+describe('Error.captureStackTrace handling', () => {
     test('should call captureStackTrace for subclass', () => {
         const spy = spyOn(Error, 'captureStackTrace');
         const error = new ClassifierError('test');

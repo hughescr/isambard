@@ -38,7 +38,7 @@ const completeMetadata = {
 
 const validSearchResponse: SearchResponse = { messages: [validSearchResult], metadata: completeMetadata };
 
-describe.concurrent('discordSearchResultSchema', () => {
+describe('discordSearchResultSchema', () => {
     test('accepts required search result fields', () => {
         expect(discordSearchResultSchema.safeParse(validSearchResult).success).toBe(true);
     });

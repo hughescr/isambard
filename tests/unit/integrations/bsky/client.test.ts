@@ -291,7 +291,7 @@ async function capturedError(operation: () => Promise<unknown>): Promise<Error> 
 // Tests
 // ---------------------------------------------------------------------------
 
-describe.concurrent('BlueskyClient', () => {
+describe('BlueskyClient', () => {
     beforeEach(() => {
         mockAgentPost.mockReset();
         mockCreateRecord.mockReset();

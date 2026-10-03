@@ -35,7 +35,7 @@ describe('guildIdSchema', () => {
     });
 });
 
-describe.concurrent('appConfigSchema', () => {
+describe('appConfigSchema', () => {
     test('accepts error as a log level', () => {
         const result = appConfigSchema.safeParse({ nodeEnv: 'test', logLevel: 'error', port: 3000 });
         expect(result.success).toBe(true);
@@ -959,7 +959,7 @@ describe('perchConfigSchema', () => {
     });
 });
 
-describe.concurrent('browserConfigSchema', () => {
+describe('browserConfigSchema', () => {
     test('should apply all defaults when given empty object', () => {
         const result = browserConfigSchema.safeParse({});
         expect(result.success).toBe(true);
@@ -1134,7 +1134,7 @@ describe.concurrent('browserConfigSchema', () => {
     });
 });
 
-describe.concurrent('vectorIndexConfigSchema', () => {
+describe('vectorIndexConfigSchema', () => {
     test('should apply all defaults when given empty object', () => {
         const result = vectorIndexConfigSchema.safeParse({});
         expect(result.success).toBe(true);
@@ -1242,7 +1242,7 @@ describe.concurrent('vectorIndexConfigSchema', () => {
     });
 });
 
-describe.concurrent('bskyConfigSchema', () => {
+describe('bskyConfigSchema', () => {
     const validBskyBase = {
         handle:      'user.bsky.social',
         appPassword: 'xxxx-xxxx-xxxx-xxxx',
@@ -1292,7 +1292,7 @@ describe.concurrent('bskyConfigSchema', () => {
     });
 });
 
-describe.concurrent('typesafeConfigSchema', () => {
+describe('typesafeConfigSchema', () => {
     test('should accept a non-empty apiKey', () => {
         const result = typesafeConfigSchema.safeParse({ apiKey: 'test-typesafe-key' });
         expect(result.success).toBe(true);
@@ -1316,14 +1316,14 @@ describe.concurrent('typesafeConfigSchema', () => {
     });
 });
 
-describe.concurrent('zoteroConfigSchema', () => {
+describe('zoteroConfigSchema', () => {
     test('rejects an empty apiKey and accepts a one-character one', () => {
         expect(zoteroConfigSchema.safeParse({ apiKey: '' }).success).toBe(false);
         expect(zoteroConfigSchema.safeParse({ apiKey: 'x' }).success).toBe(true);
     });
 });
 
-describe.concurrent('idleSignalsConfigSchema', () => {
+describe('idleSignalsConfigSchema', () => {
     test('all feature flags default to false', () => {
         const result = idleSignalsConfigSchema.safeParse({});
         expect(result.success).toBe(true);

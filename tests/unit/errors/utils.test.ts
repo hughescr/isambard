@@ -3,7 +3,7 @@ import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 import { PathSecurityError, MediaProcessingError } from '@/errors/utils';
 
-describe.concurrent('PathSecurityError', () => {
+describe('PathSecurityError', () => {
     test('should have correct inheritance chain', () => {
         const error = new PathSecurityError('test', '/path', 'outside_cwd');
         expect(error).toBeInstanceOf(PathSecurityError);
@@ -38,7 +38,7 @@ describe.concurrent('PathSecurityError', () => {
     });
 });
 
-describe.concurrent('MediaProcessingError', () => {
+describe('MediaProcessingError', () => {
     test('should have correct inheritance chain', () => {
         const error = new MediaProcessingError('failed', 'ffprobe');
         expect(error).toBeInstanceOf(MediaProcessingError);

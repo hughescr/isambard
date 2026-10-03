@@ -31,7 +31,7 @@ const mockArticle = {
     },
 };
 
-describe.concurrent('createWikipediaMCPServer', () => {
+describe('createWikipediaMCPServer', () => {
     const originalFetch = globalThis.fetch;
     let mockFetch: ReturnType<typeof mock>;
 

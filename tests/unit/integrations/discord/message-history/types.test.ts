@@ -39,7 +39,7 @@ describe('message-history validation messages', () => {
     });
 });
 
-describe.concurrent('discordAuthorSchema', () => {
+describe('discordAuthorSchema', () => {
     const validAuthor: DiscordAuthor = {
         id:          '123456789012345678',
         username:    'testuser',

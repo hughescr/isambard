@@ -110,7 +110,7 @@ function failingProvider(platform: KnownPlatform, message = 'Provider error'): P
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe.concurrent('PersonHistoryCoordinator', () => {
+describe('PersonHistoryCoordinator', () => {
     afterEach(() => {
         jest.useRealTimers();
     });

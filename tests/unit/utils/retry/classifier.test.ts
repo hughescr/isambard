@@ -2,8 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import { defaultClassifier, createHttpStatusClassifier, classifyNetworkError } from '../../../../src/utils/retry/classifier';
 import type { ErrorCategory } from '../../../../src/utils/retry/types';
 
-describe.concurrent('defaultClassifier', () => {
-    describe.concurrent('Error instances', () => {
+describe('defaultClassifier', () => {
+    describe('Error instances', () => {
         it('should classify Error with message as transient', () => {
             const error = new Error('Network timeout');
             const result = defaultClassifier(error);
@@ -34,7 +34,7 @@ describe.concurrent('defaultClassifier', () => {
         });
     });
 
-    describe.concurrent('Non-Error values', () => {
+    describe('Non-Error values', () => {
         it('should classify string as transient', () => {
             const result = defaultClassifier('Something went wrong');
 
@@ -85,8 +85,8 @@ describe.concurrent('defaultClassifier', () => {
     });
 });
 
-describe.concurrent('classifyNetworkError', () => {
-    describe.concurrent('POSIX network error codes', () => {
+describe('classifyNetworkError', () => {
+    describe('POSIX network error codes', () => {
         it.each([
             ['ETIMEDOUT', 'Connection timed out'],
             ['ECONNRESET', 'Connection reset'],
@@ -100,7 +100,7 @@ describe.concurrent('classifyNetworkError', () => {
         });
     });
 
-    describe.concurrent('Smithy/AWS-SDK error codes', () => {
+    describe('Smithy/AWS-SDK error codes', () => {
         it.each([
             ['FailedToOpenSocket', 'Failed to open socket'],
             ['TimeoutError', 'Request timed out'],
@@ -130,7 +130,7 @@ describe.concurrent('classifyNetworkError', () => {
         });
     });
 
-    describe.concurrent('Real Smithy error instances (Object.assign shapes from @smithy/node-http-handler)', () => {
+    describe('Real Smithy error instances (Object.assign shapes from @smithy/node-http-handler)', () => {
         // These use the actual construction pattern from @smithy/node-http-handler source:
         //   Object.assign(new Error(msg), { name: 'TimeoutError' })
         // This is the "real" shape that future Smithy upgrades may alter — if they change
@@ -194,7 +194,7 @@ describe.concurrent('classifyNetworkError', () => {
         });
     });
 
-    describe.concurrent('Name-only Smithy errors (no code property)', () => {
+    describe('Name-only Smithy errors (no code property)', () => {
         it('should classify TimeoutError by name when no code property', () => {
             // @smithy/fetch-http-handler sets only name="TimeoutError", no code
             const error = new Error('Request did not complete within 15000 ms');
@@ -227,7 +227,7 @@ describe.concurrent('classifyNetworkError', () => {
         });
     });
 
-    describe.concurrent('Non-network error codes', () => {
+    describe('Non-network error codes', () => {
         it.each([null, undefined])('does not inspect a nullish network error %s', (error) => {
             expect(classifyNetworkError(error)).toBeUndefined();
         });
@@ -258,8 +258,8 @@ describe.concurrent('classifyNetworkError', () => {
     });
 });
 
-describe.concurrent('createHttpStatusClassifier', () => {
-    describe.concurrent('Rate limited responses (429)', () => {
+describe('createHttpStatusClassifier', () => {
+    describe('Rate limited responses (429)', () => {
         it('should classify 429 as rate_limited (kills status === 429 condition)', () => {
             const error = { status: 429 };
             const classifier = createHttpStatusClassifier();
@@ -302,7 +302,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe.concurrent('Transient HTTP errors (5xx)', () => {
+    describe('Transient HTTP errors (5xx)', () => {
         it('should classify 500 as transient (lower boundary, kills >= 500 mutant)', () => {
             const error = { status: 500 };
             const classifier = createHttpStatusClassifier();
@@ -344,7 +344,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe.concurrent('Permanent HTTP errors (4xx except 429)', () => {
+    describe('Permanent HTTP errors (4xx except 429)', () => {
         it('should classify 400 as permanent (lower boundary)', () => {
             const error = { status: 400 };
             const classifier = createHttpStatusClassifier();
@@ -375,7 +375,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe.concurrent('Network timeout errors', () => {
+    describe('Network timeout errors', () => {
         it.each([
             ['ECONNREFUSED', 'Connection refused'],
             ['FailedToOpenSocket', 'Failed to open socket'],
@@ -410,7 +410,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe.concurrent('Custom permanent status codes', () => {
+    describe('Custom permanent status codes', () => {
         it('should classify custom permanent status as permanent', () => {
             const error = { status: 422 };
             const classifier = createHttpStatusClassifier({ permanentStatuses: [422] });
@@ -440,7 +440,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe.concurrent('Fallback to default classifier', () => {
+    describe('Fallback to default classifier', () => {
         it.each([null, undefined, 'request failed', 503])('uses the default classification for primitive or nullish errors: %s', (error) => {
             const result = createHttpStatusClassifier()(error);
             expect(result).toEqual(defaultClassifier(error));
@@ -497,7 +497,7 @@ describe.concurrent('createHttpStatusClassifier', () => {
         });
     });
 
-    describe.concurrent('Edge cases', () => {
+    describe('Edge cases', () => {
         it('should handle status as string', () => {
             const error = { status: '500' };
             const classifier = createHttpStatusClassifier();

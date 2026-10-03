@@ -46,7 +46,7 @@ function asBackend(b: MockBackend): Parameters<typeof createContactsMCPServer>[0
 /** Approval callback for tests that never reach the approval step (it is a required dependency). */
 async function noopApproval(): Promise<void> { /* intentionally empty */ }
 
-describe.concurrent('createContactsMCPServer', () => {
+describe('createContactsMCPServer', () => {
     let mockBackend: MockBackend;
 
     beforeEach(() => {

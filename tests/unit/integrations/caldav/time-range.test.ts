@@ -53,7 +53,7 @@ const allDay: CalendarTimeRange = { kind: 'all_day', start: createLocalDate('202
 const floating: CalendarTimeRange = { kind: 'floating', start: createLocalDateTime('2026-03-01T09:00:00'), end: createLocalDateTime('2026-03-01T10:30:00') };
 const timed: CalendarTimeRange = { kind: 'timed', start: new Date('2026-03-01T05:00:00.000Z'), end: new Date('2026-03-01T06:00:00.000Z'), timezone: 'Europe/London' };
 
-describe.concurrent('resolveFloating', () => {
+describe('resolveFloating', () => {
     test('resolveFloating reads a floating wall-clock time in the display zone', () => {
         expect(resolveFloating(createLocalDateTime('2026-03-01T09:00:00'), LA).toUTC().toISO()).toBe('2026-03-01T17:00:00.000Z');
         expect(resolveFloating(createLocalDateTime('2026-03-01T09:00:00'), 'Asia/Tokyo').toUTC().toISO()).toBe('2026-03-01T00:00:00.000Z');
@@ -88,7 +88,7 @@ describe('resolveFloating clock independence', () => {
     });
 });
 
-describe.concurrent('resolveToInstant', () => {
+describe('resolveToInstant', () => {
     test('resolveToInstant resolves both floating endpoints in the display zone', () => {
         expect(resolveToInstant(floating, LA)).toEqual({
             startMs: Date.parse('2026-03-01T17:00:00.000Z'),
@@ -103,7 +103,7 @@ describe.concurrent('resolveToInstant', () => {
     });
 });
 
-describe.concurrent('displayDay', () => {
+describe('displayDay', () => {
     test('displayDay keeps an all-day date on its own date either side of UTC', () => {
         expect(displayDay(allDay, LA)).toBe('2026-03-01');
         expect(displayDay(allDay, 'Asia/Tokyo')).toBe('2026-03-01');
@@ -122,7 +122,7 @@ describe.concurrent('displayDay', () => {
     });
 });
 
-describe.concurrent('dayOrderMs', () => {
+describe('dayOrderMs', () => {
     test('dayOrderMs places an all-day range ahead of every instant', () => {
         expect(dayOrderMs(allDay, LA)).toBe(Number.MIN_SAFE_INTEGER);
     });
@@ -133,7 +133,7 @@ describe.concurrent('dayOrderMs', () => {
     });
 });
 
-describe.concurrent('calendarSortKey', () => {
+describe('calendarSortKey', () => {
     test('calendarSortKey encodes date, variant rank and time of day per variant', () => {
         expect(calendarSortKey(allDay)).toBe('2026-03-01|0|');
         expect(calendarSortKey(floating)).toBe('2026-03-01|1|09:00:00');

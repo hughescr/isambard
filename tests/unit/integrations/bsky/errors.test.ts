@@ -8,7 +8,7 @@ import {
 import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 
-describe.concurrent('BskyError', () => {
+describe('BskyError', () => {
     test('should have correct inheritance chain', () => {
         const error = new BskyError('Test error');
         expect(error).toBeInstanceOf(BskyError);
@@ -44,7 +44,7 @@ describe.concurrent('BskyError', () => {
     });
 });
 
-describe.concurrent('BskyAuthError', () => {
+describe('BskyAuthError', () => {
     test('should have correct inheritance chain', () => {
         const error = new BskyAuthError('Auth failed');
         expect(error).toBeInstanceOf(BskyAuthError);
@@ -76,7 +76,7 @@ describe.concurrent('BskyAuthError', () => {
     });
 });
 
-describe.concurrent('BskyRateLimitError', () => {
+describe('BskyRateLimitError', () => {
     test('should have correct inheritance chain', () => {
         const error = new BskyRateLimitError('Rate limited');
         expect(error).toBeInstanceOf(BskyRateLimitError);
@@ -108,7 +108,7 @@ describe.concurrent('BskyRateLimitError', () => {
     });
 });
 
-describe.concurrent('Error instanceof cross-checks', () => {
+describe('Error instanceof cross-checks', () => {
     test('BskyAuthError is not BskyRateLimitError', () => {
         const error = new BskyAuthError('Auth failed');
         expect(error).not.toBeInstanceOf(BskyRateLimitError);
@@ -130,7 +130,7 @@ describe.concurrent('Error instanceof cross-checks', () => {
     });
 });
 
-describe.concurrent('BskyValidationError', () => {
+describe('BskyValidationError', () => {
     test('should have correct inheritance chain', () => {
         const error = new BskyValidationError('Post too long');
         expect(error).toBeInstanceOf(BskyValidationError);
@@ -162,7 +162,7 @@ describe.concurrent('BskyValidationError', () => {
     });
 });
 
-describe.concurrent('Error.captureStackTrace handling', () => {
+describe('Error.captureStackTrace handling', () => {
     test('should call captureStackTrace for subclass', () => {
         const spy = spyOn(Error, 'captureStackTrace');
         const error = new BskyAuthError('test');

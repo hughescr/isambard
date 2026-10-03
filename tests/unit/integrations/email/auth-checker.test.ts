@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { checkVerificationResults } from '@/integrations/email/auth-checker';
 
-describe.concurrent('checkVerificationResults', () => {
+describe('checkVerificationResults', () => {
     test('undefined verificationResults returns both false', () => {
         expect(checkVerificationResults(undefined, 'alice@example.com')).toEqual({ spfPass: false, dkimPass: false });
     });

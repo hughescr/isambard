@@ -11,8 +11,8 @@ function makeStubDocClient(): DynamoDBDocumentClient {
     return {} as unknown as DynamoDBDocumentClient;
 }
 
-describe.concurrent('DynamoDBClientHolder', () => {
-    describe.concurrent('getClient', () => {
+describe('DynamoDBClientHolder', () => {
+    describe('getClient', () => {
         test('should return the initial client', () => {
             const client    = makeStubClient();
             const docClient = makeStubDocClient();
@@ -22,7 +22,7 @@ describe.concurrent('DynamoDBClientHolder', () => {
         });
     });
 
-    describe.concurrent('getDocClient', () => {
+    describe('getDocClient', () => {
         test('should return the initial doc client', () => {
             const client    = makeStubClient();
             const docClient = makeStubDocClient();

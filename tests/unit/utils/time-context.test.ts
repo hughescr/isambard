@@ -7,7 +7,7 @@ import {
     formatLocalDateTime
 } from '@/utils/time';
 
-describe.concurrent('getTimeOfDay', () => {
+describe('getTimeOfDay', () => {
     describe('with UTC timezone (explicit)', () => {
         describe('morning (5:00-11:59)', () => {
             test.each([

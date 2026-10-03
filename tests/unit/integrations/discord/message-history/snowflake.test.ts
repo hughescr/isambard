@@ -7,7 +7,7 @@ import {
     InvalidSnowflakeError
 } from '@/integrations/discord/message-history/snowflake';
 
-describe.concurrent('DISCORD_EPOCH', () => {
+describe('DISCORD_EPOCH', () => {
     test('should be January 1, 2015 UTC in milliseconds as bigint', () => {
         expect(DISCORD_EPOCH).toBe(1_420_070_400_000n);
         const epochDate = new Date(Number(DISCORD_EPOCH));

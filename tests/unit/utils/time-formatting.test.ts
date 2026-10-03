@@ -6,7 +6,7 @@ import {
     formatEnvelopeStamp
 } from '@/utils/time';
 
-describe.concurrent('formatRelativeTime', () => {
+describe('formatRelativeTime', () => {
     const baseDate = new Date('2025-01-15T12:00:00.000Z');
 
     test.each([
@@ -168,7 +168,7 @@ describe('formatShortRelativeTime', () => {
     });
 });
 
-describe.concurrent('formatEnvelopeStamp', () => {
+describe('formatEnvelopeStamp', () => {
     const now = new Date('2026-09-04T22:07:00Z');
 
     test('formats Pacific time with the PST/PDT->PT fold', () => {
@@ -192,8 +192,8 @@ describe.concurrent('formatEnvelopeStamp', () => {
     });
 });
 
-// Not describe.concurrent: this block spies on the process-global Intl.DateTimeFormat.prototype,
-// which would race the concurrent block above if they overlapped.
+// This block spies on the process-global Intl.DateTimeFormat.prototype, so it must never run
+// concurrently with anything else (the leaked-timer guard fails concurrent tests anyway).
 describe('formatEnvelopeStamp — full DST abbreviation fold table', () => {
     const now = new Date('2026-09-04T22:07:00Z');
 

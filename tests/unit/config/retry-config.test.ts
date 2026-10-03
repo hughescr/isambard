@@ -5,7 +5,7 @@ import {
     DEFAULT_RETRY_CONFIG
 } from '@/config/retry-config';
 
-describe.concurrent('retryConfigSchema', () => {
+describe('retryConfigSchema', () => {
     describe('default values', () => {
         test('should apply all defaults for empty object', () => {
             const result = retryConfigSchema.parse({});

@@ -14,7 +14,7 @@ const createMockItem = (overrides: Partial<MemoryToolItemData> = {}): MemoryTool
     ...overrides,
 });
 
-describe.concurrent('createActivityLogger', () => {
+describe('createActivityLogger', () => {
     let mockBackend: MemoryToolBackend;
 
     beforeEach(() => {

@@ -5,7 +5,7 @@ import { createPrefixedKey } from '@/storage/utils/key-builder';
 
 const PERSON_ID = 'craig-hughes' as PersonId;
 
-describe.concurrent('ContactKeyGenerator', () => {
+describe('ContactKeyGenerator', () => {
     test.each([
         ['profile PK', () => ContactKeyGenerator.parsePersonIdFromPK('OTHER#CONTACT#craig-hughes'), 'ContactKeyGenerator.parsePersonIdFromPK'],
         ['lookup SK', () => ContactKeyGenerator.parsePersonIdFromLookupSK('OTHER#CONTACT#craig-hughes'), 'ContactKeyGenerator.parsePersonIdFromLookupSK'],

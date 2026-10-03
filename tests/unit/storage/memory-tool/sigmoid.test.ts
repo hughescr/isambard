@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { sigmoidScore, DEFAULT_SIGMOID_PARAMS, type SigmoidParams  } from '@/storage/memory-tool/sigmoid';
 
-describe.concurrent('sigmoidScore', () => {
+describe('sigmoidScore', () => {
     describe('frequency scoring at t=0', () => {
         test('returns ~0.5 frequency at midpoint (accessCount=5, time=0)', () => {
             const score = sigmoidScore(5, 0);
@@ -136,7 +136,7 @@ describe.concurrent('sigmoidScore', () => {
  * Change detector for the exported defaults table. If a maintainer deliberately changes a
  * documented default, this literal copy and the source table must be updated together.
  */
-describe.concurrent('DEFAULT_SIGMOID_PARAMS', () => {
+describe('DEFAULT_SIGMOID_PARAMS', () => {
     test('pins the documented default parameters', () => {
         const sevenDaysMs = 604_800_000; // 7 days in milliseconds
 

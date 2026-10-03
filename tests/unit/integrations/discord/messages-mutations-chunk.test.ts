@@ -4,7 +4,7 @@ import {
     DISCORD_SAFE_LENGTH
 } from '@/integrations/discord/messages';
 
-describe.concurrent('Discord Message Splitting', () => {
+describe('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('mutation coverage - cascade behavior', () => {
             test('should handle multiple words where first word needs character split', () => {

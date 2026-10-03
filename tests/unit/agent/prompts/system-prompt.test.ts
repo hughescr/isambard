@@ -10,7 +10,7 @@ import {
 import { SESSION_PEER_NAMES } from '../../../../src/agent/session/query-options';
 import { assertPromptHygiene } from '../../../helpers/prompt-hygiene';
 
-describe.concurrent('system-prompt', () => {
+describe('system-prompt', () => {
     describe('buildSessionSystemPrompt', () => {
         test('conversation role contains "shared transcript" and the identity text', () => {
             const prompt = buildSessionSystemPrompt({ role: 'conversation', identity: 'I am Isambard, Craig\'s thought partner.' });

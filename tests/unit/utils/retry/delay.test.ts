@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from 'bun:test';
 import { calculateDelay } from '../../../../src/utils/retry/delay';
 import type { RetryPolicy } from '../../../../src/utils/retry/types';
 
-describe.concurrent('calculateDelay', () => {
+describe('calculateDelay', () => {
     const defaultPolicy: RetryPolicy = {
         maxAttempts:       3,
         baseDelayMs:       1000,

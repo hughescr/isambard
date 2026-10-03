@@ -15,7 +15,7 @@ import {
     type PersonId
 } from '@/storage/contacts/types';
 
-describe.concurrent('persisted contact row compatibility', () => {
+describe('persisted contact row compatibility', () => {
     // A profile row exactly as DynamoDB held it before the identity key was renamed to PersonId.
     const PRE_EXISTING_PROFILE_ITEM = {
         PK:          'CONTACT#alice-wonderland',
@@ -46,7 +46,7 @@ describe.concurrent('persisted contact row compatibility', () => {
     });
 });
 
-describe.concurrent('normalizeIdentifierValue', () => {
+describe('normalizeIdentifierValue', () => {
     test('lowercases mixed-case input', () => {
         expect(normalizeIdentifierValue('Alice@Example.COM')).toBe('alice@example.com');
     });
@@ -62,7 +62,7 @@ describe.concurrent('normalizeIdentifierValue', () => {
     });
 });
 
-describe.concurrent('contactIdentifierKey', () => {
+describe('contactIdentifierKey', () => {
     test('joins the platform and the normalized value with #', () => {
         expect(contactIdentifierKey('email', '  Alice@Example.com ')).toBe('email#alice@example.com' as ContactIdentifierKey);
     });
@@ -78,7 +78,7 @@ describe.concurrent('contactIdentifierKey', () => {
     });
 });
 
-describe.concurrent('platformTypeSchema', () => {
+describe('platformTypeSchema', () => {
     test.each(['name', 'nickname', 'discord', 'email', 'bsky'])('accepts %s', (platform) => {
         const result = platformTypeSchema.safeParse(platform);
         expect(result.success).toBe(true);
@@ -95,7 +95,7 @@ describe.concurrent('platformTypeSchema', () => {
     });
 });
 
-describe.concurrent('contactIdentifierSchema', () => {
+describe('contactIdentifierSchema', () => {
     test('accepts valid identifier', () => {
         const result = contactIdentifierSchema.safeParse({ platform: 'email', value: 'alice@example.com' });
         expect(result.success).toBe(true);
@@ -127,7 +127,7 @@ describe.concurrent('contactIdentifierSchema', () => {
     });
 });
 
-describe.concurrent('ContactChangeRequest', () => {
+describe('ContactChangeRequest', () => {
     test('requires a personId for update requests', () => {
         const update: ContactChangeRequest = {
             action:   'update',
@@ -141,7 +141,7 @@ describe.concurrent('ContactChangeRequest', () => {
     });
 });
 
-describe.concurrent('personIdSchema', () => {
+describe('personIdSchema', () => {
     test.each([
         'alice',
         'alice-smith',
@@ -202,7 +202,7 @@ describe.concurrent('personIdSchema', () => {
     });
 });
 
-describe.concurrent('createPersonId', () => {
+describe('createPersonId', () => {
     test('creates PersonId from valid string', () => {
         const id = createPersonId('alice-smith');
         expect(id).toBe('alice-smith' as PersonId);
@@ -217,7 +217,7 @@ describe.concurrent('createPersonId', () => {
     });
 });
 
-describe.concurrent('isPersonId', () => {
+describe('isPersonId', () => {
     test('returns true for valid PersonId', () => {
         expect(isPersonId('alice-smith')).toBe(true);
     });
@@ -235,7 +235,7 @@ describe.concurrent('isPersonId', () => {
     });
 });
 
-describe.concurrent('contactSchema', () => {
+describe('contactSchema', () => {
     const VALID_CONTACT: Contact = {
         personId:    'alice-smith' as PersonId,
         displayName: 'Alice Smith',

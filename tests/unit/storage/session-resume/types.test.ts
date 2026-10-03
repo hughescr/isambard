@@ -5,7 +5,7 @@ import {
     isSessionId
 } from '@/storage/session-resume/types';
 
-describe.concurrent('sessionIdSchema', () => {
+describe('sessionIdSchema', () => {
     test('should accept valid UUID', () => {
         const validUuid = '550e8400-e29b-41d4-a716-446655440000';
         const result = sessionIdSchema.safeParse(validUuid);

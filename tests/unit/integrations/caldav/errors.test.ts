@@ -9,7 +9,7 @@ import {
 import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
 
-describe.concurrent('CaldavError', () => {
+describe('CaldavError', () => {
     test('should have correct inheritance chain', () => {
         const error = new CaldavError('Test error');
         expect(error).toBeInstanceOf(CaldavError);
@@ -45,7 +45,7 @@ describe.concurrent('CaldavError', () => {
     });
 });
 
-describe.concurrent('CaldavAuthError', () => {
+describe('CaldavAuthError', () => {
     test('should have correct inheritance chain', () => {
         const error = new CaldavAuthError('Auth failed');
         expect(error).toBeInstanceOf(CaldavAuthError);
@@ -77,7 +77,7 @@ describe.concurrent('CaldavAuthError', () => {
     });
 });
 
-describe.concurrent('CaldavFetchError', () => {
+describe('CaldavFetchError', () => {
     test('should have correct inheritance chain', () => {
         const error = new CaldavFetchError('Fetch failed');
         expect(error).toBeInstanceOf(CaldavFetchError);
@@ -109,7 +109,7 @@ describe.concurrent('CaldavFetchError', () => {
     });
 });
 
-describe.concurrent('CaldavTimeoutError', () => {
+describe('CaldavTimeoutError', () => {
     test('should have correct inheritance chain', () => {
         const error = new CaldavTimeoutError('Timeout');
         expect(error).toBeInstanceOf(CaldavTimeoutError);
@@ -141,7 +141,7 @@ describe.concurrent('CaldavTimeoutError', () => {
     });
 });
 
-describe.concurrent('Error instanceof cross-checks', () => {
+describe('Error instanceof cross-checks', () => {
     test('CaldavAuthError is not CaldavFetchError', () => {
         const error = new CaldavAuthError('Auth failed');
         expect(error).not.toBeInstanceOf(CaldavFetchError);
@@ -183,7 +183,7 @@ describe.concurrent('Error instanceof cross-checks', () => {
     });
 });
 
-describe.concurrent('AmbiguousCalendarMatchError', () => {
+describe('AmbiguousCalendarMatchError', () => {
     test('should have correct inheritance chain', () => {
         const error = new AmbiguousCalendarMatchError('server', 'apple', []);
         expect(error).toBeInstanceOf(AmbiguousCalendarMatchError);
@@ -246,7 +246,7 @@ describe.concurrent('AmbiguousCalendarMatchError', () => {
     });
 });
 
-describe.concurrent('Error.captureStackTrace handling', () => {
+describe('Error.captureStackTrace handling', () => {
     test('should call captureStackTrace for subclass', () => {
         const spy = spyOn(Error, 'captureStackTrace');
         const error = new CaldavAuthError('test');

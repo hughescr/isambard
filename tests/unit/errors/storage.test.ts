@@ -12,7 +12,7 @@ import {
     BatchWriteExhaustedError
 } from '@/errors/storage';
 
-describe.concurrent('StorageError', () => {
+describe('StorageError', () => {
     test('should be an instance of StorageError, IsambardError, and Error', () => {
         const error = new StorageError('test error');
         expect(error).toBeInstanceOf(StorageError);
@@ -41,7 +41,7 @@ describe.concurrent('StorageError', () => {
     });
 });
 
-describe.concurrent('ItemNotFoundError', () => {
+describe('ItemNotFoundError', () => {
     test('should have correct inheritance chain', () => {
         const error = new ItemNotFoundError('item-123');
         expect(error).toBeInstanceOf(ItemNotFoundError);
@@ -71,7 +71,7 @@ describe.concurrent('ItemNotFoundError', () => {
     });
 });
 
-describe.concurrent('ValidationError', () => {
+describe('ValidationError', () => {
     test('should have correct inheritance chain', () => {
         const error = new ValidationError([{ path: 'content', message: 'required' }]);
         expect(error).toBeInstanceOf(ValidationError);
@@ -102,7 +102,7 @@ describe.concurrent('ValidationError', () => {
     });
 });
 
-describe.concurrent('DynamoTimeoutError', () => {
+describe('DynamoTimeoutError', () => {
     test('should have correct inheritance chain', () => {
         const error = new DynamoTimeoutError('GetItem', 5000);
         expect(error).toBeInstanceOf(DynamoTimeoutError);
@@ -133,7 +133,7 @@ describe.concurrent('DynamoTimeoutError', () => {
     });
 });
 
-describe.concurrent('ContactNotFoundError', () => {
+describe('ContactNotFoundError', () => {
     test('should have correct inheritance chain', () => {
         const error = new ContactNotFoundError('alice-smith');
         expect(error).toBeInstanceOf(ContactNotFoundError);
@@ -163,7 +163,7 @@ describe.concurrent('ContactNotFoundError', () => {
     });
 });
 
-describe.concurrent('ContactLastIdentifierError', () => {
+describe('ContactLastIdentifierError', () => {
     test('should have correct inheritance chain', () => {
         const error = new ContactLastIdentifierError('alice-smith');
         expect(error).toBeInstanceOf(ContactLastIdentifierError);
@@ -193,7 +193,7 @@ describe.concurrent('ContactLastIdentifierError', () => {
     });
 });
 
-describe.concurrent('ContactNoIdentifiersError', () => {
+describe('ContactNoIdentifiersError', () => {
     test('should have correct inheritance chain', () => {
         const error = new ContactNoIdentifiersError('alice-smith');
         expect(error).toBeInstanceOf(ContactNoIdentifiersError);
@@ -223,7 +223,7 @@ describe.concurrent('ContactNoIdentifiersError', () => {
     });
 });
 
-describe.concurrent('BatchWriteExhaustedError', () => {
+describe('BatchWriteExhaustedError', () => {
     test('should have correct inheritance chain', () => {
         const error = new BatchWriteExhaustedError('batchWriteItem', 3, 5);
         expect(error).toBeInstanceOf(BatchWriteExhaustedError);
@@ -279,7 +279,7 @@ describe.concurrent('BatchWriteExhaustedError', () => {
     });
 });
 
-describe.concurrent('Error.captureStackTrace handling', () => {
+describe('Error.captureStackTrace handling', () => {
     test('should use captureStackTrace when available', () => {
         const spy = spyOn(Error, 'captureStackTrace');
         const error = new StorageError('test');

@@ -2,8 +2,8 @@ import { describe, test, expect } from 'bun:test';
 import { getSlotForHour, getSlotConfig, getNextSlot, SLOT_CONFIGS } from '@/agent/perch/schedule';
 import type { PerchSlot } from '@/agent/perch/types';
 
-describe.concurrent('getSlotForHour', () => {
-    describe.concurrent('pre-dawn slot (5-7am)', () => {
+describe('getSlotForHour', () => {
+    describe('pre-dawn slot (5-7am)', () => {
         test.each<[number, PerchSlot]>([
             [5, 'pre-dawn'],
             [6, 'pre-dawn'],
@@ -12,7 +12,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('mid-morning slot (9-11am)', () => {
+    describe('mid-morning slot (9-11am)', () => {
         test.each<[number, PerchSlot]>([
             [9, 'mid-morning'],
             [10, 'mid-morning'],
@@ -21,7 +21,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('wikipedia slot (12pm-2pm)', () => {
+    describe('wikipedia slot (12pm-2pm)', () => {
         test.each<[number, PerchSlot]>([
             [12, 'wikipedia'],
             [13, 'wikipedia'],
@@ -30,7 +30,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('afternoon slot (2-4pm)', () => {
+    describe('afternoon slot (2-4pm)', () => {
         test.each<[number, PerchSlot]>([
             [14, 'afternoon'],
             [15, 'afternoon'],
@@ -39,7 +39,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('evening slot (6-8pm)', () => {
+    describe('evening slot (6-8pm)', () => {
         test.each<[number, PerchSlot]>([
             [18, 'evening'],
             [19, 'evening'],
@@ -48,7 +48,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('late-night slot (11pm-1am, spans midnight)', () => {
+    describe('late-night slot (11pm-1am, spans midnight)', () => {
         test.each<[number, PerchSlot]>([
             [23, 'late-night'],
             [0, 'late-night'],
@@ -58,7 +58,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('unscheduled hours', () => {
+    describe('unscheduled hours', () => {
         test.each<[number, PerchSlot]>([
             [2, 'unscheduled'],
             [3, 'unscheduled'],
@@ -76,7 +76,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('hour validation', () => {
+    describe('hour validation', () => {
         test('should accept hour 0 (midnight)', () => {
             expect(getSlotForHour(0)).toBe('late-night');
         });
@@ -101,7 +101,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('boundary conditions', () => {
+    describe('boundary conditions', () => {
         test('hour 4 should be unscheduled (before pre-dawn)', () => {
             expect(getSlotForHour(4)).toBe('unscheduled');
         });
@@ -139,7 +139,7 @@ describe.concurrent('getSlotForHour', () => {
         });
     });
 
-    describe.concurrent('complete hour coverage', () => {
+    describe('complete hour coverage', () => {
         test('all hours 0-23 should return a valid slot', () => {
             for(let hour = 0; hour < 24; hour++) {
                 const slot = getSlotForHour(hour);
@@ -150,8 +150,8 @@ describe.concurrent('getSlotForHour', () => {
     });
 });
 
-describe.concurrent('getSlotConfig', () => {
-    describe.concurrent('scheduled slots', () => {
+describe('getSlotConfig', () => {
+    describe('scheduled slots', () => {
         test('should return config for pre-dawn', () => {
             const config = getSlotConfig('pre-dawn');
             expect(config).toBeDefined();
@@ -213,14 +213,14 @@ describe.concurrent('getSlotConfig', () => {
         });
     });
 
-    describe.concurrent('unscheduled slot', () => {
+    describe('unscheduled slot', () => {
         test('should return undefined for unscheduled', () => {
             const config = getSlotConfig('unscheduled');
             expect(config).toBeUndefined();
         });
     });
 
-    describe.concurrent('config properties', () => {
+    describe('config properties', () => {
         test('all configs should have required properties', () => {
             for(const config of SLOT_CONFIGS) {
                 expect(config.slot).toBeDefined();
@@ -245,7 +245,7 @@ describe.concurrent('getSlotConfig', () => {
         });
     });
 
-    describe.concurrent('slot config consistency', () => {
+    describe('slot config consistency', () => {
         test('getSlotConfig should return same config as in SLOT_CONFIGS', () => {
             for(const config of SLOT_CONFIGS) {
                 const retrieved = getSlotConfig(config.slot);
@@ -255,8 +255,8 @@ describe.concurrent('getSlotConfig', () => {
     });
 });
 
-describe.concurrent('getNextSlot', () => {
-    describe.concurrent('when currently in a named slot, returns next in SLOT_CONFIGS order', () => {
+describe('getNextSlot', () => {
+    describe('when currently in a named slot, returns next in SLOT_CONFIGS order', () => {
         test('from pre-dawn → mid-morning', () => {
             // pre-dawn is hours 5-6
             expect(getNextSlot(5)).toBe('mid-morning');
@@ -295,7 +295,7 @@ describe.concurrent('getNextSlot', () => {
         });
     });
 
-    describe.concurrent('when between slots (unscheduled), returns next upcoming slot', () => {
+    describe('when between slots (unscheduled), returns next upcoming slot', () => {
         test('hour 2 → pre-dawn (hours 2-4 are between late-night and pre-dawn)', () => {
             expect(getNextSlot(2)).toBe('pre-dawn');
             expect(getNextSlot(3)).toBe('pre-dawn');
@@ -323,7 +323,7 @@ describe.concurrent('getNextSlot', () => {
         });
     });
 
-    describe.concurrent('fractional and NaN hours', () => {
+    describe('fractional and NaN hours', () => {
         test.each<[number, PerchSlot]>([
             [0.5, 'pre-dawn'],
             [1.5, 'pre-dawn'],
@@ -343,7 +343,7 @@ describe.concurrent('getNextSlot', () => {
         });
     });
 
-    describe.concurrent('hour validation', () => {
+    describe('hour validation', () => {
         test('should throw RangeError for negative hour', () => {
             expect(() => getNextSlot(-1)).toThrow(RangeError);
             expect(() => getNextSlot(-1)).toThrow('Hour must be between 0 and 23, got -1');
@@ -360,7 +360,7 @@ describe.concurrent('getNextSlot', () => {
         });
     });
 
-    describe.concurrent('all 24 hours return a named slot (never unscheduled)', () => {
+    describe('all 24 hours return a named slot (never unscheduled)', () => {
         test.each<number>(Array.from({ length: 24 }, (_, i) => i))(
             'hour %d returns a named (non-unscheduled) slot',
             (hour: number) => {

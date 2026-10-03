@@ -4,7 +4,7 @@ import {
     DISCORD_SAFE_LENGTH
 } from '@/integrations/discord/messages';
 
-describe.concurrent('Discord Message Splitting', () => {
+describe('Discord Message Splitting', () => {
     describe('splitMessage', () => {
         describe('short messages (no split needed)', () => {
             test('should return single-element array for empty string', () => {

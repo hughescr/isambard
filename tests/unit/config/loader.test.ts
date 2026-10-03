@@ -67,7 +67,7 @@ function bskyResources(extra?: Partial<Record<keyof SstResources, { value: strin
     });
 }
 
-describe.concurrent('loadConfig', () => {
+describe('loadConfig', () => {
     describe('Happy Path', () => {
         test('should return properly typed Config object', () => {
             const resources = createMockResources();
@@ -736,7 +736,7 @@ describe('loadConfig - Perch Config', () => {
     });
 });
 
-describe.concurrent('loadConfig - adminDiscordUserId', () => {
+describe('loadConfig - adminDiscordUserId', () => {
     test('should throw when AdminDiscordUserId is not set (now required)', () => {
         const resources = createMockResources({
             AdminDiscordUserId: { value: undefined },
@@ -766,7 +766,7 @@ describe.concurrent('loadConfig - adminDiscordUserId', () => {
     });
 });
 
-describe.concurrent('loadConfig - adminDiscordChannelId', () => {
+describe('loadConfig - adminDiscordChannelId', () => {
     test('should throw when AdminDiscordChannelId is not set (required at top level)', () => {
         const resources = createMockResources({
             AdminDiscordChannelId: { value: undefined },
@@ -787,7 +787,7 @@ describe.concurrent('loadConfig - adminDiscordChannelId', () => {
     });
 });
 
-describe.concurrent('loadConfig - Bsky Config', () => {
+describe('loadConfig - Bsky Config', () => {
     test('should return bsky = undefined when BskyHandle is not set', () => {
         const resources = createMockResources();
         const config = loadConfig(resources);
@@ -819,7 +819,7 @@ describe.concurrent('loadConfig - Bsky Config', () => {
     });
 });
 
-describe.concurrent('loadConfig - Typesafe Config', () => {
+describe('loadConfig - Typesafe Config', () => {
     test('should return typesafe = undefined when TypesafeApiKey is not set', () => {
         const resources = createMockResources();
         const config = loadConfig(resources);

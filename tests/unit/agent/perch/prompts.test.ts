@@ -3,7 +3,7 @@ import { formatSlotName } from '@/agent/perch/prompts';
 import type { PerchSlot } from '@/agent/perch/types';
 import { InvariantViolationError } from '@/errors';
 
-describe.concurrent('formatSlotName', () => {
+describe('formatSlotName', () => {
     test('is exported and covers every slot', () => {
         const expected: Record<PerchSlot, string> = {
             'pre-dawn':    'Pre-Dawn (5-7am Pacific)',

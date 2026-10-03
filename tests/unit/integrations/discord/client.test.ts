@@ -4,7 +4,7 @@ import type { DiscordConfig } from '@/config/schemas';
 import { createDiscordClient } from '@/integrations/discord/client';
 import { createGuildId } from '@/integrations/discord/types';
 
-describe.concurrent('createDiscordClient', () => {
+describe('createDiscordClient', () => {
     const validConfig: DiscordConfig = {
         botToken:      'MTIzNDU2Nzg5MDEyMzQ1Njc4.GHIJKL.abcdefghijklmnopqrstuvwxyz0123456789AB',
         applicationId: '123456789012345678',
@@ -14,8 +14,8 @@ describe.concurrent('createDiscordClient', () => {
     /**
      * Builds a real discord.js Client, runs the assertions, then destroys it.
      * `new Client()` starts REST sweeper intervals that only `destroy()` clears,
-     * so every client a test builds must be destroyed (the file is concurrent,
-     * so cleanup is per-test rather than in a shared afterEach).
+     * so every client a test builds must be destroyed (the leaked-timer guard fails
+     * any test that leaves them running; cleanup is per-test, in the helper itself).
      */
     async function withClient(assertions: (client: Client) => void): Promise<void> {
         const client = createDiscordClient(validConfig);

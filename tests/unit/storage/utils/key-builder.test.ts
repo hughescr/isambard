@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createPrefixedKey, parsePrefixedKey } from '@/storage/utils/key-builder';
 
-describe.concurrent('createPrefixedKey', () => {
+describe('createPrefixedKey', () => {
     describe('single-part keys', () => {
         test('creates PREFIX#value key', () => {
             expect(createPrefixedKey('CONTACT', 'craig-hughes')).toBe('CONTACT#craig-hughes');
@@ -118,7 +118,7 @@ describe.concurrent('createPrefixedKey', () => {
     });
 });
 
-describe.concurrent('parsePrefixedKey', () => {
+describe('parsePrefixedKey', () => {
     test('records the failing parser as the invariant location', () => {
         try {
             parsePrefixedKey('CONTACT', 'OTHER#id');

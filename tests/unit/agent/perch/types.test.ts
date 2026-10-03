@@ -7,7 +7,7 @@ import {
     type SuggestionLevel
 } from '@/agent/perch/types';
 
-describe.concurrent('PerchSlotSchema', () => {
+describe('PerchSlotSchema', () => {
     test('should validate all valid perch slots', () => {
         const validSlots: PerchSlot[] = [
             'pre-dawn',
@@ -52,7 +52,7 @@ describe.concurrent('PerchSlotSchema', () => {
     });
 });
 
-describe.concurrent('SuggestionLevelSchema', () => {
+describe('SuggestionLevelSchema', () => {
     test('should validate all valid suggestion levels', () => {
         const validLevels: SuggestionLevel[] = [
             'strongly_suggestive',
@@ -93,7 +93,7 @@ describe.concurrent('SuggestionLevelSchema', () => {
     });
 });
 
-describe.concurrent('PerchSlotConfigSchema', () => {
+describe('PerchSlotConfigSchema', () => {
     test('should validate complete PerchSlotConfig', () => {
         const validConfig = {
             slot:      'pre-dawn' as const,
