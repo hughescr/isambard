@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'bun:test';
-import { listRunningReconnectionLoops, markLoopRunning, markLoopStopped } from '@/services/running-reconnection-loops';
+import { disableRunningLoopTracking, enableRunningLoopTracking, listRunningReconnectionLoops, markLoopRunning, markLoopStopped } from '@/services/running-reconnection-loops';
 
 describe('running reconnection loop registry', () => {
     const a = {};
@@ -56,5 +56,46 @@ describe('running reconnection loop registry', () => {
         markLoopStopped(a);
 
         expect(listRunningReconnectionLoops()).toEqual([]);
+    });
+
+    describe('tracking switch (production default: off)', () => {
+        afterEach(() => {
+            // the test preload keeps tracking on for every other test
+            enableRunningLoopTracking();
+        });
+
+        it('registers nothing while tracking is off, and still holds nothing once it is turned on', () => {
+            disableRunningLoopTracking();
+
+            markLoopRunning(a, 'discord', noStop);
+
+            expect(listRunningReconnectionLoops()).toEqual([]);
+            enableRunningLoopTracking();
+            expect(listRunningReconnectionLoops()).toEqual([]);
+        });
+
+        it('tolerates stopping a loop while tracking is off', () => {
+            disableRunningLoopTracking();
+
+            expect(markLoopStopped(a)).toBeUndefined();
+            expect(listRunningReconnectionLoops()).toEqual([]);
+        });
+
+        it('drops every loop it held when turned off', () => {
+            markLoopRunning(a, 'discord', noStop);
+
+            disableRunningLoopTracking();
+            enableRunningLoopTracking();
+
+            expect(listRunningReconnectionLoops()).toEqual([]);
+        });
+
+        it('keeps what it already tracks when enabled again', () => {
+            markLoopRunning(a, 'discord', noStop);
+
+            enableRunningLoopTracking();
+
+            expect(listRunningReconnectionLoops().map(entry => entry.id)).toEqual([a]);
+        });
     });
 });

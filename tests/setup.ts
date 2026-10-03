@@ -6,7 +6,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { Database } from 'bun:sqlite';
 import { afterAll, afterEach, beforeEach, jest, mock, type Mock } from 'bun:test';
 import { createTimerGuard, formatLeakedTimers, type AbortSignalHost, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from './helpers/leaked-timer-guard';
-import { listRunningReconnectionLoops } from '../src/services/running-reconnection-loops';
+import { enableRunningLoopTracking, listRunningReconnectionLoops } from '../src/services/running-reconnection-loops';
 
 // Configure Bun to use the Homebrew-installed libsqlite3.dylib on macOS.
 // Database.setCustomSQLite MUST be called before the first new Database() in the process.
@@ -781,6 +781,8 @@ const timerGuard = createTimerGuard(
     }
 );
 timerGuard.install();
+// Production registers no running loops (see running-reconnection-loops.ts); only this preload turns tracking on
+enableRunningLoopTracking();
 
 beforeEach(() => {
     timerGuard.markTestStart();
