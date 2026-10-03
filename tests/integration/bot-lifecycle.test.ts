@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import type { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import type { Client } from 'discord.js';
 import '../setup'; // SST mock is applied via side effects
 import type { CompactionTelemetry, Conductor, ContextPolicy, LedgerStore } from '@/agent';
 import * as agentIndexModule from '@/agent';
@@ -18,6 +19,7 @@ import * as discordBot from '@/integrations/discord/bot';
 import type { DiscordBot } from '@/integrations/discord/bot';
 import * as channelRegistryBackendModule from '@/integrations/discord/channel-registry/backend';
 import * as channelRegistryManagerModule from '@/integrations/discord/channel-registry/manager';
+import * as discordClientModule from '@/integrations/discord/client';
 import * as registerCommandsModule from '@/integrations/discord/register-commands';
 import { createGuildId } from '@/integrations/discord/types';
 import * as servicesModule from '@/services';
@@ -69,7 +71,15 @@ async function createApp(): Promise<App> {
     return app;
 }
 
-/** Stops (and forgets) every app built by the test that just finished. */
+/**
+ * Every real discord.js client createDiscordInfrastructure() builds during a test. The bot is a
+ * mock here, so nothing in app.stop() reaches `Client.destroy()`, and each client's REST sweeper
+ * intervals (4 h and 1 h) would otherwise stay pending after the test.
+ */
+const builtClients: Client[] = [];
+const realCreateDiscordClient = discordClientModule.createDiscordClient;
+
+/** Stops (and forgets) every app built by the test that just finished, then destroys their discord clients. */
 async function stopBuiltApps(): Promise<void> {
     await Promise.all(builtApps.splice(0).map(async (app) => {
         try {
@@ -77,6 +87,13 @@ async function stopBuiltApps(): Promise<void> {
         } catch{
             // Teardown only: a test that cares how stop() settles asserts it itself, and
             // stop() runs every shutdown step even when an earlier one fails.
+        }
+    }));
+    await Promise.all(builtClients.splice(0).map(async (client) => {
+        try {
+            await client.destroy();
+        } catch{
+            // Teardown only: a client app.stop() already destroyed may refuse a second destroy.
         }
     }));
 }
@@ -153,6 +170,12 @@ describe('Bot Lifecycle Integration', () => {
         };
 
         spies.push(
+            // Record the real discord.js clients so afterEach can destroy their sweeper intervals
+            spyOn(discordClientModule, 'createDiscordClient').mockImplementation((config) => {
+                const client = realCreateDiscordClient(config);
+                builtClients.push(client);
+                return client;
+            }),
             // Mock DynamoDB client
             spyOn(dynamoClient, 'createDynamoDBClient').mockReturnValue({
                 client:    mockClient,

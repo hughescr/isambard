@@ -23,6 +23,7 @@ import {
     UpdateCommand
 } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
+import type { Client } from 'discord.js';
 import * as memoryMcpServerModule from '@/agent/memory-mcp-server';
 import * as storageLayerModule from '@/app/storage-layer';
 import type { SessionConfig } from '@/config';
@@ -31,6 +32,7 @@ import * as indexModule from '@/index';
 import * as discordBotModule from '@/integrations/discord/bot';
 import * as crBackendModule from '@/integrations/discord/channel-registry/backend';
 import * as crManagerModule from '@/integrations/discord/channel-registry/manager';
+import * as discordClientModule from '@/integrations/discord/client';
 import * as registerCommandsModule from '@/integrations/discord/register-commands';
 import * as storageModule from '@/storage';
 import * as dynamoClientModule from '@/storage/client';
@@ -53,6 +55,34 @@ const sessionConfig: SessionConfig = {
     debounceMs:              250,
     timezone:                'UTC',
 };
+
+/**
+ * Every real discord.js client the createApp() calls below build. The bot is a mock here, so
+ * app.stop() never reaches `Client.destroy()`, and each client's REST sweeper intervals (4 h and
+ * 1 h) would stay pending after the test. The `afterEach` hooks destroy them.
+ */
+const builtClients: Client[] = [];
+const realCreateDiscordClient = discordClientModule.createDiscordClient;
+
+/** @returns A spy that records each client createDiscordClient builds, for {@link destroyBuiltClients} */
+function recordDiscordClients() {
+    return spyOn(discordClientModule, 'createDiscordClient').mockImplementation((config) => {
+        const client = realCreateDiscordClient(config);
+        builtClients.push(client);
+        return client;
+    });
+}
+
+/** Destroys (and forgets) every client recorded by {@link recordDiscordClients}. */
+async function destroyBuiltClients(): Promise<void> {
+    await Promise.all(builtClients.splice(0).map(async (client) => {
+        try {
+            await client.destroy();
+        } catch{
+            // Teardown only: a client app.stop() already destroyed may refuse a second destroy.
+        }
+    }));
+}
 
 // ─── 1. Config wiring ───────────────────────────────────────────────────────
 /**
@@ -119,9 +149,11 @@ describe('Vector feature wiring', () => {
 
         beforeEach(() => {
             spies.length = 0;
+            spies.push(recordDiscordClients());
         });
 
-        afterEach(() => {
+        afterEach(async () => {
+            await destroyBuiltClients();
             for(const spy of spies) {
                 spy.mockRestore();
             }
@@ -349,9 +381,11 @@ describe('Vector feature wiring', () => {
 
         beforeEach(() => {
             spies.length = 0;
+            spies.push(recordDiscordClients());
         });
 
-        afterEach(() => {
+        afterEach(async () => {
+            await destroyBuiltClients();
             for(const spy of spies) {
                 spy.mockRestore();
             }

@@ -37,6 +37,9 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
         preferVendorReport = true, anthropicQuotaSource = 'provider', resultDebounceMs = DEFAULT_QUOTA_RESULT_DEBOUNCE_MS,
         requestTimeoutMs = DEFAULT_QUOTA_REQUEST_TIMEOUT_MS } = params;
     let timer: TimerHandle | undefined;
+    // The in-flight attempt's request-timeout timer; stop() must clear it, since the attempt's own
+    // finally only runs once the (aborted) fetch settles
+    let requestTimer: TimerHandle | undefined;
     let running = false;
     let inFlight: Promise<void> | undefined;
     let abortController: AbortController | undefined;
@@ -101,6 +104,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
         abortController = controller;
         const attemptGeneration = generation;
         const timeout = clock.setTimer(() => controller.abort(), requestTimeoutMs);
+        requestTimer = timeout;
         try {
             if(!preferVendorReport) {
                 if(anthropicQuotaSource === 'sdk') {
@@ -156,6 +160,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
             logger.debug({ errorName: error instanceof Error ? error.name : 'unknown' }, 'Quota poll failed; keeping the last known readings');
         } finally {
             clock.clearTimer(timeout);
+            requestTimer = undefined;
             abortController = undefined;
         }
     }
@@ -200,6 +205,10 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
             running = false;
             abortController?.abort();
             abortController = undefined;
+            if(requestTimer !== undefined) {
+                clock.clearTimer(requestTimer);
+                requestTimer = undefined;
+            }
             if(timer !== undefined) {
                 clock.clearTimer(timer);
                 timer = undefined;

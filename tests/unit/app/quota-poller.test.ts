@@ -1413,6 +1413,36 @@ describe('provider polling', () => {
         await poller.poll();
     });
 
+    it('leaves no timer pending when stopped while a request is still in flight', () => {
+        const { clock, poller } = harness({
+            fetch: async () => new Promise<QuotaFetchResponse>(() => {
+                // Never settles: the attempt is still in flight when stop() runs
+            }),
+        });
+        poller.start();
+        // The next-poll timer plus the in-flight attempt's request-timeout timer
+        expect(clock.pending()).toBe(2);
+        poller.stop();
+        expect(clock.pending()).toBe(0);
+    });
+
+    it('clears each request-timeout timer exactly once when the attempt settles before stop', async () => {
+        const { clock, poller } = harness();
+        const clearTimer = clock.clearTimer;
+        let cleared = 0;
+        clock.clearTimer = (handle) => {
+            cleared += 1;
+            clearTimer(handle);
+        };
+        poller.start();
+        await poller.poll();
+        expect(cleared).toBe(1);
+        poller.stop();
+        // stop() clears only the next-poll timer: the settled attempt's handle is already gone
+        expect(cleared).toBe(2);
+        expect(clock.pending()).toBe(0);
+    });
+
     it('does not queue a replacement poll when stopped before an in-flight attempt settles', async () => {
         let release = (_response: QuotaFetchResponse): void => {};
         const gate = new Promise<QuotaFetchResponse>((resolve) => {
