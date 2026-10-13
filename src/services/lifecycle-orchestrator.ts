@@ -16,11 +16,13 @@ export type ServiceLifecycleEvent
       | { type: 'CONNECTION_LOST', error?: string }
       | { type: 'RECONNECT_ATTEMPT' };
 
+// Type-only: xstate never reads this value at runtime, so it is written as a single cast of an
+// empty literal rather than an object literal with members (whose emptied mutant would be an
+// equivalent no-op).
+const machineTypes = {} as { context: ServiceLifecycleContext, events: ServiceLifecycleEvent };
+
 export const serviceLifecycleMachine = setup({
-    types: {
-        context: {} as ServiceLifecycleContext,
-        events:  {} as ServiceLifecycleEvent,
-    },
+    types:   machineTypes,
     actions: {
         incrementEpoch: assign({ epoch: ({ context }) => context.epoch + 1 }),
         recordOnline:   assign({

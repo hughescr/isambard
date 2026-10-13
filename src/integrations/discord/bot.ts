@@ -527,9 +527,11 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
     let coordinator: MessageCoordinator | undefined;
     let perchScheduler: PerchScheduler | undefined;
     // True once attachSessions has been told the perch session opened — gates whether the perch
-    // wiring (setupPerchDriverAndScheduler) runs at all. Stays false if perch was never built, or
-    // if its open failed — perch is simply disabled.
-    let perchConductorOpened = false;
+    // wiring (setupPerchDriverAndScheduler) runs at all. Assigned unconditionally by attachSessions
+    // (false if perch was never built, or if its open failed — perch is simply disabled) before
+    // anything reads it: every reader (perchRoutingDeps, configurePerch, the perch-time exclusion)
+    // is reachable only from attachSessions, after that assignment — so no initial value is needed.
+    let perchConductorOpened: boolean;
     let perchDriver: PerchDriver | undefined;
     // Use provided registry or create a new one
     const questionRegistry: QuestionRegistry = options.questionRegistry ?? new QuestionRegistry();

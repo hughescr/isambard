@@ -389,6 +389,32 @@ describe('runCli', () => {
         expect(rename).toHaveBeenCalled();
     });
 
+    test('awaits deps.rename before reporting success, so a slow rename cannot be reported as done', async () => {
+        let resolveRename: (() => void) | undefined;
+        const renamePromise = new Promise<void>((resolve) => {
+            resolveRename = resolve;
+        });
+        const rename = mock(() => renamePromise);
+        const writes: string[] = [];
+        const report = { files: { 'a.ts': { mutants: [{ id: '1', 'static': true, status: 'Survived' }] } } };
+
+        const runPromise = runCli(['bun', 'script.ts', 'reports/x.json'], {
+            fileExists: async () => true,
+            readFile:   async () => JSON.stringify(report),
+            writeFile:  async () => {},
+            rename,
+            write:      (t) => { writes.push(t); },
+        });
+
+        await flush();
+        expect(rename).toHaveBeenCalled();
+        expect(writes).toEqual([]);
+
+        resolveRename?.();
+        await runPromise;
+        expect(writes).toEqual(['pruned 1 stale static mutant verdict(s) from reports/x.json\n']);
+    });
+
     test('the default writeFile awaits Bun.write before the caller can proceed to rename', async () => {
         let resolveBunWrite: ((n: number) => void) | undefined;
         const bunWritePromise = new Promise<number>((resolve) => {

@@ -149,6 +149,18 @@ describe('searchResponseSchema', () => {
         }
     });
 
+    test('reports the exact path and message for a negative summarized overflow count', () => {
+        const result = searchResponseSchema.safeParse({
+            ...validSearchResponse,
+            overflow: { mode: 'summarized', count: -1, batchSummaries: [], summarizedCount: 0 },
+        });
+        expect(result.success).toBe(false);
+        if(!result.success) {
+            const countIssue = result.error.issues.find(issue => issue.path.join('.') === 'overflow.count');
+            expect(countIssue?.message).toBe('Count cannot be negative');
+        }
+    });
+
     test('reports the exact message for a negative summarized overflow covered count', () => {
         const result = searchResponseSchema.safeParse({
             ...validSearchResponse,

@@ -357,6 +357,21 @@ describe('channelSummaryResponseSchema', () => {
         }
     });
 
+    test('should reject invalid timeRange start format', () => {
+        const invalid = { ...validResponse, timeRange: { start: 'invalid', end: '2025-01-24T10:00:00.000Z' } };
+        expect(channelSummaryResponseSchema.safeParse(invalid).success).toBe(false);
+    });
+
+    test('should reject invalid timeRange end format', () => {
+        const invalid = { ...validResponse, timeRange: { start: '2025-01-24T09:00:00.000Z', end: 'invalid' } };
+        expect(channelSummaryResponseSchema.safeParse(invalid).success).toBe(false);
+    });
+
+    test('should preserve the parsed timeRange', () => {
+        const result = channelSummaryResponseSchema.safeParse(validResponse);
+        expect(result.success && result.data.timeRange).toEqual(validResponse.timeRange);
+    });
+
     test('should accept empty messages array', () => {
         const emptyMessages = { ...validResponse, messages: [] };
         const result = channelSummaryResponseSchema.safeParse(emptyMessages);
