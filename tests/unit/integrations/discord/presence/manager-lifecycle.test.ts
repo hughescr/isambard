@@ -6,7 +6,7 @@ import type { PresencePhase, PresenceConfig } from '@/integrations/discord/prese
 
 // Typed mock shapes that expose both real interface and bun mock methods
 type MockWithCalls = ReturnType<typeof mock> & { mock: { calls: unknown[][] } };
-interface MockedClient { user: { setActivity: MockWithCalls } }
+interface MockedClient { user: { setActivity: MockWithCalls }, isReady: () => boolean }
 interface MockedActiveGenerator { generate: MockWithCalls }
 interface MockedIdleGenerator { generate: MockWithCalls }
 
@@ -62,7 +62,8 @@ describe('PresenceManager Lifecycle', () => {
         jest.setSystemTime(1000);
 
         mockClient = {
-            user: {
+            isReady: () => true,
+            user:    {
                 setActivity: mock(() => undefined),
             },
         };
@@ -244,7 +245,8 @@ describe('PresenceManager Lifecycle', () => {
         it('logs a failed apply with the exact error and activity payload', async () => {
             const testError = new Error('Discord API error');
             const errorClient = {
-                user: {
+                isReady: () => true,
+                user:    {
                     setActivity: mock(() => {
                         throw testError;
                     }),

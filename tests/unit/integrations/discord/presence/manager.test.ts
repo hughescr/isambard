@@ -7,7 +7,7 @@ import type { PresencePhase, PresenceConfig } from '@/integrations/discord/prese
 
 // Typed mock shapes that expose both real interface and bun mock methods
 type MockWithCalls = ReturnType<typeof mock> & { mock: { calls: unknown[][] } };
-interface MockedClient { user: { setActivity: MockWithCalls } }
+interface MockedClient { user: { setActivity: MockWithCalls }, isReady: () => boolean }
 interface MockedActiveGenerator { generate: MockWithCalls }
 interface MockedIdleGenerator { generate: MockWithCalls }
 
@@ -65,7 +65,8 @@ describe('PresenceManager', () => {
         jest.setSystemTime(1000);
 
         mockClient = {
-            user: {
+            isReady: () => true,
+            user:    {
                 setActivity: mock(() => undefined),
             },
         };
@@ -102,6 +103,30 @@ describe('PresenceManager', () => {
         jest.restoreAllMocks();
         jest.clearAllTimers();
         jest.useRealTimers();
+    });
+
+    it('does not send or remember presence while a destroyed client retains its user', async () => {
+        mockClient.isReady = () => false;
+        mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type: ActivityType.Custom }));
+        const manager = createManager();
+        await manager.applyView(activeView);
+        expect(mockClient.user.setActivity).not.toHaveBeenCalled();
+        expect(mockLogger.info).not.toHaveBeenCalledWith(expect.anything(), 'Updated Discord presence');
+        expect(mockLogger.error).not.toHaveBeenCalled();
+        mockClient.isReady = () => true;
+        await manager.applyView(respondingView);
+        expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it('idle keep-alive does not send after the client loses readiness', async () => {
+        const manager = createManager();
+        await manager.applyView(idleView);
+        expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+        mockClient.isReady = () => false;
+        jest.advanceTimersByTime(config.idleRefreshIntervalMs);
+        await drainTicks();
+        expect(mockClient.user.setActivity).toHaveBeenCalledTimes(1);
+        manager.stop();
     });
 
     describe('applyView - active views apply immediately (no internal throttling)', () => {
@@ -219,7 +244,8 @@ describe('PresenceManager', () => {
         it('re-sends an identical activity after a failed apply (a failure is never remembered)', async () => {
             let attempts = 0;
             const flakyClient = {
-                user: {
+                isReady: () => true,
+                user:    {
                     setActivity: mock(() => {
                         attempts += 1;
                         if(attempts === 1) {
@@ -241,7 +267,7 @@ describe('PresenceManager', () => {
             // `discordClient.user` is null until the gateway READY frame lands. The apply throws
             // nothing in that window — it simply has nobody to call — so it must not be recorded
             // as applied, or the first real apply after READY would be deduped into oblivion.
-            const lateReadyClient: { user: MockedClient['user'] | null } = { user: null };
+            const lateReadyClient: { user: MockedClient['user'] | null, isReady: () => boolean } = { user: null, isReady: () => true };
             mockActiveGenerator.generate = mock(() => ({ name: 'Same status', type: ActivityType.Custom }));
             const manager = createManager({ discordClient: lateReadyClient as unknown as Client });
 
@@ -300,7 +326,8 @@ describe('PresenceManager', () => {
     describe('error handling', () => {
         it('should handle Discord API errors gracefully', async () => {
             const errorClient = {
-                user: {
+                isReady: () => true,
+                user:    {
                     setActivity: mock(() => {
                         throw new Error('Discord API error');
                     }),
@@ -322,7 +349,8 @@ describe('PresenceManager', () => {
             // Together with the transient-error test below, this pins `{ policy: { maxAttempts: 2 } }`.
             let callCount = 0;
             const retryClient = {
-                user: {
+                isReady: () => true,
+                user:    {
                     setActivity: mock(() => {
                         callCount++;
                         // Throw permanent error (not a network error code)
@@ -366,7 +394,8 @@ describe('PresenceManager', () => {
             const networkError = Object.assign(new Error('Connection reset'), { code: 'ECONNRESET' });
 
             const retryClient = {
-                user: {
+                isReady: () => true,
+                user:    {
                     setActivity: mock(() => {
                         callCount++;
                         // ECONNRESET is a transient error code, retried per maxAttempts

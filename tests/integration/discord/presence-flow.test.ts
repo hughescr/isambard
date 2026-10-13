@@ -27,7 +27,7 @@ describe('Discord Presence Flow (Integration)', () => {
         mockGenerateTextWithSystemPrompt.mockImplementation(() => Promise.resolve('Contemplating digital dreams'));
 
         setActivity = mock(() => undefined);
-        mockDiscordClient = { user: { setActivity } } as unknown as Client;
+        mockDiscordClient = { user: { setActivity }, isReady: () => true } as unknown as Client;
     });
 
     afterEach(() => {

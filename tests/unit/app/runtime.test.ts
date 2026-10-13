@@ -14,10 +14,12 @@ import {
     createBootRecoveryRuntime,
     createSessionSupervisor,
     startSessions,
+    stopSessions,
     type CreateSessionSupervisorParams,
     type SessionHost,
     type SessionSupervisor
 } from '@/app/runtime';
+import { createStartupChain } from '@/app/startup-chain';
 
 interface OpenResult {
     sessionId: string
@@ -90,6 +92,18 @@ function build(overrides: Partial<CreateSessionSupervisorParams> = {}) {
 
 afterEach(() => {
     jest.restoreAllMocks();
+});
+
+describe('createSessionSupervisor.openSessions: cancellation', () => {
+    test('an aborted supervisor open cannot begin either session', async () => {
+        const { supervisor, conversation, perch } = build();
+        const controller = new AbortController();
+        controller.abort();
+        expect(await supervisor.openSessions(controller.signal)).toEqual({ conversation: 'absent', perch: 'absent' });
+        expect(conversation.conductor.open).not.toHaveBeenCalled();
+        expect(perch.conductor.open).not.toHaveBeenCalled();
+        expect(supervisor.shutdown).toBeUndefined();
+    });
 });
 
 describe('session supervisor constants', () => {
@@ -552,6 +566,195 @@ describe('startSessions', () => {
         } satisfies SessionSupervisor;
         return { supervisor, outcome, shutdown };
     }
+
+    test('stop releases an unresolved ready wait and late readiness cannot open sessions', async () => {
+        const ready = deferred<undefined>();
+        const { host, order } = makeHost(ready.promise);
+        const { supervisor, shutdown } = makeSupervisor(order);
+        const chain = createStartupChain(signal => startSessions({ host, supervisor, logger: makeLogger(), signal }), async () => {
+            await supervisor.shutdown.run();
+        });
+        const starting = chain();
+        await chain.stop();
+        await starting;
+        ready.resolve(undefined);
+        await flush();
+        expect(supervisor.openSessions).not.toHaveBeenCalled();
+        expect(host.attachSessions).not.toHaveBeenCalled();
+        expect(supervisor.runRecovery).not.toHaveBeenCalled();
+        expect(shutdown.run).toHaveBeenCalledTimes(1);
+    });
+
+    test.each([false, true])('readiness listener is removed after normal completion or abort=%s', async (abort) => {
+        const { host, order } = makeHost(abort ? never() : Promise.resolve());
+        const { supervisor } = makeSupervisor(order);
+        const controller = new AbortController();
+        const add = spyOn(controller.signal, 'addEventListener');
+        const remove = spyOn(controller.signal, 'removeEventListener');
+        const starting = startSessions({ host, supervisor, logger: makeLogger(), signal: controller.signal });
+        expect(add).toHaveBeenCalledTimes(1);
+        expect(add.mock.calls[0]?.[0]).toBe('abort');
+        if(abort) {
+            controller.abort();
+        }
+        await starting;
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(remove).toHaveBeenCalledWith('abort', add.mock.calls[0]?.[1]);
+    });
+
+    test('an already aborted startup returns even when the host never becomes ready', async () => {
+        const { host, order } = makeHost(never());
+        const { supervisor } = makeSupervisor(order);
+        const controller = new AbortController();
+        controller.abort();
+        let completed = false;
+        const starting = startSessions({ host, supervisor, logger: makeLogger(), signal: controller.signal }).then(() => {
+            completed = true;
+            return undefined;
+        });
+        await flush();
+        expect(completed).toBe(true);
+        await starting;
+        expect(supervisor.openSessions).not.toHaveBeenCalled();
+    });
+
+    test('shutdown joins startup and host stop before releasing unattached sessions', async () => {
+        const startupWait = deferred<undefined>();
+        const hostWait = deferred<undefined>();
+        const startup = { stop: mock(() => startupWait.promise) };
+        const host = { stop: mock(() => hostWait.promise) };
+        const { supervisor, shutdown } = makeSupervisor([]);
+        const stopping = stopSessions({ startup, host, supervisor });
+        await flush();
+        expect(startup.stop).toHaveBeenCalledTimes(1);
+        expect(host.stop).not.toHaveBeenCalled();
+        expect(shutdown.run).not.toHaveBeenCalled();
+        startupWait.resolve(undefined);
+        await flush();
+        expect(host.stop).toHaveBeenCalledTimes(1);
+        expect(shutdown.run).not.toHaveBeenCalled();
+        hostWait.resolve(undefined);
+        await stopping;
+        expect(shutdown.run).toHaveBeenCalledTimes(1);
+    });
+
+    test('host stop closes attached sessions before the fallback reruns the idempotent shutdown', async () => {
+        const { supervisor, conversation, perch } = build();
+        await supervisor.openSessions();
+        const host = { stop: mock(async () => {
+            expect(conversation.conductor.shutdown).not.toHaveBeenCalled();
+            expect(perch.conductor.shutdown).not.toHaveBeenCalled();
+            await supervisor.shutdown?.run();
+        }) };
+        await stopSessions({ startup: { stop: async () => undefined }, host, supervisor });
+        expect(conversation.conductor.shutdown).toHaveBeenCalledTimes(1);
+        expect(perch.conductor.shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    test('fallback shutdown runs after a host stop failure and stop awaits its completion', async () => {
+        const shutdownWait = deferred<undefined>();
+        const host = { stop: mock(async () => {
+            throw new Error('host stop failed');
+        }) };
+        const shutdown = { run: mock(async () => {
+            await shutdownWait.promise;
+            return { forced: false };
+        }) };
+        let completed = false;
+        const stopping = stopSessions({ startup: { stop: async () => undefined }, host, supervisor: { shutdown } }).catch((error: unknown) => {
+            completed = true;
+            return error;
+        });
+        await flush();
+        expect(shutdown.run).toHaveBeenCalledTimes(1);
+        expect(completed).toBe(false);
+        shutdownWait.resolve(undefined);
+        expect(await stopping).toEqual(new Error('host stop failed'));
+    });
+
+    test('stop with no opened sessions still stops the host', async () => {
+        const host = { stop: mock(async () => undefined) };
+        await stopSessions({ startup: { stop: async () => undefined }, host, supervisor: { shutdown: undefined } });
+        expect(host.stop).toHaveBeenCalledTimes(1);
+    });
+
+    test('an already aborted startup never opens even for a ready host', async () => {
+        const { host, order } = makeHost();
+        const { supervisor } = makeSupervisor(order);
+        const controller = new AbortController();
+        controller.abort();
+        await startSessions({ host, supervisor, logger: makeLogger(), signal: controller.signal });
+        expect(supervisor.openSessions).not.toHaveBeenCalled();
+    });
+
+    test.each(['conversation', 'perch'] as const)('stop during %s open joins then shuts down opened owners without opening more or attaching', async (role) => {
+        const opening = deferred<OpenResult>();
+        const conversation = { conductor: makeConductor(role === 'conversation' ? () => opening.promise : undefined), journal: makeJournal() };
+        const perch = { conductor: makeConductor(role === 'perch' ? () => opening.promise : undefined), journal: makeJournal() };
+        const { supervisor, logger } = build({ conversation, perch });
+        const { host } = makeHost();
+        const chain = createStartupChain(signal => startSessions({ host, supervisor, logger, signal }), async () => {
+            await supervisor.shutdown?.run();
+        });
+        const starting = chain();
+        await flush();
+        const stopping = chain.stop();
+        await flush();
+        expect(conversation.conductor.shutdown).not.toHaveBeenCalled();
+        expect(perch.conductor.shutdown).not.toHaveBeenCalled();
+        opening.resolve({ sessionId: 'opened', resumed: false });
+        await stopping;
+        await starting;
+        expect(host.attachSessions).not.toHaveBeenCalled();
+        expect(host.recoveryAdapter.recover).not.toHaveBeenCalled();
+        const perchOpens = role === 'conversation' ? 0 : 1;
+        expect(perch.conductor.open).toHaveBeenCalledTimes(perchOpens);
+        expect(conversation.conductor.shutdown).toHaveBeenCalledTimes(1);
+        expect(perch.conductor.shutdown).toHaveBeenCalledTimes(perchOpens);
+        // The host may also call the same shutdown during bot.stop().
+        await supervisor.shutdown?.run();
+        expect(conversation.conductor.shutdown).toHaveBeenCalledTimes(1);
+        expect(perch.conductor.shutdown).toHaveBeenCalledTimes(perchOpens);
+    });
+
+    test('stop during attachment waits for it but skips recovery', async () => {
+        const attaching = deferred<undefined>();
+        const { host, order } = makeHost();
+        host.attachSessions.mockImplementation(() => attaching.promise);
+        const { supervisor, shutdown } = makeSupervisor(order);
+        const chain = createStartupChain(signal => startSessions({ host, supervisor, logger: makeLogger(), signal }), async () => {
+            await supervisor.shutdown.run();
+        });
+        void chain();
+        await flush();
+        expect(host.attachSessions).toHaveBeenCalledTimes(1);
+        const stopping = chain.stop();
+        await flush();
+        expect(shutdown.run).not.toHaveBeenCalled();
+        attaching.resolve(undefined);
+        await stopping;
+        expect(supervisor.runRecovery).not.toHaveBeenCalled();
+        expect(shutdown.run).toHaveBeenCalledTimes(1);
+    });
+
+    test('stop during recovery waits for it before shutdown', async () => {
+        const recovering = deferred<undefined>();
+        const { host, order } = makeHost();
+        const { supervisor, shutdown } = makeSupervisor(order);
+        supervisor.runRecovery.mockImplementation(() => recovering.promise);
+        const chain = createStartupChain(signal => startSessions({ host, supervisor, logger: makeLogger(), signal }), async () => {
+            await supervisor.shutdown.run();
+        });
+        void chain();
+        await flush();
+        expect(supervisor.runRecovery).toHaveBeenCalledTimes(1);
+        const stopping = chain.stop();
+        await flush();
+        expect(shutdown.run).not.toHaveBeenCalled();
+        recovering.resolve(undefined);
+        await stopping;
+        expect(shutdown.run).toHaveBeenCalledTimes(1);
+    });
 
     test('opens nothing until the host signals readiness', async () => {
         const ready = deferred<undefined>();

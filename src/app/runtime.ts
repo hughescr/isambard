@@ -13,11 +13,13 @@
  *    rest of the process, with no restart and no retry.
  *
  * Every session open goes through `Conductor.open()`, whose `[BOOT]` handshake is what makes the
- * real SDK emit its `system/init` frame at all (see `src/agent/session/conductor.ts`).
+ * real SDK emit its `system/init` frame at all (see `src/agent/session/conductor.ts`). Lifecycle
+ * cancellation joins an open already underway, but never begins the next role after abort.
  *
  * @module app/runtime
  */
 import type { Logger } from '@hughescr/logger';
+import type { StartupChain } from './startup-chain';
 import {
     computeRecovery,
     createShutdown,
@@ -79,8 +81,8 @@ export interface CreateSessionSupervisorParams {
 
 /** The session supervisor returned by {@link createSessionSupervisor}. */
 export interface SessionSupervisor {
-    /** Opens the conversation session, then perch, applying the per-role failure policy. Single-flight: later calls return the first call's promise. */
-    openSessions(): Promise<SessionOpenOutcome>
+    /** Opens conversation then perch under per-role policy, skipping roles not yet started after abort. Single-flight: later calls return the first call's promise. */
+    openSessions(signal?: AbortSignal): Promise<SessionOpenOutcome>
     /** The cross-session shutdown over exactly the sessions that opened; `undefined` until {@link openSessions} has settled with at least one open session. */
     readonly shutdown: Shutdown | undefined
     /** Runs boot-time crash recovery through `adapter` once the conversation session is open; a no-op otherwise. */
@@ -157,11 +159,11 @@ export function createSessionSupervisor(params: CreateSessionSupervisorParams): 
         }
     }
 
-    async function doOpen(): Promise<SessionOpenOutcome> {
+    async function doOpen(signal: AbortSignal): Promise<SessionOpenOutcome> {
         const opened: { name: string, session: SupervisedSession }[] = [];
 
         let conversationState: SessionOpenOutcome['conversation'] = 'absent';
-        if(conversation) {
+        if(conversation && !signal.aborted) {
             try {
                 await openWithin(() => conversation.conductor.open(), openTimeoutMs, 'conductor.open() timed out', clock);
             } catch (err) {
@@ -176,7 +178,7 @@ export function createSessionSupervisor(params: CreateSessionSupervisorParams): 
         }
 
         let perchState: SessionOpenOutcome['perch'] = 'absent';
-        if(perch) {
+        if(perch && !signal.aborted) {
             try {
                 await openWithin(() => perch.conductor.open(), openTimeoutMs, 'perch conductor.open() timed out', clock);
                 perchState = 'open';
@@ -192,8 +194,8 @@ export function createSessionSupervisor(params: CreateSessionSupervisorParams): 
     }
 
     return {
-        openSessions(): Promise<SessionOpenOutcome> {
-            openPromise ??= doOpen();
+        openSessions(signal = new AbortController().signal): Promise<SessionOpenOutcome> {
+            openPromise ??= doOpen(signal);
             return openPromise;
         },
 
@@ -224,24 +226,72 @@ export interface StartSessionsParams {
     host:       SessionHost
     supervisor: SessionSupervisor
     logger:     Pick<Logger, 'info' | 'error'>
+    /** Lifecycle cancellation; abort releases the readiness wait and skips subsequent stages. */
+    signal?:    AbortSignal
 }
 
 /**
  * The startup sequence, in its one required order: wait for the host's readiness, open the
- * sessions, attach the host's post-open wiring, then run boot-time crash recovery. Never rejects —
+ * sessions, attach the host's post-open wiring, then run boot-time crash recovery. Cancellation
+ * releases a never-ready host immediately; an in-flight stage is joined before returning, so the
+ * stop path can shut down all opened sessions without racing attachment or recovery. Never rejects —
  * a failure is logged and the remaining steps are skipped, exactly as a throw inside the host's
  * readiness handler used to skip the rest of its setup.
  * @param params See {@link StartSessionsParams}.
  */
 export async function startSessions(params: StartSessionsParams): Promise<void> {
-    const { host, supervisor, logger } = params;
+    const { host, supervisor, logger, signal = new AbortController().signal } = params;
+    // Read through a function: cancellation can change across awaits, despite TypeScript's
+    // narrowing of the readonly AbortSignal.aborted property.
+    const isAborted = (): boolean => signal.aborted;
+    if(isAborted()) {
+        return;
+    }
+    let onAbort!: () => void;
+    const aborted = new Promise<void>((resolve) => {
+        onAbort = resolve;
+    });
+    signal.addEventListener('abort', onAbort);
     try {
-        await host.ready;
-        const outcome = await supervisor.openSessions();
+        await Promise.race([host.ready, aborted]);
+        if(isAborted()) {
+            return;
+        }
+        const outcome = await supervisor.openSessions(signal);
+        if(isAborted()) {
+            return;
+        }
         await host.attachSessions(outcome, supervisor.shutdown);
+        if(isAborted()) {
+            return;
+        }
         logger.info({ conversation: outcome.conversation, perch: outcome.perch, msg: 'Sessions opened and attached to Discord' });
         await supervisor.runRecovery(host.recoveryAdapter);
     } catch (err) {
         logger.error({ err, msg: 'Session startup failed' });
+    } finally {
+        signal.removeEventListener('abort', onAbort);
+    }
+}
+
+/** Dependencies for host-first session teardown, including sessions that never attached. */
+export interface StopSessionsParams {
+    startup:    Pick<StartupChain, 'stop'>
+    host:       { stop(): Promise<void> }
+    supervisor: Pick<SessionSupervisor, 'shutdown'>
+}
+
+/**
+ * Abort/join startup before host teardown. The host stops its coordinator and timers before
+ * running the shared session shutdown; only then run the idempotent fallback, even if host stop
+ * failed. That fallback closes opened sessions that never attached, without reversing the
+ * host's required timers-before-conductors shutdown order for normally attached sessions.
+ */
+export async function stopSessions({ startup, host, supervisor }: StopSessionsParams): Promise<void> {
+    await startup.stop();
+    try {
+        await host.stop();
+    } finally {
+        await supervisor.shutdown?.run();
     }
 }

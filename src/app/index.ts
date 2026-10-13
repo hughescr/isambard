@@ -15,6 +15,7 @@ export {
 export {
     createSessionSupervisor,
     startSessions,
+    stopSessions,
     CONDUCTOR_OPEN_TIMEOUT_MS,
     type CreateSessionSupervisorParams,
     type SessionSupervisor,
@@ -31,6 +32,7 @@ export {
 export {
     registerHotReloadInstance,
     stopPreviousHotReloadInstance,
+    launchHotReloadInstance,
     HOT_RELOAD_KEY,
     type HotReloadInstance,
     type HotReloadLogger

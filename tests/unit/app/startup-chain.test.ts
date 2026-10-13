@@ -50,6 +50,14 @@ describe('createStartupChain', () => {
         expect(run).toHaveBeenCalledTimes(1);
     });
 
+    test('default shutdown is safe and a startup failure does not prevent stop', async () => {
+        const chain = createStartupChain(async () => {
+            throw new Error('failed');
+        });
+        await expect(chain()).rejects.toThrow('failed');
+        await expect(chain.stop()).resolves.toBeUndefined();
+    });
+
     test('a fresh createStartupChain() call gets an independent cache - a new lifecycle', async () => {
         const firstRun = mock(async () => undefined);
         const secondRun = mock(async () => undefined);
@@ -61,6 +69,51 @@ describe('createStartupChain', () => {
 
         expect(firstRun).toHaveBeenCalledTimes(1);
         expect(secondRun).toHaveBeenCalledTimes(1);
+    });
+
+    test('stop aborts synchronously, waits for startup, and shuts down exactly once', async () => {
+        let finish!: () => void;
+        let signal!: AbortSignal;
+        const run = mock((received: AbortSignal) => {
+            signal = received;
+            return new Promise<void>((resolve) => {
+                finish = resolve;
+            });
+        });
+        const shutdown = mock(async () => undefined);
+        const chain = createStartupChain(run, shutdown);
+        const starting = chain();
+        const stopping = chain.stop();
+        expect(signal.aborted).toBe(true);
+        expect(chain.stop()).toBe(stopping);
+        await Promise.resolve();
+        expect(shutdown).not.toHaveBeenCalled();
+        finish();
+        await stopping;
+        await starting;
+        expect(shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    test('stop before start prevents any future startup and still releases constructed owners', async () => {
+        const run = mock(async () => undefined);
+        const shutdown = mock(async () => undefined);
+        const chain = createStartupChain(run, shutdown);
+        await chain.stop();
+        await chain();
+        expect(run).not.toHaveBeenCalled();
+        expect(shutdown).toHaveBeenCalledTimes(1);
+    });
+
+    test('a failed startup still shuts down, and shutdown failures reach stop callers', async () => {
+        const shutdown = mock(async () => {
+            throw new Error('shutdown failed');
+        });
+        const chain = createStartupChain(async () => {
+            throw new Error('startup failed');
+        }, shutdown);
+        await expect(chain()).rejects.toThrow('startup failed');
+        await expect(chain.stop()).rejects.toThrow('shutdown failed');
+        expect(shutdown).toHaveBeenCalledTimes(1);
     });
 
     test('does not call run until the returned function is first invoked', () => {

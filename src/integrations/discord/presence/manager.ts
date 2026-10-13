@@ -132,15 +132,15 @@ export class PresenceManager {
      */
     private async forcePresenceUpdate(activity: ActivitiesOptions): Promise<void> {
         try {
-            // `client.user` is null until the gateway READY frame lands; an apply in that window
-            // reaches nobody, so it must not be recorded as applied (which would dedupe away the
-            // first real apply afterwards). The operation reports whether it actually called
-            // setActivity.
+            // A destroyed/disconnected client can retain user but has no usable shard. Do not
+            // send or remember an apply unless ready: discord.js setActivity starts an unawaited
+            // gateway send whose rejection cannot be caught here. A not-yet-ready client's
+            // first real apply must also not be deduped away.
             // Use low retry count for presence updates (not critical)
             const sent = await withDiscordRetry(
                 () => {
                     const user = this.deps.discordClient.user;
-                    if(!user) {
+                    if(!user || !this.deps.discordClient.isReady()) {
                         return Promise.resolve(false);
                     }
                     user.setActivity(activity);

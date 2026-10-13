@@ -6,7 +6,7 @@ import { logger, setTimezone } from '@hughescr/logger';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { loadPlugins, QuestionRegistry, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, createSessionSupervisor, startSessions, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, registerHotReloadInstance, stopPreviousHotReloadInstance, createStartupChain, type ConversationConductorResult, type PerchConductorResult } from '@/app';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, createSessionSupervisor, startSessions, stopSessions, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, launchHotReloadInstance, createStartupChain, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { InvariantViolationError } from '@/errors';
 import {
@@ -1316,14 +1316,11 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         await bot.start();
     };
 
-    // #41: the whole session-startup chain (open, attachSessions, boot recovery) runs at most once
-    // per lifecycle. createApp lets app.start() re-enter this lifecycle's start() without a stop;
-    // the supervisor's own single-flight covers only the open, and a second chain would attach a
-    // second set of Discord wiring and rerun boot recovery. A stop-then-start builds a new
-    // lifecycle, and with it a fresh chain. #113: the guard itself is createStartupChain
-    // (src/app/startup-chain.ts), tested there directly since src/index.ts stays out of the
-    // mutate glob.
-    const sessionStartup = createStartupChain(() => startSessions({ host: bot, supervisor: sessionSupervisor, logger }));
+    // One cancellable chain per lifecycle: stop aborts readiness and joins in-flight stages.
+    // stopSessions then lets the bot stop its coordinator/timers before session shutdown, with
+    // an idempotent fallback for opened sessions that never attached. A stop-then-start rebuild
+    // gets a fresh chain and supervisor.
+    const sessionStartup = createStartupChain(signal => startSessions({ host: bot, supervisor: sessionSupervisor, logger, signal }));
 
     let isStopped = false;
     let stopPromise: Promise<void> | null = null;
@@ -1428,6 +1425,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
             logger.info('Stopping Isambard application...');
             emailStopping = true;
             const steps: ShutdownStep[] = [
+                { name: 'session startup chain', run: () => sessionStartup.stop(), onFailure: 'propagate' },
                 { name: 'DynamoDB reconnection loop', run: () => dynamoDBReconnectionLoop.stop(), onFailure: 'propagate' },
                 { name: 'Discord reconnection loop', run: () => discordReconnectionLoop.stop(), onFailure: 'propagate' },
                 { name: 'email reconnection loop', run: () => emailReconnectionLoop?.stop(), onFailure: 'propagate' },
@@ -1452,7 +1450,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 { name: 'browser adapter', run: () => browserAdapter?.close(), onFailure: 'propagate' },
                 { name: 'email listener', run: () => emailSetup?.listener.stop(), onFailure: 'log-and-continue' },
                 { name: 'WildDuck client', run: shutdownEmailClient, onFailure: 'log-and-continue' },
-                { name: 'Discord bot', run: () => bot.stop(), onFailure: 'propagate' },
+                { name: 'Discord bot and session shutdown', run: () => stopSessions({ startup: sessionStartup, host: bot, supervisor: sessionSupervisor }), onFailure: 'propagate' },
                 // Each step settles before the next starts, including after a rejection.
                 // This keeps indexer writes (and the last expiry prune) ahead of vector-index closure.
                 { name: 'vector prune scheduler', run: () => storage.vectorPruneScheduler?.stop(), onFailure: 'propagate' },
@@ -1595,7 +1593,8 @@ function resolveRepoRoot(apparentRoot: string): string {
     return apparentRoot;
 }
 
-if(import.meta.main) {
+/** Build an entry owner without starting it; the hot-reload guard owns launch and supersession. */
+async function createEntryApplication() {
     // Change to scratch directory for containment
     // Use absolute path based on project root to prevent nesting on hot reload
     // import.meta.dir is src/, so go up one level to project root, then resolve
@@ -1624,14 +1623,6 @@ if(import.meta.main) {
     setTimezone(logTimezone);
 
     logger.info('Isambard starting...');
-
-    // bun --hot re-runs this whole module on a file change WITHOUT firing import.meta.hot.dispose
-    // (import.meta.hot is undefined under Bun 1.4.2's --hot; see src/app/hot-reload-guard.ts), so
-    // the previous evaluation's bot would otherwise keep running beside this one. globalThis
-    // survives the reload: stop whatever the last evaluation parked there before building anything.
-    // boundary cast: globalThis is the runtime-persistent host; the guard reads and writes one validated string-keyed slot
-    const hotReloadHost = globalThis as unknown as Record<string, unknown>;
-    await stopPreviousHotReloadInstance(hotReloadHost, logger);
 
     // Register process-level error boundaries to capture unhandled errors.
     // Capture registration so we can remove handlers on hot reload (prevents duplicate handlers).
@@ -1670,34 +1661,33 @@ if(import.meta.main) {
         exit:       code => process.exit(code),
     });
 
-    // Park this instance's teardown for the NEXT hot reload BEFORE starting, so a reload that
-    // lands mid-startup (two file changes in one deploy did exactly that on 2026-09-09) still
-    // finds a handle: its stop waits for our start to settle, then tears everything down.
-    const started = app.start();
-    registerHotReloadInstance(hotReloadHost, {
-        stop: async () => {
-            await started.catch((err: unknown) => {
-                logger.warn({ err, msg: 'Hot reload: previous start had failed; tearing down anyway' });
-            });
+    // The guard parks this teardown before starting, and joins start before calling it.
+    return {
+        start: () => app.start(),
+        stop:  async () => {
             errorBoundaryRegistration.unregister();
             unregisterSignalHandlers();
             await app.stop();
         },
-    });
-    await started;
+    };
+}
+
+if(import.meta.main) {
+    // Claim this evaluation's generation before any await. Reloads join teardown and settle
+    // for 1s; cold starts have no delay. The tested guard also stops a constructed app if a
+    // newer generation arrived inside createApp(), without starting or parking that app.
+    // boundary cast: globalThis persists across Bun --hot evaluations.
+    const hotReloadHost = globalThis as unknown as Record<string, unknown>;
+    const launched = await launchHotReloadInstance({ host: hotReloadHost, logger, create: createEntryApplication });
 
     // Kept for a Bun that does define import.meta.hot under --hot: then dispose fires first and
     // the globalThis handle above becomes a harmless second stop (app.stop() is idempotent).
     // Bun's ambient ImportMeta types require hot, but the runtime omits it without --hot.
     const runtimeMeta = import.meta as Omit<ImportMeta, 'hot'> & { hot?: ImportMeta['hot'] };
-    if(runtimeMeta.hot) {
+    if(runtimeMeta.hot && launched) {
         runtimeMeta.hot.dispose(async () => {
             logger.info('Hot reload detected, cleaning up...');
-            // Remove error boundary handlers to prevent duplicate handlers on next hot reload
-            errorBoundaryRegistration.unregister();
-            // Remove signal handlers before cleanup to prevent duplicate calls
-            unregisterSignalHandlers();
-            await app.stop();
+            await launched.stop();
         });
     }
 }
