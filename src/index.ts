@@ -6,7 +6,7 @@ import { logger, setTimezone } from '@hughescr/logger';
 import env from 'env-var';
 import { Resource } from 'sst';
 import { loadPlugins, QuestionRegistry, syncAgentsAndSkills, createActivityLogger, PersonHistoryCoordinator, createWebViewAdapter, createTaskListReader, createCostCeiling, createCostCeilingStore, createNotificationBridge, createQuotaNotes, createHealthOutageCoalescer, shouldNotifyHealthChange, createHealthNotificationListener, systemClock, IdentityCache, type BrowserHostPolicy, type PlatformHistoryProvider, type Conductor, type LedgerStore, type ContextPolicy, type ResumeStore, type SessionJournal, type CostCeilingPersistence } from '@/agent';
-import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, createSessionSupervisor, startSessions, stopSessions, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, launchHotReloadInstance, createStartupChain, type ConversationConductorResult, type PerchConductorResult } from '@/app';
+import { createStorageLayer, createContextLayer, createDiscordInfrastructure, createMcpSharedDeps, createConversationConductor, createPerchConductor, createSessionAmbience, createSessionSupervisor, startSessions, stopSessions, loadIdentityContext, registerSignalHandlers, createDiscordRecoveryHandler, launchHotReloadDetached, createStartupChain, type ConversationConductorResult, type PerchConductorResult } from '@/app';
 import { loadConfig, loadDynamoDBConfig, type Config } from '@/config';
 import { InvariantViolationError } from '@/errors';
 import {
@@ -1617,11 +1617,6 @@ async function createEntryApplication() {
         process.chdir(scratchDir);
     }
 
-    // Configure logger timezone (env var or system default)
-    const logTimezone = env.get('LOG_TIMEZONE').asString()
-      ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-    setTimezone(logTimezone);
-
     logger.info('Isambard starting...');
 
     // Register process-level error boundaries to capture unhandled errors.
@@ -1673,21 +1668,34 @@ async function createEntryApplication() {
 }
 
 if(import.meta.main) {
-    // Claim this evaluation's generation before any await. Reloads join teardown and settle
-    // for 1s; cold starts have no delay. The tested guard also stops a constructed app if a
-    // newer generation arrived inside createApp(), without starting or parking that app.
+    // Logger configuration comes first so the guard's own log lines use the configured timezone.
+    // LOG_TIMEZONE env var, else the system default.
+    setTimezone(env.get('LOG_TIMEZONE').asString() ?? Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+    // Do NOT await the launch. Bun --hot starts no further re-evaluation until this module's
+    // top-level await settles (+~100ms), and the launch takes seconds (debounce, createApp,
+    // Discord connect): blocking here turns a burst of file changes (a git checkout) into full
+    // restarts seconds apart. Returning at once lets each change re-evaluate within milliseconds,
+    // so a burst lands inside the guard's 1s debounce and only the newest generation builds.
+    // The generation is claimed synchronously inside the call; the detached promise never rejects
+    // (a launch failure is logged and exits 1), so nothing here can go unhandled.
     // boundary cast: globalThis persists across Bun --hot evaluations.
     const hotReloadHost = globalThis as unknown as Record<string, unknown>;
-    const launched = await launchHotReloadInstance({ host: hotReloadHost, logger, create: createEntryApplication });
-
-    // Kept for a Bun that does define import.meta.hot under --hot: then dispose fires first and
-    // the globalThis handle above becomes a harmless second stop (app.stop() is idempotent).
-    // Bun's ambient ImportMeta types require hot, but the runtime omits it without --hot.
-    const runtimeMeta = import.meta as Omit<ImportMeta, 'hot'> & { hot?: ImportMeta['hot'] };
-    if(runtimeMeta.hot && launched) {
-        runtimeMeta.hot.dispose(async () => {
-            logger.info('Hot reload detected, cleaning up...');
-            await launched.stop();
-        });
-    }
+    void launchHotReloadDetached({
+        host:       hotReloadHost,
+        logger,
+        create:     createEntryApplication,
+        onLaunched: (launched) => {
+            // Kept for a Bun that does define import.meta.hot under --hot: then dispose fires first and
+            // the globalThis handle becomes a harmless second stop (app.stop() is idempotent).
+            // Bun's ambient ImportMeta types require hot, but the runtime omits it without --hot.
+            const runtimeMeta = import.meta as Omit<ImportMeta, 'hot'> & { hot?: ImportMeta['hot'] };
+            runtimeMeta.hot?.dispose(async () => {
+                logger.info('Hot reload detected, cleaning up...');
+                await launched.stop();
+            });
+        },
+        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- a fatal launch failure terminates the process, like createEntryApplication's startup failure
+        exit: code => process.exit(code),
+    });
 }

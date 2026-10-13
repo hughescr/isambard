@@ -5,7 +5,7 @@
  * live instance's stop there and the next evaluation stops it before starting its own.
  */
 import { describe, test, expect, mock, jest, beforeEach, afterEach } from 'bun:test';
-import { HOT_RELOAD_KEY, registerHotReloadInstance, stopPreviousHotReloadInstance, launchHotReloadInstance } from '@/app/hot-reload-guard';
+import { HOT_RELOAD_KEY, registerHotReloadInstance, stopPreviousHotReloadInstance, launchHotReloadInstance, launchHotReloadDetached } from '@/app/hot-reload-guard';
 
 function makeLogger() {
     return { info: mock(() => undefined), warn: mock(() => undefined) };
@@ -319,6 +319,103 @@ describe('launchHotReloadInstance', () => {
         await stopping;
         expect(old.stop).toHaveBeenCalledTimes(1);
         expect(logger.warn).toHaveBeenCalledWith({ error: 'start failed', msg: 'Hot reload: previous start had failed; tearing down anyway' });
+    });
+});
+
+function makeEntryLogger() {
+    return { ...makeLogger(), error: mock(() => undefined) };
+}
+
+describe('launchHotReloadDetached', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    test('returns before anything settles yet has already claimed its generation', () => {
+        const host: Record<string, unknown> = {};
+        const params = { host, logger: makeEntryLogger(), create: async () => makeInstance(), onLaunched: mock(() => undefined), exit: mock(() => undefined) };
+
+        void launchHotReloadDetached(params);
+        expect(host.__isambardHotReloadState).toMatchObject({ generation: 1 });
+        expect(params.onLaunched).not.toHaveBeenCalled();
+        void launchHotReloadDetached(params);
+        expect(host.__isambardHotReloadState).toMatchObject({ generation: 2 });
+    });
+
+    test('hands the started application to onLaunched and does not exit', async () => {
+        const instance = makeInstance();
+        const onLaunched = mock((_app: unknown) => undefined);
+        const exit = mock((_code: number) => undefined);
+
+        await launchHotReloadDetached({ host: {}, logger: makeEntryLogger(), create: async () => instance, onLaunched, exit });
+
+        expect(onLaunched).toHaveBeenCalledTimes(1);
+        expect(onLaunched).toHaveBeenCalledWith(instance);
+        expect(instance.start).toHaveBeenCalledTimes(1);
+        expect(exit).not.toHaveBeenCalled();
+    });
+
+    test('a superseded evaluation neither calls onLaunched nor exits', async () => {
+        const host = {};
+        const onLaunched = mock(() => undefined);
+        const exit = mock(() => undefined);
+        const first = launchHotReloadDetached({ host, logger: makeEntryLogger(), create: async () => makeInstance(), onLaunched, exit });
+        const second = launchHotReloadDetached({ host, logger: makeEntryLogger(), create: async () => makeInstance(), onLaunched, exit });
+        await flush();
+        jest.advanceTimersByTime(1000);
+        await Promise.all([first, second]);
+
+        expect(onLaunched).toHaveBeenCalledTimes(1);
+        expect(exit).not.toHaveBeenCalled();
+    });
+
+    test('a failed create is logged with its stack and exits 1 without rejecting', async () => {
+        const failure = new Error('create failed');
+        const logger = makeEntryLogger();
+        const onLaunched = mock(() => undefined);
+        const exit = mock((_code: number) => undefined);
+
+        await launchHotReloadDetached({ host: {}, logger, create: () => Promise.reject(failure), onLaunched, exit });
+
+        expect(logger.error).toHaveBeenCalledWith({ error: 'create failed', stack: failure.stack, msg: 'Fatal: hot-reload launch failed' });
+        expect(exit).toHaveBeenCalledTimes(1);
+        expect(exit).toHaveBeenCalledWith(1);
+        expect(onLaunched).not.toHaveBeenCalled();
+    });
+
+    test('a failed start exits 1 and a non-Error reason is logged as text without a stack', async () => {
+        const logger = makeEntryLogger();
+        const exit = mock((_code: number) => undefined);
+        const instance = makeInstance();
+        instance.start.mockImplementation(async () => {
+            throw 'start failed';
+        });
+
+        await launchHotReloadDetached({ host: {}, logger, create: async () => instance, onLaunched: mock(() => undefined), exit });
+
+        expect(logger.error).toHaveBeenCalledWith({ error: 'start failed', stack: undefined, msg: 'Fatal: hot-reload launch failed' });
+        expect(exit).toHaveBeenCalledWith(1);
+    });
+
+    test('an onLaunched that throws is also fatal rather than an unhandled rejection', async () => {
+        const logger = makeEntryLogger();
+        const exit = mock((_code: number) => undefined);
+
+        await launchHotReloadDetached({
+            host:       {},
+            logger,
+            create:     async () => makeInstance(),
+            exit,
+            onLaunched: () => {
+                throw new Error('wiring failed');
+            },
+        });
+
+        expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ error: 'wiring failed' }));
+        expect(exit).toHaveBeenCalledWith(1);
     });
 });
 

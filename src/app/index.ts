@@ -33,8 +33,10 @@ export {
     registerHotReloadInstance,
     stopPreviousHotReloadInstance,
     launchHotReloadInstance,
+    launchHotReloadDetached,
     HOT_RELOAD_KEY,
     type HotReloadInstance,
-    type HotReloadLogger
+    type HotReloadLogger,
+    type HotReloadEntryLogger
 } from './hot-reload-guard';
 export { createStartupChain, type StartupChain } from './startup-chain';

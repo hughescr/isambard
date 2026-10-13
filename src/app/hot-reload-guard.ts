@@ -1,7 +1,12 @@
 /**
  * Hot-reload guard for the composition root.
  *
- * Bun 1.4.2's `--hot` re-evaluates the entry module without defining `import.meta.hot`.
+ * Bun's `--hot` (1.4.2/1.4.3) re-evaluates the entry module without defining `import.meta.hot`.
+ * It starts no re-evaluation until the current evaluation's top-level await settles (plus ~100ms),
+ * so the entry must not await the launch: a blocked entry serialises a burst of file changes
+ * (a `git checkout` writing two files) into full restarts seconds apart, whereas a non-blocking
+ * entry re-evaluates 2-13ms after each change and the burst lands inside the debounce below.
+ * Evaluations whose async work is still running after a reload carry on; the generation handles that.
  * `globalThis` survives: the guard keeps a generation, a shared teardown barrier, and the live
  * instance's stop handle there. Every evaluation claims a generation before awaiting anything.
  * Reloads stop the parked owner, join any teardown already underway, then settle for 1000ms;
@@ -121,4 +126,41 @@ export async function launchHotReloadInstance({ host, logger, create, sleep = ms
     started = instance.start();
     await started;
     return instance;
+}
+
+/** The logger the detached entry launch needs: the guard's two methods plus `error` for a fatal failure. */
+export interface HotReloadEntryLogger extends HotReloadLogger {
+    error: (obj: { error: string, msg: string, stack: string | undefined }) => void
+}
+
+/** Dependencies for the non-blocking entry launch. */
+export interface LaunchHotReloadDetachedParams extends Omit<LaunchHotReloadParams, 'logger'> {
+    logger:     HotReloadEntryLogger
+    /** Called with the started application, never for a superseded evaluation. */
+    onLaunched: (app: HotReloadApplication) => void
+    /** Terminates the process; injected so a fatal launch failure is testable. */
+    exit:       (code: number) => void
+}
+
+/**
+ * Runs `launchHotReloadInstance` without the caller awaiting it, so the entry module's top-level
+ * evaluation can finish at once (Bun `--hot` starts no further re-evaluation until the current
+ * one's top-level await settles). The generation is still claimed synchronously: the launch's
+ * first statements run before this function returns. The returned promise never rejects; a launch
+ * failure (or a throwing `onLaunched`) is logged and fatal via `exit(1)`, never unhandled.
+ */
+export async function launchHotReloadDetached({ onLaunched, exit, ...params }: LaunchHotReloadDetachedParams): Promise<void> {
+    try {
+        const app = await launchHotReloadInstance(params);
+        if(app) {
+            onLaunched(app);
+        }
+    } catch (error) {
+        params.logger.error({
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            msg:   'Fatal: hot-reload launch failed',
+        });
+        exit(1);
+    }
 }
