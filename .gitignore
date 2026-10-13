@@ -62,3 +62,4 @@ scratch/
 running/
 .claude/worktrees
 /.stryker-llm-cache
+*.stryker-checker.json

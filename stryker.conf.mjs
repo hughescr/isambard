@@ -1,3 +1,4 @@
+import { withTestFilesExcludedFromTypeCheck } from '@hughescr/stryker-bun-runner';
 import { withLlmMutators } from '@hughescr/stryker-llm-mutator';
 
 const isCI = Boolean(process.env.GITHUB_SHA);
@@ -5,9 +6,10 @@ const isCI = Boolean(process.env.GITHUB_SHA);
 const withMutators = isCI ? async x => x : withLlmMutators;
 
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
-const strykerConfig = await withMutators({
-    checkers:         ['typescript'],
-    packageManager:   'npm', // Stryker doesn't support bun yet, but works via npx
+const strykerConfig = await withTestFilesExcludedFromTypeCheck(await withMutators({
+    checkers:          ['typescript'],
+    typescriptChecker: { experimentalNativePreview: true },
+    packageManager:    'npm', // Stryker doesn't support bun yet, but works via npx
     // Incremental everywhere. Locally: reports/stryker-incremental.json (gitignored, never
     // leaves this machine). NOTE a red LOCAL run still writes Survived verdicts into it, and
     // the upstream differ gap — a Survived mutant with ONLY static coverage is never
@@ -19,33 +21,32 @@ const strykerConfig = await withMutators({
     // @hughescr/stryker-bun-runner >= 1.3.1: earlier versions promoted multi-test-covered
     // mutants to static coverage, blinding the differ to added tests. Keys, save gating,
     // cold-start bootstrap, and the ops runbook: .github/workflows/ci.yml.
-    incremental:      true,
-    reporters:        isCI ? ['clear-text', 'progress', 'dashboard'] : ['llm-mutator', 'progress', 'json', 'html'],
-    testRunner:       'bun',
-    // timeout is per mutant run. A static mutant runs the WHOLE suite: ~26-29 s at local
-    // concurrency 18 when static runs are a minority, but when most runs are static (a cold cache,
-    // or many static verdicts invalidated at once) bailed static runs took up to 42 s for ~13k of
-    // the ~15k tests, so a full static run (any static survivor) needs ~50-60 s. Below that, slow
-    // static runs — real survivors included — came back as false Timeouts (#181). 120 s keeps 2x
-    // headroom; only genuinely hanging mutants wait the extra time, and their verdicts are cached.
-    bun:              { inspectorTimeout: isCI ? 30_000 : 5000, timeout: isCI ? 60_000 : 120_000 },
-    plugins:          isCI ? ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'] : ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker', '@hughescr/stryker-llm-mutator'],
-    coverageAnalysis: 'perTest',
+    incremental:       true,
+    reporters:         isCI ? ['clear-text', 'progress', 'dashboard'] : ['llm-mutator', 'progress', 'json', 'html'],
+    testRunner:        'bun',
+    // bun.timeout bounds only the dry run (the whole suite, once). Mutant runs use Stryker's
+    // per-mutant timeout: timeoutFactor × dry-run time of the tests run + timeoutMS + overhead.
+    // A static mutant runs the whole suite, which is ~3x slower under local concurrency 18
+    // than in the dry run (#181), so the factor carries the headroom locally.
+    bun:               { inspectorTimeout: isCI ? 30_000 : 5000, timeout: 180_000 },
+    timeoutFactor:     isCI ? 1.5 : 4, // Stryker multiplies the test runner timeout by this factor for mutant runs; 1.5x is enough to avoid false Timeouts on slow static runs, but not so high that genuinely hanging mutants get a free pass
+    plugins:           isCI ? ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker'] : ['@hughescr/stryker-bun-runner', '@stryker-mutator/typescript-checker', '@hughescr/stryker-llm-mutator'],
+    coverageAnalysis:  'perTest',
     // Bun runner's dry run remains full; mutant runs stop after the first failing test.
     // An exhaustive mutant-to-killer-test map is optional.
-    disableBail:      false,
-    mutate:           ['src/**/*.ts', '!src/index.ts', 'tools/**/*.ts'], // Do not mutate the entry point; tools/ included so disable comments take effect
-    ignorePatterns:   ['**', '!src/**/*.ts', '!tests/**/*.ts', '!tests/**/*.json', '!tools/**/*.ts', '!bunfig.toml', '!tsconfig.json', '!*.ts', '!*.mjs', '!sst/**/*.ts', '!.ast-grep/**', '!package.json', '!scripts/**/*.ts'], // Only include source and test files in the mutation testing process, plus .ast-grep/ (ast-grep-rules.test.ts reads rule YAML from RULE_PATH inside the sandbox — without this the dry run fails with ENOENT before any mutant can run), package.json (tests/unit/helpers/sdk-frames.test.ts imports it directly) and scripts/**/*.ts (tests/unit/scripts/spike-argv.test.ts imports scripts/spike-argv) — without these two the sandbox throws "Cannot find module" for any mutant run that loads those tests, which Stryker reports as RuntimeError (excluded from the mutation score) rather than Killed/Survived, silently hiding real survivors. LOAD-BEARING breadth: these patterns must stay BROADER than any --mutate scope (incl. the CI bootstrap shards) — the incremental differ preserves out-of-scope baseline entries only for files it can still read; narrow this and out-of-scope files look deleted, silently discarding their cached verdicts (degrades to re-execution, not unsoundness).
-    thresholds:       { high: 100, low: 100, 'break': 100 },
-    concurrency:      isCI ? 2 : 18,
-    tempDirName:      '.stryker-tmp',
-    warnings:         { slow: false },
-    llmMutator:       {
+    disableBail:       false,
+    mutate:            ['src/**/*.ts', '!src/index.ts', 'tools/**/*.ts'], // Do not mutate the entry point; tools/ included so disable comments take effect
+    ignorePatterns:    ['**', '!src/**/*.ts', '!tests/**/*.ts', '!tests/**/*.json', '!tools/**/*.ts', '!bunfig.toml', '!tsconfig.json', '!*.ts', '!*.mjs', '!sst/**/*.ts', '!.ast-grep/**', '!package.json', '!scripts/**/*.ts'], // Only include source and test files in the mutation testing process, plus .ast-grep/ (ast-grep-rules.test.ts reads rule YAML from RULE_PATH inside the sandbox — without this the dry run fails with ENOENT before any mutant can run), package.json (tests/unit/helpers/sdk-frames.test.ts imports it directly) and scripts/**/*.ts (tests/unit/scripts/spike-argv.test.ts imports scripts/spike-argv) — without these two the sandbox throws "Cannot find module" for any mutant run that loads those tests, which Stryker reports as RuntimeError (excluded from the mutation score) rather than Killed/Survived, silently hiding real survivors. LOAD-BEARING breadth: these patterns must stay BROADER than any --mutate scope (incl. the CI bootstrap shards) — the incremental differ preserves out-of-scope baseline entries only for files it can still read; narrow this and out-of-scope files look deleted, silently discarding their cached verdicts (degrades to re-execution, not unsoundness).
+    thresholds:        { high: 100, low: 100, 'break': 100 },
+    concurrency:       isCI ? 2 : 18,
+    tempDirName:       '.stryker-tmp',
+    warnings:          { slow: false },
+    llmMutator:        {
         heuristics: { enabled: true },
         dynamicLLM: { enabled: !isCI, frozen: !process.env.MUTATE_DISCOVER, parallelBatches: 12 },        // costs money, needs credentials; frozen (cache-only) at the gate, unfrozen by `bun run mutate:discover` (see docs/mutation-testing.md)
         provider:   'anthropic-agent-sdk',
         cacheDir:   '.stryker-llm-cache',
     },
-});
+}));
 
 export default strykerConfig;
