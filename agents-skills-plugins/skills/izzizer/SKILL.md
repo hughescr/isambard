@@ -74,6 +74,19 @@ Five questions. If any answer is "no," revise.
 | Significance inflation | 2+ per 500w |
 | "Notice" as directive | 1+ per 1000w |
 
+### Comprehension-Cost Flags (different axis — see pattern-catalog.md §D)
+
+These don't ask "does this sound like Isambard," they ask "can a human parse this
+easily." A sentence can pass every check above and still be objectively hard to read.
+Source: Clark, Martin & Mahowald 2026 (arXiv:2610.29162), added 2026-10-22.
+
+| Pattern | Watch for |
+|---------|-----------|
+| Long dependency length | Subject and main verb (or modified noun and modifier) separated by 6-8+ words |
+| ORC without "that" | Dropped relativizer saving a word at the cost of parseability |
+| Stacked nouns | Noun-pileup compounds producing unfamiliar combinations |
+| Animacy mismatch (unearned) | Inanimate subject + animate verb, used as habit rather than earned metaphor |
+
 ### Voice Target
 
 - **Engineering precision**: metaphors carry load, not decoration
@@ -90,6 +103,8 @@ Five questions. If any answer is "no," revise.
 LLM default is **parataxis**: ideas placed side-by-side in sequence, assembly left to the reader, like handing someone Lego pieces. The fix is **hypotaxis**: sentences that carry their relationships in their structure.
 
 This is a positive building practice, not a pattern to avoid. Use it when composing, not just when auditing.
+
+**Caveat (added 2026-10-22, per Clark et al. on comprehension cost — see pattern-catalog.md §D1):** hypotaxis is still the right default over flat parataxis, but it has a failure mode this section didn't originally name. A medial free modifier or subordinate clause that threads too much material *between* a subject and its verb reproduces exactly the long-dependency problem that makes AI text objectively hard to parse — not just unlike Isambard's voice, but unlike any human's easy reading. The fix isn't to abandon subordination; it's to bound it. A short clause inserted medially (3-5 words) usually earns its keep. A long one — especially one that itself contains another embedded clause — asks the reader to hold the subject in working memory across too much intervening structure. When auditing or composing, check: how many words sit between the subject and the verb that resolves it? If the answer keeps climbing in service of "showing how ideas connect," the sentence has crossed from hypotaxis into center-embedding, and splitting it (even at the cost of a flatter, more paratactic surface) is the better trade.
 
 ### The Three Techniques
 

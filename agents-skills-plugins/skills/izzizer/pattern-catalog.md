@@ -143,7 +143,100 @@ question, a longer sentence, an image, or a direct address.
 
 ---
 
-## D. Cross-Document Analysis
+## D. Comprehension-Cost Flags (objective processing difficulty)
+
+Source: Clark, Martin & Mahowald, "Why is AI-generated language so hard to understand?"
+(arXiv:2610.29162, 2026-10-21; Zotero 2BZ3QECJ). Different in kind from A/B/C above —
+those catalog patterns that sound like generic AI slop to a reader who's used to
+Isambard's voice. These flag constructions that are measurably harder for *any* human
+reader to process, independent of whether they sound distinctively "AI." The paper's
+core finding: frontier LLMs (including Claude models) overuse several features that
+correlate with human processing difficulty in the psycholinguistics literature — not
+because the training data contains them at this rate, but because post-training for
+math/code/reasoning rewards information density over communicative ease. Round-trip
+translation paraphrases of the same content don't show the same overuse, which is some
+of the strongest evidence these are a training artifact rather than just "complex ideas
+need complex sentences."
+
+These flags matter more than the usual slop-patterns for *this specific purpose*
+("does a human reader actually parse this easily") and less for "does this sound like
+Isambard" — a sentence can be 100% authentic voice and still be a dependency-length
+problem. Treat earned/mechanical judgment the same way as elsewhere: flag, don't
+auto-correct, and ask whether the complexity is doing real work or just compressing.
+
+### D1. Center-embedding / long dependency length
+A word and the word it depends on (subject–verb, modified noun–modifier, verb–object)
+separated by many intervening words, especially by another clause threaded between them.
+
+**Rule of thumb threshold**: if more than roughly 6-8 words separate a subject from its
+main verb, or a modified noun from the modifier governing it, check whether the sentence
+can be restructured so the dependency is shorter.
+
+**Before:** "The proof, which relies on a construction that most readers who haven't
+seen transfinite induction before will find genuinely difficult to follow, still works."
+**After:** "The proof relies on transfinite induction — unfamiliar if you haven't seen
+it, but it still works."
+
+**Tension to track explicitly**: this directly cuts against this skill's own Christensen
+hypotaxis guidance (medial free modifiers, embedded subordination). Subordination that
+threads a long clause *between* a subject and its verb is exactly the comprehension-cost
+pattern this section flags, even though it's also exactly what "building a sentence that
+shows how ideas connect" can produce if done carelessly. The reconciliation: embed
+*short* relationships (a clause of 3-5 words inserted medially is fine and often better
+than three flat sentences); don't let the embedded material itself grow a clause long
+enough to make the reader hold the subject in memory while parsing it. Hypotaxis is still
+the right default over parataxis — the fix is bounding how much gets threaded into the
+gap, not abandoning subordination.
+
+### D2. Object relative clause without "that"
+A relative clause modifying an object, with the relativizer dropped — more compressed,
+measurably harder to parse than the same clause with "that" retained.
+
+**Before:** "The essay she drafted the outline for last week finally got comments back."
+**After:** "The essay that she drafted the outline for last week finally got comments
+back." (Or restructure to avoid the embedded relative entirely.)
+
+Only flag where dropping "that" saves nothing but a word and costs parseability. Plenty
+of ORCs are fine; this isn't "avoid relative clauses," it's "don't drop the relativizer
+reflexively for compression."
+
+### D3. Stacked nouns / noun-pileup producing low-frequency n-grams
+Multiple nouns compounded into a single modifier chain, especially when the resulting
+phrase is novel enough that a human reader hasn't seen the combination before.
+
+**Before:** "You've installed a horror-movie-soundtrack generator in your skull."
+**After:** "It's like you've wired in a soundtrack that scores every bad moment as if
+it's the climax of a horror movie." (Longer, but the reader doesn't have to assemble an
+unfamiliar four-noun compound on the fly.)
+
+**Earned case**: a stacked-noun compound that's vivid, surprising, and does real
+figurative work (e.g. a genuinely novel coinage meant to land as a flourish) can be worth
+the processing cost once. Flag at any density beyond occasional use — this is a B-style
+density flag riding on a D-style mechanism.
+
+### D4. Inanimate subject with an animate verb (unearned)
+A non-agentive subject given a verb normally reserved for agents — a common move for
+vivid metaphor, but overused as a default LLM habit for compressing an explanation into
+one clause.
+
+**Earned example:** "The whole conversation is eating its own tail." — doing real
+figurative work, memorable, and the surrounding context supports the metaphor.
+
+**Mechanical example:** "The data reveals an obvious pattern." Could be: "The data shows
+an obvious pattern" (less animacy-mismatched) or "Look at the pattern in the data."
+
+### D5. Unattested or low-frequency bigrams generally
+Word pairings that are individually unremarkable but, combined, are rare enough that a
+human reader (and n-gram models trained on reference corpora) would not expect them. The
+paper measures this directly against reference corpora. There's no clean textual
+detection rule for this without a frequency model, but the intuition carries over from
+D3/D4: if a phrase reads as clever/novel *because* it's an unusual combination rather
+than because it's precise, check whether precision would read more plainly with
+higher-frequency wording instead.
+
+---
+
+## E. Cross-Document Analysis
 
 When checking a multi-section document, produce a frequency table:
 
