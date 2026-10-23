@@ -33,7 +33,7 @@
     "test": "bun test ${CI:+--timeout 60000}",
     "test:full": "bun run check:ast-grep && bun run lint && bun run typecheck && bun run mutate",
     "test:watch": "bun test --watch",
-    "typecheck": "bun node_modules/typescript/bin/tsc --noEmit && bun node_modules/typescript/bin/tsc --noEmit -p tsconfig.src.json"
+    "typecheck": "bun check && bun check -p tsconfig.src.json"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.296",
