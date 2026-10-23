@@ -8,16 +8,22 @@
  * exactly which scenarios were reported as failures, and that each names its leak.
  */
 import { afterAll, describe, expect, jest, test } from 'bun:test';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import nodeTimers from 'node:timers';
 import { setInterval as promiseSetInterval, setTimeout as promiseSetTimeout } from 'node:timers/promises';
 import { createReconnectionLoop } from '../../../src/services/reconnection-loop';
 
-// The runner's preload logic is not an exported entry point, so reach it by path (as the guard's own exemption names it)
+// Simulate the generated preload outside the repo: its frame matches the tooling exemption, but
+// the test that calls it is still project code. No runner internals or preload side effects are needed.
 const requireModule = createRequire(import.meta.url);
-const { startOrphanWatchdog } = requireModule('../../../node_modules/@hughescr/stryker-bun-runner/dist/coverage/preload-logic.js') as {
-    startOrphanWatchdog: (deps: { getPpid: () => number, onOrphaned: () => void, intervalMs?: number }) => () => void
-};
+// eslint-disable-next-line n/no-sync -- node:fs/promises is mocked by tests/setup.ts; this subprocess fixture needs a real temporary module
+const preloadDir = mkdtempSync(path.join(tmpdir(), 'leaked-timer-guard-'));
+const preloadFile = path.join(preloadDir, `stryker-coverage-preload-${process.pid}.js`);
+// eslint-disable-next-line n/no-sync -- require() must load a real module, not the globally mocked node:fs/promises filesystem
+writeFileSync(preloadFile, 'module.exports = (intervalMs) => { const timer = setInterval(() => {}, intervalMs); timer.unref(); return () => clearInterval(timer); };');
 
 const LEAK_MS = 60_000;
 
@@ -26,6 +32,8 @@ afterAll(() => {
     for(const handle of pendingFixtureTimers) {
         clearTimeout(handle);
     }
+    // eslint-disable-next-line n/no-sync -- remove the real temporary module; node:fs/promises is mocked by tests/setup.ts
+    rmSync(preloadDir, { recursive: true, force: true });
 });
 
 // Module scope: created before any test of this file starts, and deliberately NOT cleaned up by this
@@ -103,11 +111,13 @@ describe('scenarios', () => {
 
     // The runner's preload exemption is for its own boot-time watchdog only; a test that starts one is a leak
     test('SCENARIO runner preload watchdog started by a test leak', () => {
-        startOrphanWatchdog({ getPpid: () => process.ppid, onOrphaned: () => undefined, intervalMs: LEAK_MS + 10 });
+        const startWatchdog = requireModule(preloadFile) as (intervalMs: number) => () => void;
+        startWatchdog(LEAK_MS + 10);
     });
 
     test('SCENARIO runner preload watchdog started and stopped by a test passes', () => {
-        const stop = startOrphanWatchdog({ getPpid: () => process.ppid, onOrphaned: () => undefined, intervalMs: LEAK_MS + 11 });
+        const startWatchdog = requireModule(preloadFile) as (intervalMs: number) => () => void;
+        const stop = startWatchdog(LEAK_MS + 11);
         stop();
     });
 

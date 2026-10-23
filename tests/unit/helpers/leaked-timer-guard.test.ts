@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { createTimerGuard, formatLeakedTimers, STRYKER_PRELOAD_FRAME, type AbortSignalHost, type LeakedTimerKind, type LiveOwner, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from '../../helpers/leaked-timer-guard';
+import { createTimerGuard, formatLeakedTimers, type AbortSignalHost, type LeakedTimerKind, type LiveOwner, type PromiseTimersHost, type SleepHost, type TimerGuardHost } from '../../helpers/leaked-timer-guard';
 
 interface FakeHandle { _destroyed: boolean, callback: unknown }
 
@@ -733,7 +733,7 @@ describe('createTimerGuard', () => {
 });
 
 describe('createTimerGuard tooling preload timers', () => {
-    const PRELOAD = `at startOrphanWatchdog (/x/node_modules${STRYKER_PRELOAD_FRAME}:61:33)`;
+    const PRELOAD = 'at startOrphanWatchdog (/private/var/folders/ab/T/stryker-bun-runner/stryker-coverage-preload-12345.js:61:33)';
     const TEMPLATE = 'at <anonymous> (/tmp/stryker-bun-runner/stryker-coverage-preload-1.ts:30:5)';
 
     /** Creates one interval with the given creation stack, then reports what the guard still tracks after teardown. */
@@ -774,30 +774,35 @@ describe('createTimerGuard tooling preload timers', () => {
         expect(leakedDelays(['at leaky (/other/y.js:2:2)', PRELOAD])).toEqual([1000]);
     });
 
-    it('exempts only the exact preload-logic.js file: neighbouring files in the runner directory are tracked', () => {
-        const dir = '/x/node_modules/@hughescr/stryker-bun-runner/dist/coverage';
-
-        expect(leakedDelays([`at f (${dir}/preload-unrelated.js:1:1)`])).toEqual([1000]);
-        expect(leakedDelays([`at f (${dir}/preload-logic.js.backup)`])).toEqual([1000]);
-        expect(leakedDelays([`at f (${dir}/preload-logic.js.backup:1:1)`])).toEqual([1000]);
-        expect(leakedDelays([`at f (${dir}/preload-logic.jsx:1:1)`])).toEqual([1000]);
-        expect(leakedDelays([`at f (${dir}/preload.js:1:1)`])).toEqual([1000]);
+    it.each([
+        'at f (/tmp/stryker-bun-runner/stryker-coverage-preload-123.js:61:33)',
+        'at /private/var/folders/ab/T/stryker-coverage-preload-98765.js:61:33',
+        'at f (/tmp/stryker-coverage-preload-1.js:61)',
+        'at f (/tmp/stryker-coverage-preload-123.js)',
+        'at /tmp/stryker-coverage-preload-123.js',
+        'at f (/tmp/stryker-bun-runner/stryker-coverage-preload-42.ts:30:5)',
+        'at /tmp/stryker-coverage-preload-42.ts',
+    ])('accepts generated preload frame %s', (frame) => {
+        expect(leakedDelays([frame])).toEqual([]);
     });
 
-    it('requires a path-segment boundary before the runner package path', () => {
-        expect(leakedDelays(['at f (/x/node_modules/evil@hughescr/stryker-bun-runner/dist/coverage/preload-logic.js:1:1)'])).toEqual([1000]);
-    });
-
-    it('accepts the preload frame with or without a line, column or closing paren', () => {
-        const file = `/x/node_modules${STRYKER_PRELOAD_FRAME}`;
-
-        expect(leakedDelays([`at f (${file}:61:33)`])).toEqual([]);
-        expect(leakedDelays([`at ${file}:61:33`])).toEqual([]);
-        expect(leakedDelays([`at f (${file}:61)`])).toEqual([]);
-        expect(leakedDelays([`at f (${file})`])).toEqual([]);
-        expect(leakedDelays([`at ${file}`])).toEqual([]);
-        expect(leakedDelays([`at f (${file}:61:33:7)`])).toEqual([1000]);
-        expect(leakedDelays([`at f (${file}:x)`])).toEqual([1000]);
+    it.each([
+        'at f (/tmp/evilstryker-coverage-preload-123.js:1:1)',
+        'at f (stryker-coverage-preload-123.js:1:1)',
+        'at f (/tmp/stryker-coverage-preload-.js:1:1)',
+        'at f (/tmp/stryker-coverage-preload-pid.js:1:1)',
+        'at f (/tmp/stryker-coverage-preload-123.jsx:1:1)',
+        'at f (/tmp/stryker-coverage-preload-123.tsx:1:1)',
+        'at f (/tmp/stryker-coverage-preload-123.js.backup)',
+        'at f (/tmp/stryker-coverage-preload-123.js.backup:1:1)',
+        'at f (/x/node_modules/@hughescr/stryker-bun-runner/dist/coverage/preload-logic.js:1:1)',
+        'at f (/tmp/stryker-coverage-preload-123.js:61:33:7)',
+        'at f (/tmp/stryker-coverage-preload-123.js:x)',
+        'at f (/tmp/stryker-coverage-preload-123.js:61:33) extra',
+        'at /tmp/stryker-coverage-preload-123.js extra',
+        'at f (/tmp/stryker-coverage-preload-123.js))',
+    ])('tracks non-preload frame %s', (frame) => {
+        expect(leakedDelays([frame])).toEqual([1000]);
     });
 
     it('honours custom project-code path fragments', () => {

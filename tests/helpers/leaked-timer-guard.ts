@@ -95,25 +95,23 @@ export interface TimerGuardExtras {
 }
 
 /**
- * The Stryker bun runner's own preload creates an unref'd orphan-watchdog interval before any test
- * file loads. That is test-harness plumbing, not a timer a test created. It is exempt only while the
- * guard is still BOOTING (no test has started yet), only when the creating (first) frame is in that
- * preload file, and only when no frame anywhere in the creation stack is project code. A test (or a
- * test file's module scope) that calls the runner's `startOrphanWatchdog()` has its own file in the
- * stack, so it is tracked; nothing created after the first test starts is ever exempt.
+ * The Stryker bun runner copies its preload into its temp directory as
+ * `stryker-coverage-preload-<pid>.js` (`.ts` when unbundled). When its parent lifeline is unavailable,
+ * that preload starts an unref'd orphan-watchdog interval. That is test-harness plumbing, not a
+ * timer a test created. It is exempt only while the guard is still BOOTING (no test has started
+ * yet), only when the creating (first) frame is in that generated preload file, and only when no
+ * frame anywhere in the creation stack is project code. A test (or a test file's module scope)
+ * starting a timer through a matching file has its own file in the stack, so it is tracked;
+ * nothing created after the first test starts is ever exempt.
  */
-export const STRYKER_PRELOAD_FRAME = '/@hughescr/stryker-bun-runner/dist/coverage/preload-logic.js';
+export const STRYKER_PRELOAD_FRAME = /\/stryker-coverage-preload-\d+\.[jt]s(?::\d+){0,2}\)?$/;
 
-/** What may follow the preload file name in a frame: an optional `:line:col` and the closing paren of `at fn (...)`. */
-const FRAME_LOCATION_TAIL = /^(?::\d+){0,2}\)?$/;
-
-/** True when `frame` is exactly a frame in the runner's `preload-logic.js` (path-segment boundary before it, nothing but a location after it). */
+/** Matches a generated preload basename at a path-segment boundary, followed only by an optional location and closing paren. */
 function isStrykerPreloadFrame(frame: string | undefined): boolean {
     if(frame === undefined) {
         return false;
     }
-    const at = frame.indexOf(STRYKER_PRELOAD_FRAME);
-    return at !== -1 && FRAME_LOCATION_TAIL.test(frame.slice(at + STRYKER_PRELOAD_FRAME.length));
+    return STRYKER_PRELOAD_FRAME.test(frame);
 }
 
 const DEFAULT_OWN_CODE_FRAMES: readonly string[] = ['/tests/', '/src/'];

@@ -49,7 +49,7 @@ describe('leaked-timer guard under the real runner', () => {
         expect(output).toContain('- timers/promises.setInterval 60007ms');
         // finding 6: a test starting the runner's watchdog is not exempt, and the stack names the runner's preload frame
         expect(output).toContain('- setInterval 60010ms');
-        expect(output).toContain('stryker-bun-runner/dist/coverage/preload-logic.js');
+        expect(output).toMatch(/at .+\/stryker-coverage-preload-\d+\.js:\d+:\d+\)/u);
         // finding 5: the concurrent group is rejected as such
         expect(output).toContain('Concurrent tests (test.concurrent / describe.concurrent) are not supported');
         // the module-scope timer is attributed to the file, at file teardown
