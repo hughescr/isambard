@@ -173,7 +173,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
         return true;
     }
 
-    // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- sequential send, retry, discard and acknowledgement have distinct failure contracts
+    // eslint-disable-next-line complexity -- sequential send, retry, discard and acknowledgement have distinct failure contracts
     async function drain(service: OutboxService): Promise<DrainResult> {
         const result: DrainResult = { delivered: 0, failed: 0, discarded: 0, unacknowledged: 0 };
         if(stopped) {

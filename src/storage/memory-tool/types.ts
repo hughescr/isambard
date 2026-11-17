@@ -183,7 +183,6 @@ export const pathNamespaceSchema = z
     .brand<'PathNamespace'>();
 export type PathNamespace = z.infer<typeof pathNamespaceSchema>;
 /** The namespace-valued `layer` field written to the tag and vector indexes. */
-// eslint-disable-next-line sonarjs/redundant-type-aliases -- IndexLayer names the persisted-index contract at API boundaries.
 export type IndexLayer = PathNamespace;
 
 /**

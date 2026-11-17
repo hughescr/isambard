@@ -166,7 +166,7 @@ function deleteConfirmedOrphan(deps: VectorCrossCheckDeps, row: Snapshot, counts
 }
 
 /** A complete page is checkpointed only after its repair jobs actually converge in SQLite. */
-// eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- The page has distinct validation, orphan, stale and verification phases; all share one checkpoint boundary.
+// eslint-disable-next-line complexity -- The page has distinct validation, orphan, stale and verification phases; all share one checkpoint boundary.
 async function checkPage(deps: VectorCrossCheckDeps, page: Snapshot[], signal: AbortSignal, counts: Counters, fetch: ReturnType<typeof createReader>): Promise<void> {
     const candidates = parseCandidates(page, counts);
     if(candidates.length === 0) {

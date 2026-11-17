@@ -32,7 +32,6 @@ const PDF = new TextEncoder().encode('%PDF-1.7 kill bytes');
 const PARENT = 'PRNT9999';
 
 function md5(bytes: Uint8Array): string {
-    // eslint-disable-next-line sonarjs/hashing -- the md5 Zotero's file protocol uses as a content identity
     return createHash('md5').update(bytes).digest('hex');
 }
 

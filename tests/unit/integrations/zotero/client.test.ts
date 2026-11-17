@@ -900,7 +900,6 @@ describe('ZoteroClient read-modify-write', () => {
 
 describe('ZoteroClient file upload', () => {
     const PDF = new TextEncoder().encode('%PDF-1.7 test');
-    // eslint-disable-next-line sonarjs/hashing -- recomputes the md5 Zotero's file protocol uses as a content identity
     const MD5 = createHash('md5').update(PDF).digest('hex');
     const file = { bytes: PDF, filename: 'paper.pdf', contentType: 'application/pdf' as const, mtimeMs: 1_700_000_000_123.7 };
 

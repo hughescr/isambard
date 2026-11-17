@@ -1326,7 +1326,6 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     let stopPromise: Promise<void> | null = null;
 
     return {
-        // eslint-disable-next-line sonarjs/cognitive-complexity -- composition root start(); complexity from optional service conditionals
         start: async () => {
             logger.info('Starting Isambard application...');
 

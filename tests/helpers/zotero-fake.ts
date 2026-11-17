@@ -277,7 +277,6 @@ export class FakeZoteroServer {
     storeFile(key: string, bytes: Uint8Array): void {
         const item = this.items.get(key)!;
         this.files.set(key, bytes);
-        // eslint-disable-next-line sonarjs/hashing -- the md5 Zotero's file protocol uses as a content identity
         item.data.md5 = createHash('md5').update(bytes).digest('hex');
     }
 

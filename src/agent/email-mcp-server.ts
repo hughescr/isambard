@@ -172,7 +172,7 @@ async function saveEmailAttachments(
     uid:            number,
     attachmentMeta: WildDuckAttachmentMeta[]
 ): Promise<string[]> {
-    // eslint-disable-next-line sonarjs/hashing -- sha1 shortens a stable mailbox/UID cache key for a directory name; it does not protect security or integrity
+    // ast-grep-ignore: security-no-weak-hash-literal -- sha1 shortens a stable mailbox/UID cache key for a directory name; it does not protect security or integrity
     const hash          = createHash('sha1').update(JSON.stringify([mailboxName, uid])).digest('hex');
     const attachmentDir = path.join(process.cwd(), 'attachments', `email-${hash}`);
     const usedFilenames = new Set<string>();
@@ -199,7 +199,7 @@ async function saveOneEmailAttachment(
     hash: string
 ): Promise<string[]> {
     try {
-        // eslint-disable-next-line sonarjs/hashing -- sha1 shortens the attachment ID for a directory name; it does not protect security or integrity
+        // ast-grep-ignore: security-no-weak-hash-literal -- sha1 shortens the attachment ID for a directory name; it does not protect security or integrity
         const attachmentHash = createHash('sha1').update(meta.id).digest('hex');
         const attachmentPath = path.join(attachmentDir, `attachment-${attachmentHash}`);
         const filePath = path.join(attachmentPath, safeFilename);

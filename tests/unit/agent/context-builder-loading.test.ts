@@ -2560,7 +2560,7 @@ describe('createContextBuilder loading methods', () => {
 
         // These four cases share identical setup (no data feeding the section, no
         // optional service passed) and only differ in which section header must be
-        // absent from the result; parameterized per sonarjs/parameterized-tests.
+        // absent from the result; parameterized.
         test.each([
             { section: '## Recent Focus', description: 'no state items exist' },
             { section: '## Recent Events', description: 'no events exist' },

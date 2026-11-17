@@ -292,7 +292,6 @@ describe('retryAsyncGenerator', () => {
         it('should use exponential backoff when retryAfterMs is less than computed backoff', async () => {
             let callCount = 0;
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (retryAfterMs<backoff), identical generator structure intentional for test isolation
             async function* generator() {
                 callCount++;
                 if(callCount === 1) {
@@ -325,7 +324,6 @@ describe('retryAsyncGenerator', () => {
         it('should use exponential backoff when retryAfterMs is zero (clock-skew / rolled-over window)', async () => {
             let callCount = 0;
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (retryAfterMs=0/zero-hint), identical generator structure intentional for test isolation
             async function* generator() {
                 callCount++;
                 if(callCount === 1) {
@@ -815,7 +813,6 @@ describe('retryAsyncGenerator', () => {
             const transientError = new Error('Transient error');
             const permanentError = new Error('Permanent error');
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (mixed-error sequence), identical structure intentional for test isolation
             async function* generator() {
                 callCount++;
                 if(callCount === 1) {
@@ -937,7 +934,6 @@ describe('retryAsyncGenerator', () => {
         it('should track elapsed time correctly across retries', async () => {
             let callCount = 0;
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (elapsed time tracking), identical structure intentional for test isolation
             async function* generator() {
                 callCount++;
                 if(callCount < 3) {
@@ -984,7 +980,6 @@ describe('retryAsyncGenerator', () => {
         it('should track attempt number correctly', async () => {
             let callCount = 0;
 
-            // eslint-disable-next-line sonarjs/no-identical-functions -- distinct test context (attempt number tracking), identical structure intentional for test isolation
             async function* generator() {
                 callCount++;
                 if(callCount < 3) {

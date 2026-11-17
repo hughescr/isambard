@@ -97,7 +97,7 @@ export function createQuotaPoller(params: CreateQuotaPollerParams): QuotaPoller 
         }
         dispatch(parsed.windows, collectedAt, attemptGeneration);
     }
-    // eslint-disable-next-line complexity, sonarjs/cognitive-complexity -- coordinates one bounded attempt, fallback and generation guards
+    // eslint-disable-next-line complexity -- coordinates one bounded attempt, fallback and generation guards
     async function pollOnce(): Promise<void> {
         lastPollStartedAt = clock.now();
         const controller = new AbortController();

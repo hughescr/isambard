@@ -54,7 +54,7 @@ export interface StoredPdf {
 }
 
 function md5Hex(bytes: Uint8Array): string {
-    // eslint-disable-next-line sonarjs/hashing -- Zotero's file protocol uses md5 as a content identity; it is not used for security
+    // ast-grep-ignore: security-no-weak-hash-literal -- Zotero's file protocol uses md5 as a content identity; it is not used for security
     return createHash('md5').update(bytes).digest('hex');
 }
 

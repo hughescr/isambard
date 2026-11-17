@@ -1156,7 +1156,6 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should use the mailbox and UID for the attachment directory name', async () => {
-            // eslint-disable-next-line sonarjs/hashing -- sha1 used here for non-security directory naming (matching production code), not cryptographic purposes
             const expectedHash = createHash('sha1').update(JSON.stringify(['CleanInbox', 99])).digest('hex');
             mockWildDuck.getFullMessage = mock(async () => ({
                 uid:            99,
@@ -1184,9 +1183,7 @@ describe('createEmailMCPServer', () => {
         });
 
         test('should include email- prefix in attachment path in output text', async () => {
-            // eslint-disable-next-line sonarjs/hashing -- sha1 used here for non-security directory naming (matching production code), not cryptographic purposes
             const expectedHash = createHash('sha1').update(JSON.stringify(['CleanInbox', 77])).digest('hex');
-            // eslint-disable-next-line sonarjs/hashing -- sha1 used here for non-security directory naming (matching production code), not cryptographic purposes
             const expectedAttachmentHash = createHash('sha1').update('att-1').digest('hex');
             mockWildDuck.getFullMessage = mock(async () => ({
                 uid:            77,

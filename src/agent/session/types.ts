@@ -234,7 +234,6 @@ export interface DeliverableEnvelope {
  * Every envelope kind can open a turn of the same kind; a turn can also open spontaneously
  * (no envelope) as `'notification'` when the model speaks unprompted.
  */
-// eslint-disable-next-line sonarjs/redundant-type-aliases -- deliberate distinct name: TurnKind names the ledger/journal's "kind of turn" concept (currently identical to EnvelopeKind because every envelope kind can open a same-kind turn), kept separate so a future turn-only kind does not force a rename at every EnvelopeKind call site
 export type TurnKind = EnvelopeKind;
 
 /**

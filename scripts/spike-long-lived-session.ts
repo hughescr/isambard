@@ -36,8 +36,8 @@ import { query, createSdkMcpServer, tool, type Options, type SDKMessage, type SD
 import { z } from 'zod';
 import { parseSpikeArgs } from './spike-argv';
 
-// eslint-disable-next-line n/no-sync, sonarjs/publicly-writable-directories -- startup-only fixture creation, per-run mkdtemp under TMPDIR
-const WORKDIR = mkdtempSync(path.join(process.env.TMPDIR ?? tmpdir(), 'izzy-spike-'));
+// eslint-disable-next-line n/no-sync -- startup-only fixture creation, per-run mkdtemp under TMPDIR
+const WORKDIR = mkdtempSync(path.join(tmpdir(), 'izzy-spike-'));
 const MODEL = 'haiku';
 
 // ---------------------------------------------------------------- argv: question list + --record

@@ -1046,7 +1046,6 @@ describe('BskyApprovalInteractionAdapter', () => {
     });
 
     describe('handleModalSubmit()', () => {
-        // eslint-disable-next-line sonarjs/parameterized-tests -- adjacent modal cases exercise distinct routing and error contracts.
         test('should return early for unknown prefix', async () => {
             const deps    = makeDeps();
             const handler = makeAdapter(deps);

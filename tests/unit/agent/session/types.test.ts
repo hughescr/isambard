@@ -39,7 +39,6 @@ describe('SessionQuery', () => {
         // trivial: it can only run once the compiler has already proven the type-level claim.
         const ok: RealQueryAssignable = true;
 
-        // eslint-disable-next-line sonarjs/no-trivial-assertions -- see comment above: reachability of this line IS the assertion; `ok` is only constructible when the type alias resolved to `true`
         expect(ok).toBe(true);
     });
 });

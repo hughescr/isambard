@@ -36,7 +36,6 @@ export class AnswerClassifier {
 
         // Answer patterns - short affirmative/negative responses, direct answers
         // Longer alternatives first to avoid substring matches
-        // eslint-disable-next-line sonarjs/regex-complexity -- pattern list necessarily has many alternatives for classification accuracy; splitting would obscure intent
         const answerPatterns = /^(?:yes|nope|yep|okay|sure|i think|because|it's|they're|that's|maybe|probably|definitely|of course|no|ok|\d+(?:\.\d+)?$)/i;
 
         // Interruption patterns - topic changes, new questions

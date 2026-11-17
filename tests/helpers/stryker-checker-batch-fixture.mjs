@@ -4,7 +4,7 @@ import { CheckStatus } from '@stryker-mutator/api/check';
 import { PlanKind } from '@stryker-mutator/api/core';
 // eslint-disable-next-line import-x-js/no-extraneous-dependencies -- Stryker core owns this runtime dependency
 import { from, lastValueFrom, mergeMap, toArray } from 'rxjs';
-// eslint-disable-next-line sonarjs/no-internal-api-use -- the regression specifically verifies this patched internal executor
+// ast-grep-ignore: sonar-no-internal-api-use-javascript -- the regression specifically verifies this patched internal executor
 import { MutationTestExecutor } from '../../node_modules/@stryker-mutator/core/dist/src/process/4-mutation-test-executor.js';
 
 async function runScenario(count, failedId) {

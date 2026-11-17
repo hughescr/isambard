@@ -453,7 +453,7 @@ export class ZoteroClient {
     async uploadAttachmentFile(attachmentKey: string, file: UploadFile): Promise<'uploaded' | 'exists'> {
         assertKey(attachmentKey);
         const target = { scope: 'library' as const, path: `/items/${attachmentKey}/file` };
-        // eslint-disable-next-line sonarjs/hashing -- Zotero's file protocol requires md5 as a content identity; it is not used for security
+        // ast-grep-ignore: security-no-weak-hash-literal -- Zotero's file protocol requires md5 as a content identity; it is not used for security
         const md5 = createHash('md5').update(file.bytes).digest('hex');
         const authorization = await this.#fileStep(attachmentKey, async () => this.#requester.request('POST', target, {
             idempotent: false,

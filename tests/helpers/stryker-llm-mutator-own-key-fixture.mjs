@@ -162,7 +162,7 @@ console.log(JSON.stringify({
     ownCode: Object.hasOwn(error, 'code'), ownContext: Object.hasOwn(error, 'context'),
 }));`);
     for(const [activeId, expectedName] of [['', 'DerivedError'], [nameMutant.id, '']]) {
-        // eslint-disable-next-line n/no-sync, sonarjs/no-os-command-from-path -- This regression runs Bun against the generated TypeScript in a bounded child process.
+        // eslint-disable-next-line n/no-sync -- This regression runs Bun against the generated TypeScript in a bounded child process.
         const child = spawnSync('bun', [entry], {
             encoding: 'utf8',
             env:      { ...process.env, __STRYKER_ACTIVE_MUTANT__: activeId, BUN_RUNTIME_TRANSPILER_CACHE_PATH: '0' },

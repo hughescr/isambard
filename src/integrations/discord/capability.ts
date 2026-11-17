@@ -121,8 +121,8 @@ export interface DiscordCapabilityDeps {
 
 /**
  * Check whether a Discord channel object supports sending messages.
- * Using a type guard avoids the sonarjs/in-operator-type-error that fires when
- * using `'send' in channel` on a value whose type might be primitive.
+ * Using a type guard avoids a type error from `'send' in channel` on a value
+ * whose type might be primitive.
  */
 function isTextSendable(channel: unknown): channel is TextChannel {
     return typeof channel === 'object' && channel !== null && 'send' in channel;
@@ -198,7 +198,6 @@ export class DiscordCapabilityImpl implements DiscordCapability {
         return this.client !== undefined && this.deps.registry.isAvailable('discord');
     }
 
-    // eslint-disable-next-line sonarjs/cognitive-complexity -- readiness, ambiguous-send persistence, and no-outbox fallback are distinct recovery contracts.
     async sendToChannel(channelId: ChannelId, content: ChannelContent, options?: SendOptions): Promise<SendResult> {
         const outboxItem = this.deps.outboxBackend !== undefined && options?.skipOutbox !== true
             ? buildOutboxItem(channelId, content, options)

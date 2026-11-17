@@ -638,7 +638,6 @@ describe('parseArgs', () => {
         expect(opts.showHelp).toBe(false);
     });
 
-    // eslint-disable-next-line sonarjs/parameterized-tests -- default and each flag have distinct option assertions.
     test('--dry-run flag sets dryRun=true', () => {
         const opts = parseArgs(['node', 'script.ts', '--dry-run']);
         expect(opts.dryRun).toBe(true);
