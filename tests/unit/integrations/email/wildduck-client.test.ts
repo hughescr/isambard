@@ -1,7 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { stalledResponse } from '../../../helpers/stalled-response';
 import { mockLogger } from '../../../setup';
-import { FIND_BY_MESSAGE_ID_MAX_PAGES, WildDuckClient, WildDuckError, WildDuckAuthError } from '@/integrations/email/wildduck-client';
+import { FIND_BY_MESSAGE_ID_MAX_PAGES, WildDuckClient, WildDuckError, WildDuckAuthError, isWildDuckAttachmentId } from '@/integrations/email/wildduck-client';
 
 // ---------------------------------------------------------------------------
 // Mock global fetch
@@ -22,6 +22,17 @@ async function drainMicrotasks(ticks = 10): Promise<void> {
 // ---------------------------------------------------------------------------
 // Test constants
 // ---------------------------------------------------------------------------
+/** Attachment ids WildDuck never issues (its route pattern is `^ATT\d+$`), each with why. */
+const INVALID_ATTACHMENT_IDS: [string, unknown][] = [
+    ['in another format', 'att-1'],
+    ['with anything before ATT', 'xATT1'],
+    ['with anything after its digits', 'ATT1x'],
+    ['without digits', 'ATT'],
+    ['with a non-digit among its digits', 'ATT1a2'],
+    ['that is a path', 'ATT1/../../users'],
+    ['that is not a string', ['ATT1']],
+];
+
 const CLIENT_OPTIONS = {
     url:      'https://wildduck-api.example.com',
     user:     'test@example.com',
@@ -2568,11 +2579,11 @@ describe('WildDuckClient', () => {
             const client = await makeInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('attachment unavailable', 400));
-            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow('WildDuck API error: 400 Bad Request: attachment unavailable');
+            await expect(client.getAttachment('CleanInbox', 42, 'ATT1')).rejects.toThrow('WildDuck API error: 400 Bad Request: attachment unavailable');
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
-            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow('Authentication failed: no token returned');
+            await expect(client.getAttachment('CleanInbox', 42, 'ATT1')).rejects.toThrow('Authentication failed: no token returned');
         });
 
         test('makeRequestBuffer omits an error-body suffix when the attachment response body is empty', async () => {
@@ -2582,7 +2593,7 @@ describe('WildDuckClient', () => {
 
             let caughtError: unknown;
             try {
-                await client.getAttachment('CleanInbox', 42, 'att-1');
+                await client.getAttachment('CleanInbox', 42, 'ATT1');
             } catch (err) {
                 caughtError = err;
             }
@@ -2609,7 +2620,7 @@ describe('WildDuckClient', () => {
                 .mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401))
                 .mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'retry-attachment' }))
                 .mockResolvedValueOnce(makeJsonResponse({ error: 'expired again' }, 401));
-            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow('WildDuck authentication failed (401)');
+            await expect(client.getAttachment('CleanInbox', 42, 'ATT1')).rejects.toThrow('WildDuck authentication failed (401)');
         });
     });
 
@@ -3369,7 +3380,7 @@ describe('WildDuckClient', () => {
 
             const withAttachments = {
                 ...FULL_MESSAGE_RESPONSE,
-                attachments: [{ id: 'att-1', filename: 'file.pdf', contentType: 'application/pdf', sizeKb: 100 }],
+                attachments: [{ id: 'ATT1', filename: 'file.pdf', contentType: 'application/pdf', sizeKb: 100 }],
             };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(withAttachments));
 
@@ -3693,11 +3704,25 @@ describe('WildDuckClient', () => {
             const data = Buffer.from('attachment data here');
             mockFetch.mockResolvedValueOnce(makeBufferResponse(data));
 
-            await client.getAttachment('CleanInbox', 42, 'att-1');
+            await client.getAttachment('CleanInbox', 42, 'ATT1');
 
             const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-clean/messages/42/attachments/att-1');
+            expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-clean/messages/42/attachments/ATT1');
             expect(options.method).toBe('GET');
+        });
+
+        test('passes the caller\'s abort signal to the request, and none when not given', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeBufferResponse(Buffer.from('a')));
+            mockFetch.mockResolvedValueOnce(makeBufferResponse(Buffer.from('b')));
+            const controller = new AbortController();
+
+            await client.getAttachment('Drafts', 42, 'ATT00001', controller.signal);
+            await client.getAttachment('Drafts', 42, 'ATT00002');
+
+            const [[, withSignal], [, withoutSignal]] = mockFetch.mock.calls as [string, RequestInit][];
+            expect(withSignal.signal).toBe(controller.signal);
+            expect(withoutSignal.signal).toBeUndefined();
         });
 
         test('sends auth token header', async () => {
@@ -3706,7 +3731,7 @@ describe('WildDuckClient', () => {
             const data = Buffer.from('attachment data here');
             mockFetch.mockResolvedValueOnce(makeBufferResponse(data));
 
-            await client.getAttachment('CleanInbox', 42, 'att-1');
+            await client.getAttachment('CleanInbox', 42, 'ATT1');
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('test-auth-token');
@@ -3718,7 +3743,7 @@ describe('WildDuckClient', () => {
             const data = Buffer.from('binary attachment content');
             mockFetch.mockResolvedValueOnce(makeBufferResponse(data));
 
-            const result = await client.getAttachment('CleanInbox', 42, 'att-1');
+            const result = await client.getAttachment('CleanInbox', 42, 'ATT1');
 
             expect(result).toBeInstanceOf(Buffer);
             expect(result.toString('utf8')).toBe('binary attachment content');
@@ -3727,7 +3752,7 @@ describe('WildDuckClient', () => {
         test('throws WildDuckError when mailboxPath not in map', async () => {
             const client = await makeInitializedClient();
 
-            await expect(client.getAttachment('NonExistentFolder', 42, 'att-1')).rejects.toThrow(WildDuckError);
+            await expect(client.getAttachment('NonExistentFolder', 42, 'ATT1')).rejects.toThrow(WildDuckError);
         });
 
         test('retries on 401 by re-authenticating', async () => {
@@ -3738,7 +3763,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
             mockFetch.mockResolvedValueOnce(makeBufferResponse(data));
 
-            const result = await client.getAttachment('CleanInbox', 42, 'att-1');
+            const result = await client.getAttachment('CleanInbox', 42, 'ATT1');
 
             expect(mockFetch).toHaveBeenCalledTimes(3);
             expect(result).toBeInstanceOf(Buffer);
@@ -3752,7 +3777,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
             mockFetch.mockResolvedValueOnce(makeBufferResponse(data));
 
-            await client.getAttachment('CleanInbox', 42, 'att-1');
+            await client.getAttachment('CleanInbox', 42, 'ATT1');
 
             const [_url, options] = mockFetch.mock.calls[2] as [string, RequestInit];
             expect((options.headers as Record<string, string>)['X-Access-Token']).toBe('refreshed-token');
@@ -3768,7 +3793,7 @@ describe('WildDuckClient', () => {
                 text:       () => 'Internal Error',
             } as unknown as Response);
 
-            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow(WildDuckError);
+            await expect(client.getAttachment('CleanInbox', 42, 'ATT1')).rejects.toThrow(WildDuckError);
         });
 
         test('throws WildDuckAuthError when re-auth fails after 401', async () => {
@@ -3777,7 +3802,26 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
 
-            await expect(client.getAttachment('CleanInbox', 42, 'att-1')).rejects.toThrow(WildDuckAuthError);
+            await expect(client.getAttachment('CleanInbox', 42, 'ATT1')).rejects.toThrow(WildDuckAuthError);
+        });
+
+        test('fetches an id of ATT and several digits', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeBufferResponse(Buffer.from('x')));
+
+            await client.getAttachment('Drafts', 42, 'ATT00012');
+
+            expect((mockFetch.mock.calls[0] as [string])[0]).toEndWith('/attachments/ATT00012');
+        });
+
+        test.each(INVALID_ATTACHMENT_IDS)('refuses an attachment id %s before any request', async (_label, id) => {
+            const client = await makeInitializedClient();
+
+            const err = await client.getAttachment('Drafts', 42, id as string).catch((error: unknown) => error);
+
+            expect(err).toBeInstanceOf(WildDuckError);
+            expect((err as WildDuckError).message).toBe('WildDuck: not a valid attachment id');
+            expect(mockFetch).not.toHaveBeenCalled();
         });
     });
 
@@ -3985,6 +4029,26 @@ describe('WildDuckClient', () => {
             await expect(client.openAttachmentStream('Drafts', 42, 'ATT00001')).rejects.toThrow('connection refused');
             jest.advanceTimersByTime(60_000);
             expect(seen?.aborted).toBe(false);
+        });
+
+        test.each(INVALID_ATTACHMENT_IDS)('refuses an attachment id %s before any request', async (_label, id) => {
+            const client = await makeInitializedClient();
+
+            const err = await client.openAttachmentStream('Drafts', 42, id as string).catch((error: unknown) => error);
+
+            expect(err).toBeInstanceOf(WildDuckError);
+            expect((err as WildDuckError).message).toBe('WildDuck: not a valid attachment id');
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('isWildDuckAttachmentId()', () => {
+        test('accepts ATT followed by one or more digits', () => {
+            expect(['ATT0', 'ATT00001', 'ATT123456789'].map(id => isWildDuckAttachmentId(id))).toEqual([true, true, true]);
+        });
+
+        test.each(INVALID_ATTACHMENT_IDS)('rejects an id %s', (_label, id) => {
+            expect(isWildDuckAttachmentId(id)).toBe(false);
         });
     });
 });

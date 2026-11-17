@@ -22,6 +22,24 @@ const SPECIAL_USE_FLAGS: Record<string, string> = {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/** WildDuck's own attachment id format, as its attachment route validates it (`^ATT\d+$`). */
+const ATTACHMENT_ID_PATTERN = /^ATT\d+$/u;
+
+/**
+ * Whether `id` is an attachment id WildDuck could have issued: `ATT` and one or more digits. An
+ * attachment id from a message GET is untrusted and goes into a URL path, so it is checked first.
+ */
+export function isWildDuckAttachmentId(id: unknown): id is string {
+    return typeof id === 'string' && ATTACHMENT_ID_PATTERN.test(id);
+}
+
+/** Refuses an attachment id WildDuck could not have issued, before any request is made. */
+function assertAttachmentId(id: string): void {
+    if(!isWildDuckAttachmentId(id)) {
+        throw new WildDuckError('WildDuck: not a valid attachment id');
+    }
+}
+
 /** Messages per page when looking a message up by Message-ID. */
 const FIND_BY_MESSAGE_ID_PAGE_SIZE = 250;
 
@@ -186,6 +204,13 @@ export interface WildDuckMessage {
     date?:        string | null
     /** Whether the message is still a draft. */
     draft?:       boolean
+    /** The References header split into Message-IDs (WildDuck returns `[]` when there is none). */
+    references?:  string[]
+    /**
+     * The `reference` ({action, mailbox, id}) a draft was uploaded with, as WildDuck stored it;
+     * absent otherwise. Untrusted shape: parse before use.
+     */
+    reference?:   unknown
 }
 
 /** An attachment's bytes as WildDuck streams them, with their length when WildDuck gave one. */
@@ -511,18 +536,24 @@ export class WildDuckClient {
     }
 
     /**
-     * Download attachment data as a Buffer.
+     * Download attachment data as a Buffer. The request has no deadline of its own; `signal`
+     * aborts it, body included. An id WildDuck could not have issued throws a WildDuckError
+     * before any request.
      */
-    async getAttachment(mailboxPath: string, messageUid: number, attachmentId: string): Promise<Buffer> {
-        return this.withAuthRetry(() => this.doGetAttachment(mailboxPath, messageUid, attachmentId));
+    async getAttachment(mailboxPath: string, messageUid: number, attachmentId: string, signal?: AbortSignal): Promise<Buffer> {
+        assertAttachmentId(attachmentId);
+        return this.withAuthRetry(() => this.doGetAttachment(mailboxPath, messageUid, attachmentId, signal));
     }
 
     /**
      * Open an attachment's decoded bytes as a stream, unread and unbuffered, for the draft preview
-     * (#158). Null when WildDuck has no such attachment (404). The 30 s request deadline covers
-     * only the wait for the response headers; after that only `signal` aborts the body.
+     * (#158) and an amend's carried attachments. Null when WildDuck has no such attachment (404).
+     * The 30 s request deadline covers only the wait for the response headers; after that only
+     * `signal` aborts the body. An id WildDuck could not have issued throws a WildDuckError before
+     * any request.
      */
     async openAttachmentStream(mailboxPath: string, uid: number, attachmentId: string, signal?: AbortSignal): Promise<AttachmentStream | null> {
+        assertAttachmentId(attachmentId);
         return this.withAuthRetry(() => this.doOpenAttachmentStream(mailboxPath, uid, attachmentId, signal));
     }
 
@@ -965,11 +996,11 @@ export class WildDuckClient {
         };
     }
 
-    private async doGetAttachment(mailboxPath: string, messageUid: number, attachmentId: string): Promise<Buffer> {
+    private async doGetAttachment(mailboxPath: string, messageUid: number, attachmentId: string, signal?: AbortSignal): Promise<Buffer> {
         const mailboxId = this.resolveMailboxId(mailboxPath);
         return this.makeRequestBuffer(
             `/users/me/mailboxes/${mailboxId}/messages/${messageUid}/attachments/${attachmentId}`,
-            { method: 'GET' }
+            { method: 'GET', signal }
         );
     }
 

@@ -11,10 +11,10 @@ import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthG
 import { EmailFolder } from '@/config';
 import { EmailProcessingError, WildDuckError } from '@/errors';
 // eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckUploadPayload } from '@/integrations/email';
+import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, isWildDuckAttachmentId, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type AttachmentStream, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckUploadPayload } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
-import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
+import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner, createDeadline } from '@/utils';
 /** Mailboxes accessible directly by the agent without admin review. */
 const ACCESSIBLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive]);
 
@@ -66,17 +66,245 @@ function amendCarry(metaData: unknown, meta: DraftApprovalMeta): { metaData: Rec
 
 /** What an amend changes; an absent field keeps the draft's own value. */
 interface DraftAmendment {
-    from:     WildDuckUploadPayload['from']
-    subject?: string
-    body?:    string
-    to?:      WildDuckUploadPayload['to']
+    from:               WildDuckUploadPayload['from']
+    subject?:           string
+    body?:              string
+    to?:                WildDuckUploadPayload['to']
+    /** Replaces the draft's Cc; `[]` removes it. */
+    cc?:                WildDuckUploadPayload['cc']
+    /** Attachments to leave out of the new version: all of them, or every one with one of these filenames. */
+    removeAttachments?: 'all' | string[]
 }
 
-/** An amend's new UID, the tool-text warning about its old UID ('' when none), and the edit number its card will show. */
+/**
+ * An amend's new UID, the notes for its tool text (what it carried, a threading note or warning,
+ * and any warning about its old UID), and the edit number its card will show.
+ */
 interface AmendedDraft {
-    newUid:  number
-    warning: string
-    edits:   number
+    newUid: number
+    notes:  string
+    edits:  number
+}
+
+/**
+ * The most attachment bytes an amend carries into the new version, all kept attachments together:
+ * WildDuck's own 25 MiB attachment ceiling (`MAX_ALLOWED_ATTACHMENT_SIZE`). The sizes WildDuck
+ * reports are checked against it before any fetch, and the fetches then share it as a budget:
+ * reading stops, and every fetch is aborted, as soon as the bytes read pass it.
+ */
+const AMEND_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * The most attachments an amend carries into the new version. It bounds the fetches an amend makes
+ * while it holds the draft's key; WildDuck itself sets no count.
+ */
+const AMEND_MAX_ATTACHMENTS = 50;
+
+/** How long an amend waits for all its kept attachments' bytes while it holds the draft's key. */
+const AMEND_ATTACHMENT_DEADLINE_MS = 60_000;
+
+/** How long an amend waits to read its new version back from WildDuck while it holds the draft's key. */
+const AMEND_READ_BACK_DEADLINE_MS = 10_000;
+
+/**
+ * The reply reference WildDuck stored with a draft uploaded by `replyToEmail` (returned by its
+ * message GET as `reference`). Re-passing it on upload makes WildDuck derive In-Reply-To and
+ * References from the replied-to message again, as it did for the original draft. Unknown keys
+ * are dropped: WildDuck's upload schema rejects them, and its `attachments` key would make
+ * WildDuck copy the replied-to message's attachments into the draft.
+ */
+const replyReferenceSchema = z.object({
+    action:  z.enum(['reply', 'replyAll']),
+    mailbox: z.string(),
+    id:      z.int().positive(),
+});
+
+/** A References list as WildDuck returns it (Message-IDs); anything else is unknown. */
+const referencesSchema = z.array(z.string());
+
+/** What an amend reads back from its stored new version; a missing Cc or attachment list counts as none. */
+const storedDraftSchema = z.object({
+    cc:          z.array(z.unknown()).optional(),
+    attachments: z.array(z.unknown()).optional(),
+    references:  z.unknown().optional(),
+});
+
+const THREAD_KEPT_NOTE = ' Its References header matches the original draft\'s, so it stays in the same conversation.';
+const THREAD_LOST_WARNING = ' Warning: the amended draft is no longer threaded as a reply to the original conversation; the recipient will see it as a new message. To keep the thread, delete this draft and reply to the original message again with replyToEmail.';
+const THREAD_UNVERIFIED_WARNING = ' Warning: could not confirm whether the amended draft is still threaded as a reply; check the draft before it is approved.';
+
+/** How many filenames one tool text lists before it only counts the rest. */
+const LISTED_NAMES_MAX = 10;
+
+/** The most characters (grapheme clusters) of one filename a tool text shows. */
+const LISTED_NAME_MAX_CHARACTERS = 80;
+
+/** Control characters, and the bidi marks, embeddings, overrides and isolates that can make a name read as another. */
+const UNSAFE_NAME_CHARACTERS = /[\p{Cc}\u{61C}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066}-\u{2069}]/gu;
+
+const graphemes = new Intl.Segmenter();
+
+/** A filename from WildDuck or the tool arguments, made safe for tool text: unsafe characters stripped, then cut to {@link LISTED_NAME_MAX_CHARACTERS}. */
+function displayName(name: string): string {
+    const characters = Array.from(graphemes.segment(name.replaceAll(UNSAFE_NAME_CHARACTERS, '')), ({ segment }) => segment);
+    return characters.length > LISTED_NAME_MAX_CHARACTERS
+        ? `${characters.slice(0, LISTED_NAME_MAX_CHARACTERS).join('')}…`
+        : characters.join('');
+}
+
+/** Filenames for tool text, each made safe and quoted, comma-separated: the first {@link LISTED_NAMES_MAX}, then how many more. */
+function quotedNames(names: Iterable<string>): string {
+    const quoted = Array.from(names, name => JSON.stringify(displayName(name)));
+    const listed = quoted.slice(0, LISTED_NAMES_MAX).join(', ');
+    return quoted.length > LISTED_NAMES_MAX ? `${listed} and ${quoted.length - LISTED_NAMES_MAX} more` : listed;
+}
+
+/** `count` and its noun, singular for one. */
+function counted(count: number, singular: string, plural: string): string {
+    return `${count} ${count === 1 ? singular : plural}`;
+}
+
+/**
+ * What to log about a failed WildDuck call: its HTTP status, else its error's name — never its
+ * message, which can carry WildDuck's response body.
+ */
+function failureDetail(err: unknown): { status: number } | { error: string } {
+    const status = err instanceof WildDuckError ? err.context?.status : undefined;
+    if(typeof status === 'number') {
+        return { status };
+    }
+    return { error: err instanceof Error ? err.name : typeof err };
+}
+
+/** The bytes an amend's attachment fetches may still read between them, and the abort that stops them all once those run out. */
+interface AttachmentBudget {
+    remaining:        number
+    readonly overrun: AbortController
+}
+
+/**
+ * Reads an attachment's bytes, counting each chunk against the amend's shared budget. Once the
+ * budget is overrun it stops reading, cancels this body and aborts every other fetch, and returns
+ * undefined.
+ */
+async function readWithinBudget(stream: AttachmentStream, budget: AttachmentBudget): Promise<Buffer | undefined> {
+    const chunks: Uint8Array[] = [];
+    let overrun = false;
+    const reader = stream.body?.getReader();
+    if(reader !== undefined) {
+        // eslint-disable-next-line no-await-in-loop -- a body's chunks arrive one after another
+        for(let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+            budget.remaining -= chunk.value.length;
+            if(budget.remaining < 0) {
+                overrun = true;
+                break;
+            }
+            chunks.push(chunk.value);
+        }
+        if(overrun) {
+            budget.overrun.abort();
+            await reader.cancel();
+            return undefined;
+        }
+    }
+    return Buffer.concat(chunks);
+}
+
+const CARRY_FETCH_FAILED = 'Could not fetch an attachment to carry into the amended draft';
+
+/**
+ * What an amend tells the agent about the Cc and attachments it carried, from the new version as
+ * WildDuck stored it: the counts it carried when the stored draft has them, a warning naming both
+ * counts when it does not, and that the carry could not be confirmed when the draft could not be
+ * read back.
+ */
+function carryNote(intended: { cc: number, ccGiven: boolean, kept: number, removed: number }, stored: StoredDraft | undefined): string {
+    if(stored === undefined) {
+        return ` Cc and attachments were sent to WildDuck (${intended.cc} Cc, ${counted(intended.kept, 'attachment', 'attachments')} kept, ${intended.removed} removed) but could not be confirmed on the stored draft.`;
+    }
+    if(stored.cc === intended.cc && stored.attachments === intended.kept) {
+        return carriedNote(intended.cc, intended.ccGiven, intended.kept, intended.removed);
+    }
+    return ` Warning: the amended draft stores ${counted(stored.cc, 'Cc address', 'Cc addresses')} and ${counted(stored.attachments, 'attachment', 'attachments')}, but ${intended.cc} and ${intended.kept} were intended; check it before it is approved.`;
+}
+
+/** An amend's new version as WildDuck stored it: its Cc and attachment counts, and its References (undefined when unreadable). */
+interface StoredDraft {
+    cc:          number
+    attachments: number
+    references:  string[] | undefined
+}
+
+/** What an amend knows of the original draft's reply threading, worked out before the upload. */
+interface ThreadingPlan {
+    /** The reply reference to re-pass on upload, when one may be. */
+    reference?: z.infer<typeof replyReferenceSchema>
+    /** The original's References, or undefined when WildDuck returned something unreadable. */
+    expected:   string[] | undefined
+    /** Whether the original was a reply: it has a reply reference stored, or References. */
+    wasReply:   boolean
+}
+
+/**
+ * Whether the amended draft kept the original's reply threading: '' for a draft that was not a
+ * reply; the threading-lost warning when no reference could be re-passed for a reply, or when the
+ * stored new draft's References are empty or differ from the original's; a note when they match;
+ * and otherwise — the new draft not read back, or either References unreadable — a warning that it
+ * could not be confirmed.
+ */
+function threadingNote(plan: ThreadingPlan, stored: StoredDraft | undefined): string {
+    if(plan.reference === undefined) {
+        if(plan.wasReply) {
+            return THREAD_LOST_WARNING;
+        }
+        return plan.expected === undefined ? THREAD_UNVERIFIED_WARNING : '';
+    }
+    if(plan.expected === undefined || stored?.references === undefined) {
+        return THREAD_UNVERIFIED_WARNING;
+    }
+    const kept = plan.expected.length > 0 && JSON.stringify(stored.references) === JSON.stringify(plan.expected);
+    return kept ? THREAD_KEPT_NOTE : THREAD_LOST_WARNING;
+}
+
+/** An amend's refusal or failure as an error tool result. */
+function amendError(text: string): CallToolResult {
+    return { content: [{ type: 'text' as const, text }], isError: true };
+}
+
+/** The refusal for kept attachments whose reported sizes total over {@link AMEND_MAX_ATTACHMENT_BYTES}. */
+function attachmentsTooLarge(draftRef: string, bytes: number): CallToolResult {
+    return amendError(`Could not amend draft ${draftRef}: the attachments it would keep total ${formatAttachmentSize(bytes)}, over the ${formatAttachmentSize(AMEND_MAX_ATTACHMENT_BYTES)} an amend can carry. Nothing was changed; leave some out with removeAttachments, or delete the draft and create a new one.`);
+}
+
+/**
+ * Why an amend cannot carry the draft's attachments as WildDuck listed them, before any fetch: an
+ * id WildDuck could not have issued or one listed twice (on any attachment, kept or not), more kept
+ * attachments than {@link AMEND_MAX_ATTACHMENTS}, a kept one whose reported size is not a finite
+ * non-negative number, or reported sizes totalling over {@link AMEND_MAX_ATTACHMENT_BYTES}.
+ */
+function attachmentListRefusal(draftRef: string, attachments: WildDuckMessageAttachment[], keeping: WildDuckMessageAttachment[]): CallToolResult | undefined {
+    const ids = attachments.map(attachment => attachment.id);
+    if(!ids.every(id => isWildDuckAttachmentId(id)) || new Set(ids).size !== ids.length) {
+        return amendError(`Could not amend draft ${draftRef}: WildDuck listed its attachments with an id that is missing, malformed or repeated, so they can't be carried safely. Nothing was changed; delete the draft and create a new one instead.`);
+    }
+    if(keeping.length > AMEND_MAX_ATTACHMENTS) {
+        return amendError(`Could not amend draft ${draftRef}: it would keep ${keeping.length} attachments, more than the ${AMEND_MAX_ATTACHMENTS} an amend can carry. Nothing was changed; leave some out with removeAttachments, or delete the draft and create a new one.`);
+    }
+    // The reported sizes are only a hint (the bytes read are counted again as they arrive), but one that is unusable refuses.
+    const reported = keeping.map(attachment => ({ attachment, bytes: attachment.size ?? attachment.sizeKb * 1024 }));
+    const unusable = reported.filter(({ bytes }) => !(Number.isFinite(bytes) && bytes >= 0));
+    if(unusable.length > 0) {
+        return amendError(`Could not amend draft ${draftRef}: WildDuck did not report a usable size for ${quotedNames(unusable.map(({ attachment }) => attachment.filename))}. Nothing was changed; leave them out with removeAttachments, or delete the draft and create a new one.`);
+    }
+    const reportedBytes = reported.reduce((total, { bytes }) => total + bytes, 0);
+    return reportedBytes > AMEND_MAX_ATTACHMENT_BYTES ? attachmentsTooLarge(draftRef, reportedBytes) : undefined;
+}
+
+/** What an amend tells the agent it carried: the new version's Cc and where it came from, and the attachments kept and removed. */
+function carriedNote(ccCount: number, ccGiven: boolean, kept: number, removed: number): string {
+    const addresses = ccCount === 1 ? 'address' : 'addresses';
+    const source = ccGiven ? 'as given in this amend' : 'kept from the original draft';
+    return ` Cc: ${ccCount} ${addresses} (${source}). Attachments: ${kept} kept from the original draft, ${removed} removed.`;
 }
 
 /** Whether a WildDuck call failed because the message does not exist. */
@@ -282,7 +510,7 @@ async function renderVideoAttachment(filePath: string, attachmentPath: string, s
  */
 
 function normalizeToAddresses<T>(to: T | T[] | undefined): T[] | undefined {
-    // Stryker disable next-line llm: the sole caller passes a Zod .optional() value, which is never null, so strict and loose nullish checks agree.
+    // Stryker disable next-line llm: both callers pass a Zod .optional() value, which is never null, so strict and loose nullish checks agree.
     if(to === undefined) {
         return undefined;
     }
@@ -299,6 +527,11 @@ const emailAddressSchema = z.union([
         email_address: z.email(),
     }),
 ]);
+
+/** Tool-argument addresses (plain or `{name, email_address}`) as WildDuck upload addresses; undefined stays undefined. */
+function uploadAddresses(addresses: z.infer<typeof emailAddressSchema>[] | undefined): { name?: string, address: string }[] | undefined {
+    return addresses?.map(addr => (typeof addr === 'string' ? { address: addr } : { name: addr.name, address: addr.email_address }));
+}
 
 export function createEmailMCPServer(options: EmailMCPServerOptions) {
     const { sendAdminNotification, wildDuckClient, rateLimiter, allowlist, approvalCards } = options;
@@ -375,18 +608,19 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
      * addresses allowlisted for a send, the replied-to address for a plain reply, never for a
      * reply-all or an amend), or else show it to the admin for approval. An amend passes the
      * draft it replaced and the new edit count, so the admin's existing card can be edited in place.
+     * `notes` (a rate limit warning, or an amend's carry notes and warnings) ends every result text.
      */
     async function submitOrRequestApproval(
         draftUid: number,
         isAllowed: boolean,
-        rateLimitWarning: string,
+        notes: string,
         successMessage: string,
         previous?: { uid: number, edits: number }
     ): Promise<CallToolResult> {
         if(isAllowed) {
             await wildDuckClient.submitMessage(EmailFolder.Drafts, draftUid);
             rateLimiter?.increment();
-            return mcpTextResult(`${successMessage}${rateLimitWarning}`);
+            return mcpTextResult(`${successMessage}${notes}`);
         }
 
         // Not on allowlist (or replyAll) — request admin approval. The card is posted through the
@@ -404,17 +638,17 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         const draftRef = `${EmailFolder.Drafts}:${draftUid}`;
         switch(presentation) {
             case 'updated': {
-                return mcpTextResult(`Draft saved as ${draftRef}; the admin's approval card was updated in place (edit ${previous?.edits}).${rateLimitWarning}`);
+                return mcpTextResult(`Draft saved as ${draftRef}; the admin's approval card was updated in place (edit ${previous?.edits}).${notes}`);
             }
             case 'missing': {
-                return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found after upload.` }], isError: true };
+                return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found after upload.${notes}` }], isError: true };
             }
             case 'failed': {
-                return mcpTextResult(`Draft saved as ${draftRef} but failed to notify admin. Please check pending drafts manually.${rateLimitWarning}`);
+                return mcpTextResult(`Draft saved as ${draftRef} but failed to notify admin. Please check pending drafts manually.${notes}`);
             }
             case 'posted':
             case 'queued': {
-                return mcpTextResult(`Message saved to Drafts, pending admin approval (draft UID: ${draftUid}).${rateLimitWarning}`);
+                return mcpTextResult(`Message saved to Drafts, pending admin approval (draft UID: ${draftUid}).${notes}`);
             }
         }
     }
@@ -455,43 +689,193 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
     }
 
     /**
+     * Fetches one kept attachment's bytes through WildDuck's attachment stream, counted against
+     * the amend's shared budget; undefined when it failed (logged by status or error name, never by
+     * WildDuck's error text), when its body was not the length WildDuck declared, when the budget
+     * ran out, or when another fetch had already aborted them all.
+     */
+    async function fetchCarried(uid: number, attachment: WildDuckMessageAttachment, budget: AttachmentBudget, signal: AbortSignal): Promise<Buffer | undefined> {
+        if(signal.aborted) {
+            return undefined;
+        }
+        try {
+            const stream = await wildDuckClient.openAttachmentStream(EmailFolder.Drafts, uid, attachment.id, signal);
+            if(stream === null) {
+                logger.warn({ uid, attachmentId: attachment.id, status: 404, msg: CARRY_FETCH_FAILED });
+                return undefined;
+            }
+            const bytes = await readWithinBudget(stream, budget);
+            if(bytes !== undefined && stream.contentLength !== undefined && bytes.length !== stream.contentLength) {
+                logger.warn({ uid, attachmentId: attachment.id, declared: stream.contentLength, read: bytes.length, msg: 'An attachment to carry into the amended draft was not the length WildDuck declared' });
+                return undefined;
+            }
+            return bytes;
+        } catch (err) {
+            logger.warn({ uid, attachmentId: attachment.id, ...failureDetail(err), msg: CARRY_FETCH_FAILED });
+            return undefined;
+        }
+    }
+
+    /**
+     * The original draft's attachments an amend keeps (all but `remove`), with their bytes fetched
+     * from the draft in WildDuck — two at a time, under one {@link AMEND_ATTACHMENT_DEADLINE_MS}
+     * deadline, sharing one {@link AMEND_MAX_ATTACHMENT_BYTES} budget — and how many were removed.
+     * Fails closed: a filename the draft does not have, an attachment list it cannot carry
+     * ({@link attachmentListRefusal}), bytes read past the budget (which aborts every fetch) or any
+     * fetch that fails returns an error result, so nothing is uploaded and no partial set can be.
+     * An inline (`related`) attachment is carried as an ordinary one: the new version is plain
+     * text, so it has no HTML that could reference its cid. Runs holding `email-draft:<uid>`.
+     */
+    async function carriedAttachments(
+        uid: number,
+        draftRef: string,
+        attachments: WildDuckMessageAttachment[],
+        remove: 'all' | string[] | undefined
+    ): Promise<{ kept: WildDuckAttachment[], removed: number } | CallToolResult> {
+        const names = new Set(attachments.map(attachment => attachment.filename));
+        const removing = new Set(remove === 'all' ? names : remove);
+        const unknown = [...removing].filter(name => !names.has(name));
+        if(unknown.length > 0) {
+            return amendError(`Could not amend draft ${draftRef}: it has no attachment named ${quotedNames(unknown)} (its attachments: ${quotedNames(names) || 'none'}). Nothing was changed.`);
+        }
+        const keeping = attachments.filter(attachment => !removing.has(attachment.filename));
+        const refusal = attachmentListRefusal(draftRef, attachments, keeping);
+        if(refusal !== undefined) {
+            return refusal;
+        }
+
+        const deadline = createDeadline(AMEND_ATTACHMENT_DEADLINE_MS);
+        const budget: AttachmentBudget = { remaining: AMEND_MAX_ATTACHMENT_BYTES, overrun: new AbortController() };
+        const signal = AbortSignal.any([deadline.signal, budget.overrun.signal]);
+        const limit = pLimit(2);
+        const fetched = await Promise.all(keeping.map(attachment => limit(async () => ({ attachment, bytes: await fetchCarried(uid, attachment, budget, signal) }))))
+            .finally(() => {
+                deadline.clear();
+            });
+
+        if(budget.overrun.signal.aborted) {
+            return amendError(`Could not amend draft ${draftRef}: the attachments it would keep come to more than the ${formatAttachmentSize(AMEND_MAX_ATTACHMENT_BYTES)} an amend can carry. Nothing was changed; leave some out with removeAttachments, or delete the draft and create a new one.`);
+        }
+        const kept: WildDuckAttachment[] = [];
+        const failed: string[] = [];
+        for(const { attachment, bytes } of fetched) {
+            if(bytes === undefined) {
+                failed.push(attachment.filename);
+            } else {
+                kept.push({ filename: attachment.filename, contentType: attachment.contentType, content: bytes.toString('base64') });
+            }
+        }
+        if(failed.length > 0) {
+            return amendError(`Could not amend draft ${draftRef}: these attachments could not be fetched from WildDuck: ${quotedNames(failed)}. Nothing was changed and the draft is as it was; try again, or leave them out with removeAttachments.`);
+        }
+        return { kept, removed: attachments.length - keeping.length };
+    }
+
+    /** Whether `mailboxId` is WildDuck's id for a mailbox `replyToEmail` may reply from. */
+    function isReplyMailbox(mailboxId: string): boolean {
+        return Array.from(ACCESSIBLE_MAILBOXES, folder => wildDuckClient.getMailboxId(folder)).includes(mailboxId);
+    }
+
+    /**
+     * What an amend knows of the original draft's reply threading before it uploads: its stored
+     * reply reference, re-passed only when it points into a mailbox `replyToEmail` may reply from
+     * and the new version's subject is not empty (WildDuck puts the replied-to message's subject on
+     * a draft uploaded with an empty one), and its References, parsed leniently so nothing about
+     * them can throw once the old UID is gone.
+     */
+    function planThreading(original: WildDuckMessage, subject: string): ThreadingPlan {
+        const reference = replyReferenceSchema.safeParse(original.reference).data;
+        const expected = referencesSchema.safeParse(original.references).data;
+        const wasReply = reference !== undefined || (expected !== undefined && expected.length > 0);
+        return reference !== undefined && subject !== '' && isReplyMailbox(reference.mailbox)
+            ? { reference, expected, wasReply }
+            : { expected, wasReply };
+    }
+
+    /**
+     * Reads an amend's new version back from WildDuck under its own
+     * {@link AMEND_READ_BACK_DEADLINE_MS} deadline: its Cc and attachment counts and its
+     * References, or undefined when it is not found, unreadable, or the read fails or times out
+     * (logged by status or error name, never by WildDuck's error text). Never throws, so the new
+     * UID is always reported. Runs holding `email-draft:<oldUid>`.
+     */
+    async function readBackAmended(newUid: number): Promise<StoredDraft | undefined> {
+        const deadline = createDeadline(AMEND_READ_BACK_DEADLINE_MS);
+        try {
+            const parsed = storedDraftSchema.safeParse(await wildDuckClient.getMessage(EmailFolder.Drafts, newUid, deadline.signal));
+            if(!parsed.success) {
+                logger.warn({ newUid, msg: 'The amended draft read back from WildDuck was missing or unreadable' });
+                return undefined;
+            }
+            return {
+                cc:          parsed.data.cc?.length ?? 0,
+                attachments: parsed.data.attachments?.length ?? 0,
+                references:  referencesSchema.safeParse(parsed.data.references).data,
+            };
+        } catch (err) {
+            logger.warn({ newUid, ...failureDetail(err), msg: 'Could not read back the amended draft' });
+            return undefined;
+        } finally {
+            deadline.clear();
+        }
+    }
+
+    /**
      * The locked section of an amend; the caller holds `email-draft:<uid>` throughout. Reads the
-     * draft fresh, refuses it when gone, approved or already replaced, uploads the new version
-     * built from THAT read (subject, body and To fall back to it; the card link and edit number
-     * come from it), and removes the old UID — WildDuck's replace, else a delete, else
-     * `supersededBy` — so no decision can land on the old UID between the read and its removal.
-     * Returns the refusal as a tool result, or the new UID, a warning for the tool text ('' when
-     * the old UID is gone or superseded) and the edit number the card will show. Anything else
-     * the new version must carry from the old draft (read from WildDuck) belongs here too.
+     * draft fresh, refuses it when gone, not a draft, approved or already replaced, fetches the
+     * attachments it keeps, uploads the new version built from THAT read (subject, body, To and Cc
+     * fall back to it; its attachments and, where it may be, its reply reference are carried; the
+     * card link and edit number come from it), removes the old UID — WildDuck's replace, else a
+     * delete, else `supersededBy` — so no decision can land on the old UID between the read and its
+     * removal, and reads the new version back once to check what it stores and its reply threading.
+     * Returns the refusal as a tool result, or the new UID, the notes for the tool text and the
+     * edit number the card will show.
      */
     async function replaceAmendedDraft(uid: number, draftRef: string, amendment: DraftAmendment): Promise<AmendedDraft | CallToolResult> {
         const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
         if(!original) {
-            return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found.` }], isError: true };
+            return amendError(`Draft ${draftRef} not found.`);
+        }
+        if(original.draft !== true) {
+            return amendError(`${draftRef} is not a draft; it can't be amended.`);
         }
         const meta = readDraftApprovalMeta(original.metaData);
         const refusal = amendRefusal(draftRef, meta);
         if(refusal !== undefined) {
-            return { content: [{ type: 'text' as const, text: refusal }], isError: true };
+            return amendError(refusal);
+        }
+        const attachments = await carriedAttachments(uid, draftRef, original.attachments ?? [], amendment.removeAttachments);
+        if('content' in attachments) {
+            return attachments;
         }
 
         // Re-upload as a new UID replacing the old one, carrying the card link (one more edit) and
         // a fresh preview token, and nothing else of the old metaData — never a decision, a
-        // reason or the old token.
+        // reason or the old token. The explicit To and Cc (empty lists included) win over the
+        // recipients WildDuck would derive from the reply reference; the subject wins only when it
+        // is not empty, so a reference is passed only with a non-empty one.
+        const cc = amendment.cc ?? original.cc ?? [];
+        const subject = amendment.subject ?? original.subject ?? '';
+        const threading = planThreading(original, subject);
         const carry = amendCarry(original.metaData, meta);
         const { id: newUid, previousDeleted } = await wildDuckClient.uploadReplacingDraft({
-            from:     amendment.from,
-            to:       amendment.to ?? original.to ?? [],
-            subject:  amendment.subject ?? original.subject ?? '',
-            text:     amendment.body ?? original.text ?? '',
-            draft:    true,
-            metaData: carry.metaData,
+            from:        amendment.from,
+            to:          amendment.to ?? original.to ?? [],
+            cc,
+            subject,
+            text:        amendment.body ?? original.text ?? '',
+            reference:   threading.reference,
+            attachments: attachments.kept,
+            draft:       true,
+            metaData:    carry.metaData,
         }, uid);
 
         // WildDuck's replace is not atomic: if it did not delete the old UID, delete it now, or
         // failing that mark it superseded so no click, amend or preview uses it.
-        const warning = previousDeleted ? '' : await removeReplacedDraft(uid, newUid);
-        return { newUid, warning, edits: carry.edits };
+        const removal = previousDeleted ? '' : await removeReplacedDraft(uid, newUid);
+        const stored = await readBackAmended(newUid);
+        const carried = carryNote({ cc: cc.length, ccGiven: amendment.cc !== undefined, kept: attachments.kept.length, removed: attachments.removed }, stored);
+        return { newUid, notes: `${carried}${threadingNote(threading, stored)}${removal}`, edits: carry.edits };
     }
 
     return createSdkMcpServer({
@@ -849,13 +1233,15 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
             tool(
                 'amendAndResubmitDraft',
-                'Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. A pending draft\'s approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.',
+                'Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. The new version keeps the draft\'s Cc addresses and attachments (at most 50 attachments, 25 MB in all) unless you override them (cc, removeAttachments), and stays threaded as a reply when the draft was one and its subject is not empty; the result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended, if the reply threading was lost, or if either could not be confirmed. An amend cannot attach new files: delete the draft and create a new one instead. A pending draft\'s approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.',
                 {
-                    message:       draftsMailboxMessageRefSchema.describe('The pending or rejected draft to amend, in Drafts:UID format'),
-                    subject:       z.string().optional().describe('New subject line (leave blank to keep original)'),
-                    body:          z.string().optional().describe('New plain text body (leave blank to keep original)'),
-                    to:            z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (leave blank to keep original)'),
-                    senderProfile: emailSenderProfileSchema.optional().describe('Sender profile for the From address: formal or informal'),
+                    message:           draftsMailboxMessageRefSchema.describe('The pending or rejected draft to amend, in Drafts:UID format'),
+                    subject:           z.string().optional().describe('New subject line (leave blank to keep original)'),
+                    body:              z.string().optional().describe('New plain text body (leave blank to keep original)'),
+                    to:                z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (leave blank to keep original)'),
+                    cc:                z.union([emailAddressSchema, z.array(emailAddressSchema)]).optional().describe('New Cc address(es), replacing the draft\'s Cc: plain address string or {name, email_address} object, or array of either. Omit to keep the draft\'s Cc; pass an empty array to remove every Cc address.'),
+                    removeAttachments: z.union([z.literal('all'), z.array(z.string())]).optional().describe('Attachments to drop from the draft: "all", or an array of filenames (each drops every attachment with exactly that name). Omit to keep every attachment. A filename the draft does not have refuses the amend and changes nothing.'),
+                    senderProfile:     emailSenderProfileSchema.optional().describe('Sender profile for the From address: formal or informal'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
                     withToolErrorHandling('amendAndResubmitDraft', async (args): Promise<CallToolResult> => {
@@ -870,20 +1256,18 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const { uid } = args.message;
                         const draftRef = formatMailboxMessageRef(args.message);
 
-                        // Normalize args.to: undefined → keep the draft's recipients; structured/plain string → array
-                        const argToArr = normalizeToAddresses(args.to);
-                        const to = argToArr?.map((addr): { name?: string, address: string } => {
-                            if(typeof addr === 'string') {
-                                return { address: addr };
-                            }
-                            return { name: addr.name, address: addr.email_address };
-                        });
+                        // Normalize args.to and args.cc: undefined → keep the draft's addresses; structured/plain string → array
+                        const to = uploadAddresses(normalizeToAddresses(args.to));
+                        const cc = uploadAddresses(normalizeToAddresses(args.cc));
 
-                        // Read, refuse, upload and remove the old UID holding the draft's key, so an
-                        // approval recorded meanwhile is seen (and the draft kept) and none can land on
-                        // the old UID before it is gone or superseded (#161). The card is presented after
-                        // the key is released (lock order is card key, then draft key).
-                        const amended = await withDraftLock(uid, async () => replaceAmendedDraft(uid, draftRef, { from, subject: args.subject, body: args.body, to }));
+                        // Read, refuse, fetch the kept attachments, upload, remove the old UID and read
+                        // the new one back holding the draft's key, so an approval recorded meanwhile is
+                        // seen (and the draft kept) and none can land on the old UID before it is gone or
+                        // superseded (#161). The card is presented after the key is released (lock order
+                        // is card key, then draft key).
+                        const amended = await withDraftLock(uid, async () => replaceAmendedDraft(uid, draftRef, {
+                            from, subject: args.subject, body: args.body, to, cc, removeAttachments: args.removeAttachments,
+                        }));
                         if('content' in amended) {
                             return amended;
                         }
@@ -892,7 +1276,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         return submitOrRequestApproval(
                             amended.newUid,
                             false,
-                            amended.warning,
+                            amended.notes,
                             // Stryker disable next-line StringLiteral: empty string — successMessage is unreachable when isAllowed=false always routes to approval
                             '',
                             { uid, edits: amended.edits }
