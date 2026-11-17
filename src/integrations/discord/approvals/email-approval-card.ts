@@ -141,7 +141,10 @@ function approvalButtons(uid: number, rejectOnly: boolean, previewUrl: string | 
  * act on `uid`, followed by an "Open full preview" link when `previewUrl` is given; a deleted
  * card has none.
  */
-export function buildEmailApprovalCard(input: EmailApprovalCardInput): EmailApprovalCard {
+export function buildEmailApprovalCard(input: EmailApprovalCardInput | { state: 'retired' }): EmailApprovalCard {
+    if(input.state === 'retired') {
+        return { embeds: [new EmbedBuilder().setTitle('Approval no longer active').setColor(DRAFT_GONE_GREY)], components: [] };
+    }
     const { uid, summary, edits, state } = input;
     const pending = state === 'pending';
     const title = pending ? pendingTitle(edits) : DELETED_TITLE;

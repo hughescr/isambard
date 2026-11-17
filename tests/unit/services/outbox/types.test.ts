@@ -106,6 +106,25 @@ describe('outboxItemSchema', () => {
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, origin: 'discord' }).success).toBe(false);
     });
 
+    test('progress.pendingDiscard rejects card_target_gone', () => {
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, progress: { pendingDiscard: 'card_target_gone' } }).success).toBe(false);
+    });
+
+    test('completion accepts an email approval card and rejects other kinds and malformed data', () => {
+        const completion = { kind: 'email_approval_card', draftUid: 42, edits: 0 } as const;
+        expect(outboxItemSchema.parse({ ...validItem, epoch: 0, completion }).completion).toStrictEqual(completion);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, kind: 'other' } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, draftUid: 1.5 } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, draftUid: -1 } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, edits: 1.5 } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, edits: -1 } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { kind: 'email_approval_card', edits: 0 } }).success).toBe(false);
+    });
+
+    test('a legacy row without completion parses without the key', () => {
+        expect(outboxItemSchema.parse({ ...validItem, epoch: 0 })).not.toHaveProperty('completion');
+    });
+
     test('a legacy row without pendingDiscard or origin parses without either key', () => {
         const parsed = outboxItemSchema.parse({ ...validItem, epoch: 0 });
 
@@ -115,8 +134,8 @@ describe('outboxItemSchema', () => {
 });
 
 describe('outboxDiscardReasonSchema', () => {
-    test('lists every discard reason and the drainer schema excludes only reply_target_deleted', () => {
-        expect(outboxDiscardReasonSchema.options).toEqual(['stale_epoch', 'permanent_error', 'classified_abandon', 'reply_target_deleted']);
+    test('lists every discard reason and the drainer schema excludes reply_target_deleted and card_target_gone', () => {
+        expect(outboxDiscardReasonSchema.options).toEqual(['stale_epoch', 'permanent_error', 'classified_abandon', 'reply_target_deleted', 'card_target_gone']);
         expect(drainerDiscardReasonSchema.options).toEqual(['stale_epoch', 'permanent_error', 'classified_abandon']);
     });
 });

@@ -22,14 +22,14 @@ const outboxPayloadSchema = serializedDiscordPayloadSchema;
 
 export const outboxServiceSchema = z.enum(['discord']);
 export type OutboxService = z.infer<typeof outboxServiceSchema>;
-export const outboxDiscardReasonSchema = z.enum(['stale_epoch', 'permanent_error', 'classified_abandon', 'reply_target_deleted']);
+export const outboxDiscardReasonSchema = z.enum(['stale_epoch', 'permanent_error', 'classified_abandon', 'reply_target_deleted', 'card_target_gone']);
 export type OutboxDiscardReason = z.infer<typeof outboxDiscardReasonSchema>;
 
 /**
- * Discard reasons the drainer decides itself. `reply_target_deleted` is excluded: the delivery
- * function settles (and reports) that discard before the drainer sees it.
+ * Discard reasons the drainer decides itself. `reply_target_deleted` and `card_target_gone` are
+ * excluded: the delivery function settles (and reports) those discards before the drainer sees them.
  */
-export const drainerDiscardReasonSchema = outboxDiscardReasonSchema.exclude(['reply_target_deleted']);
+export const drainerDiscardReasonSchema = outboxDiscardReasonSchema.exclude(['reply_target_deleted', 'card_target_gone']);
 export type DrainerDiscardReason = z.infer<typeof drainerDiscardReasonSchema>;
 
 const outboxProgressSchema = z.object({
@@ -61,6 +61,18 @@ const outboxProgressSchema = z.object({
     pendingDiscard: drainerDiscardReasonSchema.optional(),
 });
 
+/**
+ * What must happen once the row's Discord message is posted. `email_approval_card`: the message is
+ * the approval card for draft `draftUid` at amend count `edits`, so delivery can tell whether the
+ * card still matches the draft.
+ */
+const outboxCompletionSchema = z.object({
+    kind:     z.literal('email_approval_card'),
+    draftUid: z.number().int().min(0),
+    edits:    z.number().int().min(0),
+});
+export type OutboxCompletion = z.infer<typeof outboxCompletionSchema>;
+
 export const outboxItemSchema = z.object({
     id:          z.uuid(),
     createdAt:   z.iso.datetime(),
@@ -80,5 +92,7 @@ export const outboxItemSchema = z.object({
      * message is discarded in turn. Absent for every other row.
      */
     origin:      z.literal('notification').optional(),
+    /** Absent for rows with no post-delivery obligation, including every row written before this field existed. */
+    completion:  outboxCompletionSchema.optional(),
 });
 export type OutboxItem = z.infer<typeof outboxItemSchema>;

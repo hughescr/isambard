@@ -1,11 +1,14 @@
+import { logger } from '@hughescr/logger';
 import { RESTJSONErrorCodes } from 'discord-api-types/v10';
-import type { MessageCreateOptions, TextChannel } from 'discord.js';
+import type { Message, MessageCreateOptions, TextChannel } from 'discord.js';
 import type { NotifyFn, NotifyParams } from '@/agent';
 import type { ChannelId } from '@/config';
 import { ChannelNotFoundByIdError } from '@/errors';
+import { currentCardDraftUid } from '@/integrations/discord/approvals/email-approval-card';
+import type { DeliveredCard, EmailApprovalCardPresenter, QueuedCardInspection } from '@/integrations/discord/approvals/email-approval-cards';
 import { DISCORD_MAX_LENGTH, splitMessage } from '@/integrations/discord/messages';
 import { classifyDiscordError, withDiscordRetry } from '@/integrations/discord/retry';
-import { OutboxDeliveryDeferredError, OutboxDiscardRequestedError, OutboxVerificationPendingError, type OutboxItem } from '@/services';
+import { OutboxDeliveryDeferredError, OutboxDiscardRequestedError, OutboxVerificationPendingError, type OutboxCompletion, type OutboxItem } from '@/services';
 import { appendDeliveryCode, decodeDeliveryCode, deliveryTokenForBase, maxContentLengthForDeliveryCode } from '@/utils';
 
 export interface OutboxReplayDeps {
@@ -14,7 +17,13 @@ export interface OutboxReplayDeps {
      * Tells Izzy that a queued reply was dropped because the message it answered was deleted.
      * A `false` return (Izzy cannot be told yet) defers the item instead of discarding it.
      */
-    notify: NotifyFn
+    notify:              NotifyFn
+    /**
+     * Settles rows that carry an `email_approval_card` completion: before sending, whether the
+     * card already exists or its draft has moved on; after delivery, the link and repaint the
+     * card still owes. Without it a completion is ignored and the row replays as plain content.
+     */
+    emailApprovalCards?: Pick<EmailApprovalCardPresenter, 'inspectQueuedCard' | 'reconcileQueuedCard'>
 }
 
 // Re-exported so existing consumers (the Discord outbox tests) keep importing it from here.
@@ -90,15 +99,48 @@ function isUnknownMessageError(error: unknown): boolean {
     return typeof error === 'object' && error !== null && (error as { code?: unknown }).code === RESTJSONErrorCodes.UnknownMessage;
 }
 
+/** Where delivery resumes, and the card message when history already holds an email approval card. */
+interface ResumePoint {
+    part:       number
+    delivered?: DeliveredCard
+}
+
+/**
+ * The bot's own messages in `history`. Only these can prove a delivery: any other author could
+ * have posted a copy of a code. A client with no user id cannot say which are its own, so the
+ * history cannot be trusted either way.
+ */
+function ownMessagesOf(channel: TextChannel, history: Iterable<Message>): Message[] {
+    const botId = (channel.client as { user: { id: string } | null }).user?.id;
+    if(botId === undefined) {
+        throw new OutboxVerificationPendingError();
+    }
+    return [...history].filter(message => message.author.id === botId);
+}
+
+/**
+ * The card in `own` that proves `completion` delivered. A message carrying the item's final
+ * part code is preferred (it may have lost its controls since); otherwise a message whose live
+ * controls act on the draft, even though it carries no code.
+ */
+function findDeliveredCard(channel: TextChannel, item: OutboxItem, parts: number, completion: OutboxCompletion, own: readonly Message[]): DeliveredCard | undefined {
+    const finalToken = deliveryTokenFor(item, parts - 1);
+    const tagged = own.find(message => decodeDeliveryCode(message.content) === finalToken);
+    const card = tagged ?? own.find(message => currentCardDraftUid(message) === completion.draftUid);
+    return card === undefined ? undefined : { channelId: channel.id, messageId: card.id };
+}
+
 /**
  * Returns the first part that still needs sending. Parts [0, deliveredParts) are confirmed. After
  * an unknown outcome, history is searched too: parts are sent strictly in order, so a later
  * part's code proves every earlier part was delivered, and no part whose code is present is resent.
+ * For an email approval card (`completion`), the final part's code or live controls on the draft
+ * also prove the whole item delivered, and say which message is the card.
  */
-async function firstUndeliveredPart(channel: TextChannel, item: OutboxItem, parts: number): Promise<number> {
+async function firstUndeliveredPart(channel: TextChannel, item: OutboxItem, parts: number, completion?: OutboxCompletion): Promise<ResumePoint> {
     const start = item.progress.deliveredParts ?? 0;
     if(item.progress.outcome !== 'unknown') {
-        return start;
+        return { part: start };
     }
     let history: Awaited<ReturnType<TextChannel['messages']['fetch']>>;
     try {
@@ -106,12 +148,17 @@ async function firstUndeliveredPart(channel: TextChannel, item: OutboxItem, part
     } catch{
         throw new OutboxVerificationPendingError();
     }
-    const codes = new Set(Array.from(history.values(), message => decodeDeliveryCode(message.content)));
+    const own = ownMessagesOf(channel, history.values());
+    const codes = new Set(own.map(message => decodeDeliveryCode(message.content)));
     let resume = start;
     for(let part = start; part < parts; part++) {
         if(codes.has(deliveryTokenFor(item, part))) {
             resume = part + 1;
         }
+    }
+    const delivered = completion === undefined ? undefined : findDeliveredCard(channel, item, parts, completion, own);
+    if(delivered !== undefined) {
+        resume = parts;
     }
     // Record the history-confirmed prefix before any send and settle the unknown outcome: a
     // definitive rejection of the next part then persists this progress as a retryable outcome
@@ -121,12 +168,12 @@ async function firstUndeliveredPart(channel: TextChannel, item: OutboxItem, part
     item.progress.deliveredParts = resume;
     // eslint-disable-next-line eslint-core/require-atomic-updates -- as above: one delivery owns this item until it settles
     item.progress.outcome = 'retryable';
-    return resume;
+    return { part: resume, delivered };
 }
 
-async function sendWithOutcomeVerification(channel: TextChannel, payload: Parameters<TextChannel['send']>[0]): Promise<void> {
+async function sendWithOutcomeVerification(channel: TextChannel, payload: Parameters<TextChannel['send']>[0]): Promise<Message> {
     try {
-        await withDiscordRetry(() => channel.send(payload));
+        return await withDiscordRetry(() => channel.send(payload));
     } catch (error: unknown) {
         if(isIndeterminateDiscordError(error)) {
             throw new OutboxVerificationPendingError();
@@ -156,9 +203,9 @@ async function settleIfReplyTargetDeleted(channel: TextChannel, item: OutboxItem
     }
 }
 
-async function sendTextPart(channel: TextChannel, item: OutboxItem, part: number, chunk: string, notify: NotifyFn): Promise<void> {
+async function sendTextPart(channel: TextChannel, item: OutboxItem, part: number, chunk: string, notify: NotifyFn): Promise<Message> {
     try {
-        await sendWithOutcomeVerification(channel, textPartPayload(item, part, chunk));
+        return await sendWithOutcomeVerification(channel, textPartPayload(item, part, chunk));
     } catch (error: unknown) {
         const replyTo = item.payload.replyToMessageId;
         if(part === 0 && replyTo !== undefined && !(error instanceof OutboxVerificationPendingError)) {
@@ -166,6 +213,62 @@ async function sendTextPart(channel: TextChannel, item: OutboxItem, part: number
         }
         throw error;
     }
+}
+
+/** A queued email approval card's completion and the presenter that settles it. */
+interface CardSettlement {
+    completion: OutboxCompletion
+    cards:      NonNullable<OutboxReplayDeps['emailApprovalCards']>
+}
+
+/**
+ * What the presenter says about a queued card before it is sent. Advisory: a failed read is
+ * logged and counts as no information, so delivery falls back to the history checks.
+ */
+async function inspectCard({ completion, cards }: CardSettlement): Promise<QueuedCardInspection> {
+    try {
+        return await cards.inspectQueuedCard(completion);
+    } catch (err: unknown) {
+        logger.warn({ err, draftUid: completion.draftUid, msg: 'Could not inspect the queued approval card; delivering it without that check' });
+        return { obsolete: false };
+    }
+}
+
+/**
+ * Lets the presenter finish what the delivered card owes. The card is already posted, so a
+ * failure here is logged and swallowed: failing the item would resend a card that exists.
+ */
+async function reconcileCard({ completion, cards }: CardSettlement, delivered: DeliveredCard): Promise<void> {
+    try {
+        await cards.reconcileQueuedCard(completion, delivered);
+    } catch (err: unknown) {
+        logger.warn({ err, draftUid: completion.draftUid, ...delivered, msg: 'Could not reconcile the delivered approval card' });
+    }
+}
+
+/**
+ * Where delivery resumes. A card the presenter or history proves posted means nothing is left
+ * to send; a card whose draft moved on and was never posted is discarded rather than posted stale.
+ * A stored card the presenter could not attribute (no bot identity) leaves delivery unverified, as
+ * an unattributable history read does: nothing is sent and the item is retried later.
+ */
+async function resolveStart(channel: TextChannel, item: OutboxItem, parts: number, settlement: CardSettlement | undefined): Promise<ResumePoint> {
+    const inspection = settlement === undefined ? undefined : await inspectCard(settlement);
+    if(inspection?.inconclusive === true) {
+        throw new OutboxVerificationPendingError();
+    }
+    if(inspection?.delivered !== undefined) {
+        // The stored link proves the card was posted, so every part of the item is delivered.
+        item.progress.deliveredParts = parts;
+        return { part: parts, delivered: inspection.delivered };
+    }
+    const point = await firstUndeliveredPart(channel, item, parts, settlement?.completion);
+    if(inspection?.obsolete === true && point.part < parts) {
+        // The draft moved on while the card waited and no card was ever posted (a card found in
+        // history resumes at `parts`): posting one now would offer a stale draft.
+        throw new OutboxDiscardRequestedError('card_target_gone');
+    }
+    return point;
 }
 
 /** Creates the Discord delivery function used by the persistent outbox drainer. */
@@ -177,17 +280,24 @@ export function createOutboxReplayDeliverFn(deps: OutboxReplayDeps): (item: Outb
         }
         const chunks = messageChunksFor(item);
         const hasRichPayload = (item.payload.embeds ?? []).length > 0 || (item.payload.components ?? []).length > 0;
-        const resume = await firstUndeliveredPart(channel, item, chunks.length + Number(hasRichPayload));
+        const parts = chunks.length + Number(hasRichPayload);
+        const settlement: CardSettlement | undefined = parts === 0 || item.completion === undefined || deps.emailApprovalCards === undefined
+            ? undefined
+            : { completion: item.completion, cards: deps.emailApprovalCards };
+
+        const { part: resume, delivered } = await resolveStart(channel, item, parts, settlement);
+
+        let finalMessage: Message | undefined;
         for(let part = resume; part < chunks.length; part++) {
             // eslint-disable-next-line no-await-in-loop -- chunks must be sent sequentially to preserve message order
-            await sendTextPart(channel, item, part, chunks[part]!, deps.notify);
+            finalMessage = await sendTextPart(channel, item, part, chunks[part]!, deps.notify);
             // The drainer persists this on any later failure, so a replay never resends this part.
             // eslint-disable-next-line eslint-core/require-atomic-updates -- the drainer hands this item to one delivery at a time and reads its progress only after it settles
             item.progress.deliveredParts = part + 1;
         }
         if(hasRichPayload && resume <= chunks.length) {
             const nonce = deliveryTokenFor(item, chunks.length);
-            await sendWithOutcomeVerification(channel, {
+            finalMessage = await sendWithOutcomeVerification(channel, {
                 embeds:       item.payload.embeds,
                 components:   item.payload.components,
                 // An invisible content field tags component-only payloads for replay verification.
@@ -195,6 +305,14 @@ export function createOutboxReplayDeliverFn(deps: OutboxReplayDeps): (item: Outb
                 nonce,
                 enforceNonce: true,
             });
+        }
+
+        if(settlement !== undefined) {
+            // A message sent just now is the item's last part (the loop above ends on it); otherwise the card was already posted.
+            const posted = finalMessage === undefined ? delivered : { channelId: channel.id, messageId: finalMessage.id };
+            if(posted !== undefined) {
+                await reconcileCard(settlement, posted);
+            }
         }
     };
 }

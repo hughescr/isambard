@@ -4447,6 +4447,26 @@ describe('createEmailMCPServer', () => {
                             expect(cancelled).toBe(true);
                             expectNothingChanged();
                         });
+
+                        test('waits for an overrun body\'s cancel, so one that fails is caught and logged, and still refuses', async () => {
+                            original = { ...originalDraft, attachments: [REPORT] };
+                            mockOpenStream.mockImplementation(async () => ({
+                                body: new ReadableStream<Uint8Array>({
+                                    pull(controller) {
+                                        controller.enqueue(chunk(CAP + 1) as Uint8Array);
+                                    },
+                                    cancel() {
+                                        throw new TypeError('cancel failed');
+                                    },
+                                }, { highWaterMark: 0 }),
+                            }));
+
+                            const result = await amend();
+
+                            expect(result).toEqual(refused('Could not amend draft Drafts:42: the attachments it would keep come to more than the 25.0 MB an amend can carry. Nothing was changed; leave some out with removeAttachments, or delete the draft and create a new one.'));
+                            expect(mockLogger.warn.mock.calls).toEqual([[{ uid: 42, attachmentId: 'ATT00001', error: 'TypeError', msg: 'Could not fetch an attachment to carry into the amended draft' }]]);
+                            expectNothingChanged();
+                        });
                     });
                 });
 
@@ -4748,6 +4768,15 @@ describe('createEmailMCPServer', () => {
                     const result = await amend();
 
                     expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed) but could not be confirmed on the stored draft.${THREAD_LOST}`);
+                });
+
+                test('counts a single Reference as a reply, and warns that the threading is lost when no reference could be passed', async () => {
+                    original = { ...originalDraft, references: ['<parent@example.com>'] };
+                    stored = { id: 55, references: [] };
+
+                    const result = await amend();
+
+                    expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_LOST}`);
                 });
 
                 test.each([

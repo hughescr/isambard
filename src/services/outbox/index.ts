@@ -1,6 +1,6 @@
 export { serializedDiscordPayloadSchema } from './discord-payload';
 export { outboxServiceSchema } from './types';
-export type { OutboxItem, OutboxItemType, OutboxPriority, OutboxService, OutboxDiscardReason, DrainerDiscardReason } from './types';
+export type { OutboxItem, OutboxItemType, OutboxPriority, OutboxService, OutboxDiscardReason, DrainerDiscardReason, OutboxCompletion } from './types';
 export { OutboxBackend } from './backend';
 export type { OutboxFailure, OutboxFailureClassification, OutboxFailureClassifier } from './failure-classifier';
 export { OUTBOX_FAILURE_FALLBACK } from './failure-classifier';

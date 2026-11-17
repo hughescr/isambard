@@ -44,6 +44,7 @@ import * as staticConfigModule from '@/config/loader';
 import type { App } from '@/index';
 import * as staticIndexModule from '@/index';
 import * as staticBskyModule from '@/integrations/bsky';
+import * as staticDiscordIndexModule from '@/integrations/discord';
 import * as staticDiscordModule from '@/integrations/discord/bot';
 import { DiscordCapabilityImpl } from '@/integrations/discord/capability';
 import * as staticChannelRegistryModule from '@/integrations/discord/channel-registry';
@@ -1494,7 +1495,7 @@ describe('createApp', () => {
             expect(bridgeOrder).toBeLessThan(conductorOrder);
         });
 
-        test('threads notificationBridge.notify into setupEmail\'s options (Q7)', async () => {
+        test('threads notificationBridge.notify into setupEmail and the approval presenter into replay (#160)', async () => {
             let capturedBridge: NotificationBridge | undefined;
             const createBridgeSpy = spyOn(staticAgentIndexModule, 'createNotificationBridge').mockImplementation(
                 (bridgeParams: Parameters<typeof realCreateNotificationBridge>[0]) => {
@@ -1507,7 +1508,8 @@ describe('createApp', () => {
             const createConversationConductorSpy = spyOn(staticSessionsModule, 'createConversationConductor').mockResolvedValue({
                 conductor: fakeConductor('conv-sess'), ledgerStore: { subscribe: mock(() => () => undefined) } as unknown as LedgerStore, contextPolicy: {} as ContextPolicy, compactionTelemetry: {} as CompactionTelemetry, bootLostTasks: [], setWakeTurnDelivery: mock(() => undefined),
             });
-            spies.push(createBridgeSpy, createConversationConductorSpy);
+            const createReplaySpy = spyOn(staticDiscordIndexModule, 'createOutboxReplayDeliverFn');
+            spies.push(createBridgeSpy, createConversationConductorSpy, createReplaySpy);
 
             const { createApp } = staticIndexModule;
             await createApp();
@@ -1515,6 +1517,8 @@ describe('createApp', () => {
             expect(capturedBridge).toBeDefined();
             const emailOptions = emailSetupSpy.mock.calls[0]?.[0] as { notify?: NotifyFn };
             expect(emailOptions.notify).toBe(capturedBridge!.notify);
+            const emailSetup = await emailSetupSpy.mock.results[0].value;
+            expect(createReplaySpy.mock.calls[0][0].emailApprovalCards).toBe(emailSetup.approvalCards);
         });
 
         test('threads operationalStateStore, healthRegistry, and notificationBridge.notify into setupBsky\'s options (Q8)', async () => {

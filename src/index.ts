@@ -710,12 +710,20 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     });
     registerCleanup({ name: 'Discord reconnect subscription', run: unsubscribeDiscordReconnect });
 
+    // The Discord replay step knows how to finish linking an email approval card (#160).
+    function createDiscordOutboxDelivery(): ReturnType<typeof createOutboxReplayDeliverFn> {
+        return createOutboxReplayDeliverFn({
+            fetchChannel:       channelId => discordCapability.fetchChannel(channelId),
+            notify:             notificationBridge.notify,
+            emailApprovalCards: emailSetup?.approvalCards,
+        });
+    }
     // Outbox drainer — delivers queued Discord messages when Discord comes back online
     const outboxDrainer: OutboxDrainer = createOutboxDrainer({
         outboxBackend,
         registry:          healthRegistry,
         // notify tells Izzy when a queued reply is dropped because the message it answered was deleted.
-        deliverFn:         createOutboxReplayDeliverFn({ fetchChannel: channelId => discordCapability.fetchChannel(channelId), notify: notificationBridge.notify }),
+        deliverFn:         createDiscordOutboxDelivery(),
         // Jev classifies known Discord send rejections as retry/abandon when Resource.TypesafeApiKey
         // is configured; an absent/empty key leaves the classifier on the deterministic retry fallback.
         failureClassifier: createJevOutboxFailureClassifier({ apiKey: config.typesafe?.apiKey }),

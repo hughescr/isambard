@@ -3,7 +3,7 @@ import type { ChannelId } from '@/config';
 import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
 import { deliveryTokenFor, isIndeterminateDiscordError, messageChunksFor, textPartPayload } from '@/integrations/discord/outbox-replay';
 import { withDiscordRetry } from '@/integrations/discord/retry';
-import { serializedDiscordPayloadSchema, type ServiceHealthRegistry, type OutboxBackend, type OutboxItem, type OutboxPriority, type OutboxItemType } from '@/services';
+import { serializedDiscordPayloadSchema, type ServiceHealthRegistry, type OutboxBackend, type OutboxCompletion, type OutboxItem, type OutboxPriority, type OutboxItemType } from '@/services';
 import { appendDeliveryCode, maxContentLengthForDeliveryCode } from '@/utils';
 
 /**
@@ -31,6 +31,8 @@ export interface SendOptions {
     epoch?:      number
     /** When true, never queue to outbox on failure — return 'unavailable' instead. */
     skipOutbox?: boolean
+    /** Persisted on the queued outbox item (see `OutboxItem.completion`); ignored when the send is immediate. */
+    completion?: OutboxCompletion
 }
 
 /** Options for {@link DiscordCapability.sendText}. */
@@ -152,12 +154,18 @@ function buildOutboxItem(channelId: ChannelId, content: ChannelContent, options:
         progress:  { attemptCount: 0, deliveryToken: crypto.randomUUID().replaceAll('-', '').slice(0, 16) },
         epoch:     options?.epoch ?? 0,
         ...originOf(options),
+        ...completionOf(options),
     };
 }
 
 /** The queued item's `origin`, present only for text sent during a notification turn. */
 function originOf(options: TextSendOptions | undefined): Pick<OutboxItem, 'origin'> {
     return options?.origin === undefined ? {} : { origin: options.origin };
+}
+
+/** The queued item's `completion`, present only when the sender asked for one. */
+function completionOf(options: SendOptions | undefined): Pick<OutboxItem, 'completion'> {
+    return options?.completion === undefined ? {} : { completion: options.completion };
 }
 
 function sendPayloadWithDeliveryToken(content: ChannelContent, item: OutboxItem): Parameters<TextChannel['send']>[0] {

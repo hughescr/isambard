@@ -1,26 +1,48 @@
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
-import type { APIButtonComponentWithCustomId, Message } from 'discord.js';
+import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
+import { RESTJSONErrorCodes } from 'discord-api-types/v10';
+import type { APIButtonComponentWithCustomId, Message, TextChannel } from 'discord.js';
 import { mockLogger } from '../../../../setup';
+import { createChannelId } from '@/agent/types';
 import { ApprovalCardEditGate, approvalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
 import type { EmailApprovalCard } from '@/integrations/discord/approvals/email-approval-card';
 import { EmailApprovalCardPresenter, type ApprovalCardChannel, type ApprovalCardMessage } from '@/integrations/discord/approvals/email-approval-cards';
 import type { SendResult } from '@/integrations/discord/capability';
-import type { DraftApprovalCardLink, WildDuckMessage } from '@/integrations/email';
+import { createOutboxReplayDeliverFn } from '@/integrations/discord/outbox-replay';
+import { EmailOutboundApprovals, type DraftApprovalCardLink, type WildDuckMessage } from '@/integrations/email';
+import { CARD_LINK_LOCK_WAIT_MS } from '@/integrations/email/outbound-approvals';
+import { OutboxVerificationPendingError, type OutboxItem } from '@/services';
 
 const OLD_UID = 42;
 const NEW_UID = 55;
 const LINK: DraftApprovalCardLink = { channelId: 'admin-ch', messageId: 'card-1', edits: 2 };
+const COMPLETION = { kind: 'email_approval_card', draftUid: NEW_UID, edits: 0 } as const;
+const DELIVERED = { channelId: 'admin-ch', messageId: 'card-new' };
+const DRAFT_KEY = `email-draft:${NEW_UID}`;
 
 function draft(uid: number, metaData: Record<string, unknown> = {}): WildDuckMessage {
     return { id: uid, draft: true, subject: 'Hello', from: { address: 'izzy@example.com' }, to: [{ address: 'a@example.com' }], text: 'Body', metaData };
 }
 
 /** A posted card whose live controls act on `uid` (none when undefined). */
-function cardMessage(uid: number | undefined): ApprovalCardMessage & { edit: ReturnType<typeof mock<(payload: EmailApprovalCard) => Promise<unknown>>> } {
+function cardMessage(uid: number | undefined, authorId = 'our-bot', botId: string | null = 'our-bot'): ApprovalCardMessage & { edit: ReturnType<typeof mock<(payload: EmailApprovalCard) => Promise<unknown>>> } {
     return {
+        author:     { id: authorId },
+        client:     { user: botId === null ? null : { id: botId } },
         components: uid === undefined ? [] : [{ components: [{ customId: `email-send-approve:${uid}` }, { customId: `email-send-reject:${uid}` }] }],
         edit:       mock(async (_payload: EmailApprovalCard): Promise<unknown> => ({})),
     };
+}
+
+async function drainMicrotasks(ticks = 30): Promise<void> {
+    for(let i = 0; i < ticks; i++) {
+        // eslint-disable-next-line no-await-in-loop -- intentional sequential microtask flushing
+        await Promise.resolve();
+    }
+}
+
+/** The error discord.js raises for a message that no longer exists. */
+function unknownMessage(): Error {
+    return Object.assign(new Error('Unknown Message'), { code: RESTJSONErrorCodes.UnknownMessage });
 }
 
 function titleOf(card: EmailApprovalCard): string | undefined {
@@ -33,6 +55,7 @@ function customIdsOf(card: EmailApprovalCard): string[] {
 
 interface Harness {
     presenter:      EmailApprovalCardPresenter
+    updateMetadata: ReturnType<typeof mock<(folder: string, uid: number, metaData: Record<string, unknown>) => Promise<void>>>
     getMessage:     ReturnType<typeof mock<(folder: string, uid: number) => Promise<WildDuckMessage | null>>>
     linkCard:       ReturnType<typeof mock<(uid: number, link: DraftApprovalCardLink) => Promise<boolean>>>
     markSuperseded: ReturnType<typeof mock<(oldUid: number, newUid: number) => Promise<boolean>>>
@@ -72,16 +95,29 @@ function makeHarness(stored: WildDuckMessage | null, card: ApprovalCardMessage =
     const reply = mock(async (_card: { channelId: string, messageId: string }, _text: string): Promise<void> => {
         events.push('reply');
     });
+    const updateMetadata = mock(async (_folder: string, _uid: number, _metaData: Record<string, unknown>): Promise<void> => undefined);
+    const approvals = new EmailOutboundApprovals({
+        wildDuckClient: { getMessage, updateMessageMetadata: updateMetadata, updateMessageFlags: mock() },
+        actionWriter:   { create: mock() },
+        actionReader:   { get: mock() },
+        draftLocks:     gate,
+        notify:         mock(() => true),
+    });
     const presenter = new EmailApprovalCardPresenter({
         wildDuckClient: { getMessage },
-        draftMeta:      { linkCard, markSupersededLocked: markSuperseded },
+        draftMeta:      {
+            linkCard,
+            markSupersededLocked: markSuperseded,
+            readCardTarget:       uid => approvals.readCardTarget(uid),
+            reconcileCardLink:    (uid, link, replace) => approvals.reconcileCardLink(uid, link, replace),
+        },
         postCard,
         fetchChannel,
         reply,
-        cardEdits:      gate,
-        previewUrlFor:  previewUrls,
+        cardEdits:     gate,
+        previewUrlFor: previewUrls,
     });
-    return { presenter, getMessage, linkCard, markSuperseded, postCard, fetchChannel, fetchMessage, reply, gate, events };
+    return { presenter, getMessage, updateMetadata, linkCard, markSuperseded, postCard, fetchChannel, fetchMessage, reply, gate, events };
 }
 
 describe('EmailApprovalCardPresenter', () => {
@@ -135,11 +171,12 @@ describe('EmailApprovalCardPresenter', () => {
             expect(h.linkCard).not.toHaveBeenCalled();
         });
 
-        test('a card queued to the outbox is reported queued and never linked', async () => {
-            const h = makeHarness(draft(NEW_UID));
+        test('a queued card carries the completion intent and is not linked immediately', async () => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
             h.postCard.mockImplementation(async () => ({ status: 'queued', outboxId: 'o1' }));
 
             expect(await h.presenter.present(NEW_UID)).toBe('queued');
+            expect(h.postCard).toHaveBeenCalledWith(expect.anything(), { ...COMPLETION, edits: 2 });
             expect(h.linkCard).not.toHaveBeenCalled();
         });
 
@@ -193,6 +230,345 @@ describe('EmailApprovalCardPresenter', () => {
 
             expect(await h.presenter.present(NEW_UID, OLD_UID)).toBe('posted');
             expect(h.fetchChannel).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('queued approval card replay', () => {
+        test('a persisted row replayed after a failed acknowledgement links and posts only once', async () => {
+            const stored = draft(NEW_UID);
+            const h = makeHarness(stored, cardMessage(NEW_UID));
+            h.updateMetadata.mockImplementation(async (_folder, _uid, metadata) => {
+                stored.metaData = metadata;
+            });
+            const send = mock(async () => ({ id: DELIVERED.messageId }));
+            const channel = { id: DELIVERED.channelId, send } as unknown as TextChannel;
+            const deliver = createOutboxReplayDeliverFn({
+                fetchChannel:       mock(async () => channel),
+                notify:             mock(() => true),
+                emailApprovalCards: h.presenter,
+            });
+            const row: OutboxItem = {
+                id:          'card-outbox-row',
+                createdAt:   '2026-11-17T00:00:00.000Z',
+                service:     'discord',
+                type:        'email_approval',
+                destination: createChannelId(DELIVERED.channelId),
+                payload:     { embeds: [{ title: 'Pending' }] },
+                priority:    'high',
+                epoch:       0,
+                dedupeKey:   'card-dedupe',
+                progress:    { attemptCount: 0 },
+                completion:  COMPLETION,
+            };
+
+            await deliver({ ...row, progress: { ...row.progress } });
+            await deliver(row); // The failed ack left the original row, not the in-memory item.
+
+            expect(stored.metaData).toEqual({ approvalCard: { ...DELIVERED, edits: 0 } });
+            expect(h.updateMetadata).toHaveBeenCalledTimes(1);
+            expect(send).toHaveBeenCalledTimes(1);
+            expect(h.fetchMessage.mock.calls).toEqual([[{ message: DELIVERED.messageId, force: true }]]);
+        });
+
+        test.each([
+            ['matching', NEW_UID, 'our-bot', 'our-bot', { obsolete: false, delivered: { channelId: LINK.channelId, messageId: LINK.messageId } }],
+            ['predecessor', OLD_UID, 'our-bot', 'our-bot', { obsolete: false }],
+            ['foreign', NEW_UID, 'other-bot', 'our-bot', { obsolete: false }],
+        ] as const)('proves delivery only with live owned controls: %s', async (_label, uid, author, bot, result) => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }), cardMessage(uid, author, bot));
+
+            expect(await h.presenter.inspectQueuedCard(COMPLETION)).toStrictEqual(result);
+            expect(h.fetchMessage.mock.calls).toEqual([[{ message: LINK.messageId, force: true }]]);
+        });
+
+        test.each([
+            ['an active', draft(NEW_UID, { approvalCard: LINK }), false],
+            ['a superseded', draft(NEW_UID, { supersededBy: 56, approvalCard: LINK }), true],
+        ] as const)('a fetched stored card with no bot identity on %s draft is inconclusive, not undelivered', async (_label, stored, obsolete) => {
+            const h = makeHarness(stored, cardMessage(NEW_UID, 'our-bot', null));
+
+            expect(await h.presenter.inspectQueuedCard(COMPLETION)).toStrictEqual({ obsolete, inconclusive: true });
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('a replay whose stored card cannot be attributed without a bot identity waits for verification instead of posting a duplicate', async () => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }), cardMessage(NEW_UID, 'our-bot', null));
+            const send = mock(async () => ({ id: DELIVERED.messageId }));
+            const channel = { id: DELIVERED.channelId, send } as unknown as TextChannel;
+            const deliver = createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel), notify: mock(() => true), emailApprovalCards: h.presenter });
+            const row: OutboxItem = {
+                id:          'card-outbox-row',
+                createdAt:   '2026-11-17T00:00:00.000Z',
+                service:     'discord',
+                type:        'email_approval',
+                destination: createChannelId(DELIVERED.channelId),
+                payload:     { embeds: [{ title: 'Pending' }] },
+                priority:    'high',
+                epoch:       0,
+                dedupeKey:   'card-dedupe',
+                progress:    { attemptCount: 1, outcome: 'retryable' },
+                completion:  COMPLETION,
+            };
+
+            await expect(deliver(row)).rejects.toBeInstanceOf(OutboxVerificationPendingError);
+            expect(send).not.toHaveBeenCalled();
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+            expect(row.progress).toEqual({ attemptCount: 1, outcome: 'retryable' });
+        });
+
+        test.each([
+            ['missing', null, { obsolete: true }],
+            ['superseded without a link', draft(NEW_UID, { supersededBy: 56 }), { obsolete: true }],
+            ['no link', draft(NEW_UID), { obsolete: false }],
+        ] as const)('checks a %s draft without Discord I/O', async (_label, stored, result) => {
+            const h = makeHarness(stored);
+
+            expect(await h.presenter.inspectQueuedCard(COMPLETION)).toEqual(result);
+            expect(h.fetchChannel).not.toHaveBeenCalled();
+        });
+
+        test('proves delivery from the stored card even after its draft was superseded', async () => {
+            const h = makeHarness(draft(NEW_UID, { supersededBy: 56, approvalCard: LINK }), cardMessage(NEW_UID));
+
+            expect(await h.presenter.inspectQueuedCard(COMPLETION)).toEqual({
+                obsolete:  true,
+                delivered: { channelId: LINK.channelId, messageId: LINK.messageId },
+            });
+        });
+
+        test('does not infer an obsolete target from an unreadable draft', async () => {
+            const h = makeHarness(null);
+            h.getMessage.mockRejectedValue(new Error('WildDuck unavailable'));
+
+            expect(await h.presenter.inspectQueuedCard(COMPLETION)).toEqual({ obsolete: false });
+            expect(h.fetchChannel).not.toHaveBeenCalled();
+        });
+
+        test('links before an amend acquires the draft key and carries the new link forward', async () => {
+            const stored = draft(NEW_UID);
+            const h = makeHarness(stored);
+            h.updateMetadata.mockImplementation(async (_folder, _uid, metadata) => {
+                expect(h.gate.pendingEdit(DRAFT_KEY)).toBeDefined();
+                stored.metaData = metadata;
+            });
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            const amendRelease = await h.gate.acquire(DRAFT_KEY);
+            amendRelease();
+            expect(stored.metaData).toEqual({ approvalCard: { ...DELIVERED, edits: 0 } });
+            expect(h.fetchChannel).not.toHaveBeenCalled();
+        });
+
+        test('waits for the amend draft key, then retires outside it under the card key', async () => {
+            const delivered = cardMessage(NEW_UID);
+            const h = makeHarness(null, delivered);
+            h.fetchMessage.mockImplementation(async () => {
+                expect(h.gate.pendingEdit(DRAFT_KEY)).toBeUndefined();
+                expect(h.gate.pendingEdit(DELIVERED.messageId)).toBeDefined();
+                return delivered;
+            });
+            delivered.edit.mockImplementation(async () => {
+                expect(h.gate.pendingEdit(DRAFT_KEY)).toBeUndefined();
+                expect(h.gate.pendingEdit(DELIVERED.messageId)).toBeDefined();
+            });
+            const amendRelease = await h.gate.acquire(DRAFT_KEY);
+            const reconcile = h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            await Promise.resolve();
+            expect(h.getMessage).not.toHaveBeenCalled();
+            expect(h.gate.pendingEdit(DELIVERED.messageId)).toBeUndefined();
+            amendRelease();
+            await reconcile;
+
+            expect(h.fetchMessage.mock.calls).toEqual([[{ message: DELIVERED.messageId, force: true }]]);
+            expect(delivered.edit).toHaveBeenCalledTimes(1);
+            expect(delivered.edit.mock.calls[0][0]).toMatchObject({ content: '', components: [] });
+            expect(titleOf(delivered.edit.mock.calls[0][0])).toBe('Approval no longer active');
+            expect(h.gate.pendingEdit(DELIVERED.messageId)).toBeUndefined();
+        });
+
+        test.each([
+            ['moved', OLD_UID, 'our-bot'],
+            ['already retired', undefined, 'our-bot'],
+            ['foreign', NEW_UID, 'other-bot'],
+        ] as const)('retirement leaves a %s card alone', async (_label, uid, author) => {
+            const delivered = cardMessage(uid, author);
+            const h = makeHarness(null, delivered);
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            expect(delivered.edit).not.toHaveBeenCalled();
+        });
+
+        test('retires a confirmed duplicate without changing the link', async () => {
+            const delivered = cardMessage(NEW_UID);
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
+            h.fetchMessage.mockImplementation(async ({ message }) => {
+                expect(h.gate.pendingEdit(DRAFT_KEY)).toBeUndefined();
+                expect(h.gate.pendingEdit(message)).toBeDefined();
+                return message === LINK.messageId ? cardMessage(NEW_UID) : delivered;
+            });
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+            expect(delivered.edit).toHaveBeenCalledTimes(1);
+            expect(h.gate.pendingEdit(LINK.messageId)).toBeUndefined();
+        });
+
+        test.each(['predecessor', 'deleted'] as const)('replaces an inherited link to a %s card', async (kind) => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
+            h.fetchMessage.mockImplementation(async () => {
+                expect(h.gate.pendingEdit(DRAFT_KEY)).toBeUndefined();
+                expect(h.gate.pendingEdit(LINK.messageId)).toBeDefined();
+                if(kind === 'deleted') {
+                    throw Object.assign(new Error('Unknown Message'), { code: RESTJSONErrorCodes.UnknownMessage });
+                }
+                return cardMessage(OLD_UID);
+            });
+            h.updateMetadata.mockImplementation(async () => {
+                expect(h.gate.pendingEdit(DRAFT_KEY)).toBeDefined();
+                expect(h.gate.pendingEdit(LINK.messageId)).toBeDefined();
+            });
+
+            await h.presenter.reconcileQueuedCard({ ...COMPLETION, edits: 3 }, DELIVERED);
+            expect(h.updateMetadata.mock.calls).toEqual([['Drafts', NEW_UID, { approvalCard: { ...DELIVERED, edits: 3 } }]]);
+            expect(h.fetchMessage.mock.calls).toEqual([[{ message: LINK.messageId, force: true }]]);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('does not overwrite a competing link that changed during the Discord read', async () => {
+            const stored = draft(NEW_UID, { approvalCard: LINK });
+            const h = makeHarness(stored);
+            h.fetchMessage.mockImplementation(async () => {
+                stored.metaData = { approvalCard: { ...LINK, messageId: 'another-card' } };
+                return cardMessage(OLD_UID);
+            });
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+            expect(h.fetchMessage).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).toHaveBeenCalledWith({ uid: NEW_UID, ...DELIVERED, edits: 0, msg: 'Approval card link changed during replay reconciliation' });
+        });
+
+        test.each([new Error('Discord unavailable'), 'network error', null, undefined])('keeps both cards when the competing card cannot be verified (%p)', async (failure) => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
+            h.fetchMessage.mockRejectedValue(failure);
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+            expect(h.fetchMessage).toHaveBeenCalledTimes(1);
+            expect(h.gate.pendingEdit(LINK.messageId)).toBeUndefined();
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, ...LINK, msg: 'Could not read the approval card' });
+        });
+
+        test('does not replace a card when Discord has no bot identity to verify its owner', async () => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }), cardMessage(NEW_UID, 'our-bot', null));
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+            expect(h.fetchMessage.mock.calls).toEqual([[{ message: LINK.messageId, force: true }]]);
+        });
+
+        test('does not count a link to a deleted card as delivery', async () => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
+            h.fetchMessage.mockRejectedValue({ code: RESTJSONErrorCodes.UnknownMessage });
+
+            expect(await h.presenter.inspectQueuedCard(COMPLETION)).toEqual({ obsolete: false });
+        });
+
+        test('does not edit a card it cannot force-fetch for retirement', async () => {
+            const delivered = cardMessage(NEW_UID);
+            const h = makeHarness(null, delivered);
+            h.fetchMessage.mockRejectedValue({ code: RESTJSONErrorCodes.UnknownMessage });
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            expect(delivered.edit).not.toHaveBeenCalled();
+            expect(h.gate.pendingEdit(DELIVERED.messageId)).toBeUndefined();
+        });
+
+        test('releases the card key after a retirement edit fails', async () => {
+            const delivered = cardMessage(NEW_UID);
+            const h = makeHarness(null, delivered);
+            delivered.edit.mockRejectedValue(new Error('edit refused'));
+
+            await expect(h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED)).rejects.toThrow('edit refused');
+            expect(h.gate.pendingEdit(DELIVERED.messageId)).toBeUndefined();
+        });
+
+        test('retires when the draft became obsolete during a conflicting card read', async () => {
+            const delivered = cardMessage(NEW_UID);
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
+            h.getMessage.mockResolvedValueOnce(draft(NEW_UID, { approvalCard: LINK })).mockResolvedValue(null);
+            h.fetchMessage.mockImplementation(async ({ message }) => (message === LINK.messageId ? cardMessage(OLD_UID) : delivered));
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+            expect(delivered.edit).toHaveBeenCalledTimes(1);
+        });
+
+        test('leaves controls alone when the metadata write fails', async () => {
+            const h = makeHarness(draft(NEW_UID));
+            h.updateMetadata.mockRejectedValue(new Error('WildDuck unavailable'));
+
+            await h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+            expect(h.fetchChannel).not.toHaveBeenCalled();
+            expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+        });
+
+        describe('a draft key held by a hung amend', () => {
+            beforeEach(() => {
+                jest.useFakeTimers();
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            test('the first link attempt gives up after 30s, leaving the card alone', async () => {
+                const delivered = cardMessage(NEW_UID);
+                const h = makeHarness(draft(NEW_UID), delivered);
+                const amendRelease = await h.gate.acquire(DRAFT_KEY);
+
+                const reconciling = h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+                await drainMicrotasks();
+                jest.advanceTimersByTime(CARD_LINK_LOCK_WAIT_MS);
+                await reconciling;
+
+                expect(h.getMessage).not.toHaveBeenCalled();
+                expect(h.fetchChannel).not.toHaveBeenCalled();
+                expect(delivered.edit).not.toHaveBeenCalled();
+                expect(mockLogger.warn.mock.calls).toEqual([[{ uid: NEW_UID, msg: 'Could not reconcile the draft\'s approval card link: its key stayed held for 30s' }]]);
+                amendRelease();
+                await drainMicrotasks();
+                expect(h.gate.pendingEdit(DRAFT_KEY)).toBeUndefined();
+            });
+
+            test('the compare-and-replace under the existing card\'s key gives up after 30s, keeps both cards and releases both keys', async () => {
+                const delivered = cardMessage(NEW_UID);
+                const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
+                let amendRelease: (() => void) | undefined;
+                h.fetchMessage.mockImplementation(async ({ message }) => {
+                    if(message === LINK.messageId) {
+                        amendRelease = await h.gate.acquire(DRAFT_KEY); // The amend starts while the existing card is read.
+                        return cardMessage(OLD_UID);
+                    }
+                    return delivered;
+                });
+
+                const reconciling = h.presenter.reconcileQueuedCard(COMPLETION, DELIVERED);
+                await drainMicrotasks();
+                expect(h.gate.pendingEdit(LINK.messageId)).toBeDefined();
+                expect(Bun.peek.status(reconciling)).toBe('pending');
+                jest.advanceTimersByTime(CARD_LINK_LOCK_WAIT_MS);
+                await reconciling;
+
+                expect(h.updateMetadata).not.toHaveBeenCalled();
+                expect(delivered.edit).not.toHaveBeenCalled();
+                expect(h.fetchMessage).toHaveBeenCalledTimes(1);
+                expect(h.gate.pendingEdit(LINK.messageId)).toBeUndefined();
+                expect(mockLogger.warn).toHaveBeenCalledWith({ uid: NEW_UID, msg: 'Could not reconcile the draft\'s approval card link: its key stayed held for 30s' });
+                amendRelease?.();
+                await drainMicrotasks();
+                expect(h.gate.pendingEdit(DRAFT_KEY)).toBeUndefined();
+            });
         });
     });
 
@@ -358,6 +734,32 @@ describe('EmailApprovalCardPresenter', () => {
             expect(h.reply).not.toHaveBeenCalled();
         });
 
+        test('posts and links a new card, silently, when the linked card was deleted', async () => {
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }));
+            h.fetchMessage.mockRejectedValue(unknownMessage());
+
+            expect(await h.presenter.present(NEW_UID, OLD_UID)).toBe('posted');
+
+            expect(titleOf(h.postCard.mock.calls[0][0])).toBe('Outbound Email Approval Required');
+            expect(h.linkCard.mock.calls).toEqual([[NEW_UID, { channelId: 'admin-ch', messageId: 'card-new', edits: 0 }]]);
+            expect(h.reply).not.toHaveBeenCalled();
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+
+        test('a failed edit whose re-read finds the card deleted posts a new card, logging only the failed edit', async () => {
+            const card = cardMessage(OLD_UID);
+            const failure = new Error('edit refused');
+            card.edit.mockRejectedValue(failure);
+            const h = makeHarness(draft(NEW_UID, { approvalCard: LINK }), card);
+            h.fetchMessage.mockImplementationOnce(async () => card).mockRejectedValueOnce(unknownMessage());
+
+            expect(await h.presenter.present(NEW_UID, OLD_UID)).toBe('posted');
+
+            expect(h.fetchMessage).toHaveBeenCalledTimes(2);
+            expect(h.reply).not.toHaveBeenCalled();
+            expect(mockLogger.warn.mock.calls).toEqual([[{ err: failure, uid: NEW_UID, previousUid: OLD_UID, ...LINK, msg: 'Editing the approval card in place failed — checking whether it landed' }]]);
+        });
+
         test('a failed edit whose re-read also fails posts a new card', async () => {
             const card = cardMessage(OLD_UID);
             card.edit.mockImplementation(async () => {
@@ -440,6 +842,17 @@ describe('EmailApprovalCardPresenter', () => {
             expect(h.fetchMessage).not.toHaveBeenCalled();
         });
 
+        test('leaves an already-deleted card alone, silently', async () => {
+            const h = makeHarness(null);
+            h.fetchMessage.mockRejectedValue(unknownMessage());
+
+            await h.presenter.markDeleted(draft(OLD_UID, { approvalCard: LINK }), OLD_UID);
+
+            expect(h.fetchMessage).toHaveBeenCalledTimes(1);
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+            expect(h.gate.pendingEdit('card-1')).toBeUndefined();
+        });
+
         test('a failed edit is logged, swallowed, and releases the card', async () => {
             const card = cardMessage(OLD_UID);
             const failure = new Error('edit refused');
@@ -467,7 +880,7 @@ describe('EmailApprovalCardPresenter', () => {
         const fetchChannel = mock(async (_channelId: string): Promise<ApprovalCardChannel | null> => null);
         const presenter = new EmailApprovalCardPresenter({
             wildDuckClient: { getMessage: mock(async () => draft(NEW_UID, { approvalCard: LINK })) },
-            draftMeta:      { linkCard: mock(async () => true), markSupersededLocked: mock(async () => true) },
+            draftMeta:      { linkCard: mock(async () => true), markSupersededLocked: mock(async () => true), readCardTarget: mock(), reconcileCardLink: mock() },
             postCard:       mock(async (): Promise<SendResult> => ({ status: 'unavailable' })),
             fetchChannel,
             reply:          mock(async () => undefined),

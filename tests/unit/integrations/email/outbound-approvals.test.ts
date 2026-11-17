@@ -4,7 +4,7 @@ import type { NotifyParams } from '@/agent';
 import { ErrorCode } from '@/errors/codes';
 import { EmailProcessingError } from '@/errors/email';
 import { ApprovalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
-import { EmailOutboundApprovals, FINGERPRINT_READ_TIMEOUT_MS, emailSendParamsSchema, type EmailOutboundApprovalsDeps } from '@/integrations/email/outbound-approvals';
+import { CARD_LINK_LOCK_WAIT_MS, EmailOutboundApprovals, FINGERPRINT_READ_TIMEOUT_MS, emailSendParamsSchema, type EmailOutboundApprovalsDeps } from '@/integrations/email/outbound-approvals';
 import type { WildDuckClient, WildDuckMessage } from '@/integrations/email/wildduck-client';
 import type { ApprovedOutboundAction } from '@/services';
 
@@ -606,6 +606,272 @@ describe('EmailOutboundApprovals', () => {
             expect(h.updateMetadata).not.toHaveBeenCalled();
             expect(mockLogger.warn).toHaveBeenCalledWith({ err: expect.any(EmailProcessingError), uid: UID, msg: 'Could not link the draft to its approval card' });
             expectNoAnswerError(loggedErr(mockLogger.warn.mock.calls));
+        });
+    });
+
+    describe('reconcileCardLink', () => {
+        const NEW_LINK = { channelId: 'admin-ch', messageId: 'new-card', edits: 0 };
+        const OLD_LINK = { channelId: 'admin-ch', messageId: 'old-card', edits: 2 };
+        const NO_ANSWER_MSG = 'Could not read the draft to reconcile its approval card link';
+
+        test('links a draft with no card under its key from a fresh read, keeping unrelated metadata and decision markers', async () => {
+            const h = makeHarness({}, draftWith({ keep: 'me', approval: { actionId: 'act-1', at: 'x' } }));
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK)).toEqual({ status: 'linked' });
+
+            expect(h.events).toEqual(['acquire:email-draft:42', 'acquired:email-draft:42', 'getMessage', 'metadata', 'release:email-draft:42']);
+            expect(h.updateMetadata.mock.calls).toEqual([['Drafts', UID, { keep: 'me', approval: { actionId: 'act-1', at: 'x' }, approvalCard: NEW_LINK }]]);
+            expect(h.getMessage.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal);
+        });
+
+        test('treats a malformed stored card as no card', async () => {
+            const h = makeHarness({}, draftWith({ approvalCard: { channelId: 'admin-ch' } }));
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK)).toEqual({ status: 'linked' });
+            expect(h.updateMetadata.mock.calls).toEqual([['Drafts', UID, { approvalCard: NEW_LINK }]]);
+        });
+
+        test.each([
+            ['the same edits', LINK],
+            ['a different edit count', { ...LINK, edits: 5 }],
+        ])('is idempotent without writing when the stored card is the same message and channel (%s)', async (_label, stored) => {
+            const h = makeHarness({}, draftWith({ approvalCard: stored }));
+
+            expect(await h.ops.reconcileCardLink(UID, LINK)).toEqual({ status: 'linked' });
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+        });
+
+        test.each([
+            ['another message', { channelId: 'admin-ch', messageId: 'other' }],
+            ['another channel', { channelId: 'other-ch', messageId: 'card-msg' }],
+        ])('reports a conflict carrying the stored link, writing nothing, when it is %s and no replacement is named', async (_label, ids) => {
+            const stored = { ...ids, edits: 4 };
+            const h = makeHarness({}, draftWith({ approvalCard: stored }));
+
+            expect(await h.ops.reconcileCardLink(UID, LINK)).toEqual({ status: 'conflict', existing: stored });
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+        });
+
+        test('replaces the stored card when it is the one named by `replace`, ignoring its edit count', async () => {
+            const h = makeHarness({}, draftWith({ keep: 'me', approvalCard: OLD_LINK }));
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK, { ...OLD_LINK, edits: 0 })).toEqual({ status: 'linked' });
+            expect(h.updateMetadata.mock.calls).toEqual([['Drafts', UID, { keep: 'me', approvalCard: NEW_LINK }]]);
+        });
+
+        test('does not replace a stored card other than the one named, and reports it as the conflict', async () => {
+            const stored = { channelId: 'admin-ch', messageId: 'third-card', edits: 1 };
+            const h = makeHarness({}, draftWith({ approvalCard: stored }));
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK, OLD_LINK)).toEqual({ status: 'conflict', existing: stored });
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+        });
+
+        test('a replacement already in place is idempotent even when `replace` names another card', async () => {
+            const h = makeHarness({}, draftWith({ approvalCard: { ...NEW_LINK, edits: 3 } }));
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK, OLD_LINK)).toEqual({ status: 'linked' });
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+        });
+
+        test('links a draft with no stored card even when a replacement is named', async () => {
+            const h = makeHarness({}, draftWith({ keep: 'me' }));
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK, OLD_LINK)).toEqual({ status: 'linked' });
+            expect(h.updateMetadata.mock.calls).toEqual([['Drafts', UID, { keep: 'me', approvalCard: NEW_LINK }]]);
+        });
+
+        test.each([
+            ['missing', null],
+            ['not a draft', draftWith(undefined, { draft: false })],
+            ['superseded', draftWith({ approvalCard: LINK, supersededBy: 55 })],
+        ])('is obsolete and writes nothing when the draft is %s', async (_label, draft) => {
+            const h = makeHarness({}, draft);
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK)).toEqual({ status: 'obsolete' });
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+            expect(h.events.at(-1)).toBe('release:email-draft:42');
+        });
+
+        test('a read error is logged and reported unreadable', async () => {
+            const h = makeHarness();
+            const failure = new Error('wildduck down');
+            h.getMessage.mockImplementation(async () => {
+                throw failure;
+            });
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK)).toEqual({ status: 'unreadable' });
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, uid: UID, msg: NO_ANSWER_MSG });
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+        });
+
+        test('a read with no answer in 10s is logged and reported unreadable', async () => {
+            const h = makeHarness();
+            h.getMessage.mockImplementation(async () => Promise.withResolvers<WildDuckMessage | null>().promise);
+
+            const reconciling = h.ops.reconcileCardLink(UID, NEW_LINK);
+            await drainMicrotasks();
+            jest.advanceTimersByTime(FINGERPRINT_READ_TIMEOUT_MS);
+
+            expect(await reconciling).toEqual({ status: 'unreadable' });
+            expect(mockLogger.warn).toHaveBeenCalledWith({ uid: UID, msg: `${NO_ANSWER_MSG}: no answer within 10s` });
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+        });
+
+        test('a failed write is logged and reported unreadable, releasing the key', async () => {
+            const h = makeHarness({}, draftWith({}));
+            const failure = new Error('wildduck down');
+            h.updateMetadata.mockImplementation(async () => {
+                throw failure;
+            });
+
+            expect(await h.ops.reconcileCardLink(UID, NEW_LINK)).toEqual({ status: 'unreadable' });
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, uid: UID, msg: 'Could not reconcile the draft\'s approval card link' });
+            expect(h.events.at(-1)).toBe('release:email-draft:42');
+        });
+
+        test('waits for a decision holding the draft key, then merges into the read taken after it', async () => {
+            const h = makeHarness({}, draftWith({ keep: 'me' }));
+            const release = await h.gate.acquire('email-draft:42');
+
+            const reconciling = h.ops.reconcileCardLink(UID, NEW_LINK);
+            await drainMicrotasks();
+            expect(h.getMessage).not.toHaveBeenCalled();
+            h.store.draft = draftWith({ keep: 'me', rejectedAt: 'later' });
+            release();
+
+            expect(await reconciling).toEqual({ status: 'linked' });
+            expect(h.updateMetadata.mock.calls).toEqual([['Drafts', UID, { keep: 'me', rejectedAt: 'later', approvalCard: NEW_LINK }]]);
+        });
+
+        test('waits at most 30s for the draft key', () => {
+            expect(CARD_LINK_LOCK_WAIT_MS).toBe(30_000);
+        });
+
+        test.each([
+            ['no replacement', undefined],
+            ['a named replacement', OLD_LINK],
+        ])('gives up on a draft key held for 30s with %s: logged with the uid, unreadable, nothing read', async (_label, replace) => {
+            const h = makeHarness();
+            const holder = await h.gate.acquire('email-draft:42');
+
+            const reconciling = h.ops.reconcileCardLink(UID, NEW_LINK, replace);
+            await drainMicrotasks();
+            jest.advanceTimersByTime(29_999);
+            await drainMicrotasks();
+            expect(Bun.peek.status(reconciling)).toBe('pending');
+            jest.advanceTimersByTime(1);
+
+            expect(await reconciling).toEqual({ status: 'unreadable' });
+            expect(mockLogger.warn.mock.calls).toEqual([[{ uid: UID, msg: 'Could not reconcile the draft\'s approval card link: its key stayed held for 30s' }]]);
+            expect(h.getMessage).not.toHaveBeenCalled();
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+            holder();
+        });
+
+        test('an abandoned wait releases the draft key as soon as it is granted, so the key is never leaked', async () => {
+            const h = makeHarness();
+            const holder = await h.gate.acquire('email-draft:42');
+            const reconciling = h.ops.reconcileCardLink(UID, NEW_LINK);
+            await drainMicrotasks();
+            jest.advanceTimersByTime(30_000);
+            expect(await reconciling).toEqual({ status: 'unreadable' });
+
+            holder();
+            await drainMicrotasks();
+            expect(h.events).toEqual(['acquire:email-draft:42', 'acquired:email-draft:42', 'release:email-draft:42']);
+            const third = h.gate.acquire('email-draft:42');
+            await drainMicrotasks();
+            expect(Bun.peek.status(third)).toBe('fulfilled');
+            expect(h.getMessage).not.toHaveBeenCalled();
+        });
+
+        test('links normally when the draft key is released just inside 30s', async () => {
+            const h = makeHarness({}, draftWith({ keep: 'me' }));
+            const holder = await h.gate.acquire('email-draft:42');
+            const reconciling = h.ops.reconcileCardLink(UID, NEW_LINK);
+            await drainMicrotasks();
+            jest.advanceTimersByTime(29_999);
+            holder();
+
+            expect(await reconciling).toEqual({ status: 'linked' });
+            jest.advanceTimersByTime(1);
+            expect(h.updateMetadata.mock.calls).toEqual([['Drafts', UID, { keep: 'me', approvalCard: NEW_LINK }]]);
+            expect(h.events.at(-1)).toBe('release:email-draft:42');
+            expect(mockLogger.warn).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('readCardTarget', () => {
+        test('reports an active draft with its stored card, reading without taking the draft key', async () => {
+            const h = makeHarness({}, draftWith({ approvalCard: { ...LINK, edits: 3 } }));
+
+            expect(await h.ops.readCardTarget(UID)).toEqual({ status: 'active', card: { ...LINK, edits: 3 } });
+            expect(h.events).toEqual(['getMessage']);
+            expect(h.acquire).not.toHaveBeenCalled();
+            expect(h.getMessage.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal);
+            expect(h.updateMetadata).not.toHaveBeenCalled();
+        });
+
+        test('reads while another holder has the draft key', async () => {
+            const h = makeHarness();
+            const release = await h.gate.acquire('email-draft:42');
+            try {
+                expect(await h.ops.readCardTarget(UID)).toEqual({ status: 'active', card: LINK });
+            } finally {
+                release();
+            }
+        });
+
+        test.each([
+            ['no card', draftWith({ keep: 'me' })],
+            ['a malformed card', draftWith({ approvalCard: { channelId: 'x' } })],
+        ])('reports an active draft with no card key for %s', async (_label, draft) => {
+            const h = makeHarness({}, draft);
+
+            expect(await h.ops.readCardTarget(UID)).toStrictEqual({ status: 'active' });
+        });
+
+        test.each([
+            ['an approval marker', { approvalCard: LINK, approval: { actionId: 'act-1', at: 'x' } }],
+            ['a rejection', { approvalCard: LINK, rejectedAt: 'x', reason: 'no' }],
+        ])('a decision marker alone keeps the draft active (%s)', async (_label, metaData) => {
+            const h = makeHarness({}, draftWith(metaData));
+
+            expect(await h.ops.readCardTarget(UID)).toEqual({ status: 'active', card: LINK });
+        });
+
+        test.each([
+            ['missing', null, { status: 'obsolete' }],
+            ['not a draft', draftWith(undefined, { draft: false }), { status: 'obsolete', card: LINK }],
+            ['superseded', draftWith({ approvalCard: LINK, supersededBy: 55 }), { status: 'obsolete', card: LINK }],
+        ] as const)('reports obsolete when the draft is %s, keeping any stored link as delivery evidence', async (_label, draft, expected) => {
+            const h = makeHarness({}, draft);
+
+            expect(await h.ops.readCardTarget(UID)).toEqual(expected);
+        });
+
+        test('a read error is logged and reported unreadable', async () => {
+            const h = makeHarness();
+            const failure = new Error('wildduck down');
+            h.getMessage.mockImplementation(async () => {
+                throw failure;
+            });
+
+            expect(await h.ops.readCardTarget(UID)).toEqual({ status: 'unreadable' });
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, uid: UID, msg: 'Could not read the draft to find its approval card' });
+        });
+
+        test('a read with no answer in 10s is logged and reported unreadable', async () => {
+            const h = makeHarness();
+            h.getMessage.mockImplementation(async () => Promise.withResolvers<WildDuckMessage | null>().promise);
+
+            const reading = h.ops.readCardTarget(UID);
+            await drainMicrotasks();
+            jest.advanceTimersByTime(FINGERPRINT_READ_TIMEOUT_MS);
+
+            expect(await reading).toEqual({ status: 'unreadable' });
+            expect(mockLogger.warn).toHaveBeenCalledWith({ uid: UID, msg: 'Could not read the draft to find its approval card: no answer within 10s' });
         });
     });
 

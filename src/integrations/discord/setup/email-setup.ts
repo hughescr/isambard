@@ -386,8 +386,8 @@ export interface EmailApprovalCardTransportDeps {
 export function buildEmailApprovalCardTransport(deps: EmailApprovalCardTransportDeps): Pick<EmailApprovalCardPresenterDeps, 'postCard' | 'fetchChannel' | 'reply'> {
     const { client, adminDiscordChannelId, discordCapability, retryDeps } = deps;
     return {
-        postCard: async (card: EmailApprovalCard): Promise<SendResult> => (discordCapability
-            ? discordCapability.sendToChannel(adminDiscordChannelId, card, { priority: 'high', type: 'email_approval' })
+        postCard: async (card: EmailApprovalCard, completion): Promise<SendResult> => (discordCapability
+            ? discordCapability.sendToChannel(adminDiscordChannelId, card, { priority: 'high', type: 'email_approval', completion })
             : retryAsync(async (): Promise<SendResult> => {
                 const channel = await client.channels.fetch(adminDiscordChannelId);
                 if(!isSendableChannel(channel)) {

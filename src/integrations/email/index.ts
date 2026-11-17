@@ -48,7 +48,9 @@ export type {
     EmailDecisionRefusalReason,
     ApproveSendResult,
     RejectSendResult,
-    AllowlistCandidatesResult
+    AllowlistCandidatesResult,
+    CardTarget,
+    ReconcileCardLinkResult
 } from './outbound-approvals';
 export { EmailHistoryProvider } from './history-provider';
 export { DRAFT_STATE_FLAG, searchDraftsByReviewState, markDraftReviewState } from './draft-review-state';

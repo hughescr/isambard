@@ -26,6 +26,15 @@ export const emailSendParamsSchema = z.object({
 /** How long a decision (or a card-link or supersede write) waits to read the draft before giving up (10 seconds). */
 export const FINGERPRINT_READ_TIMEOUT_MS = 10_000;
 
+/**
+ * How long a replayed card's link reconciliation waits for the draft's key before giving up
+ * (30 seconds). The Discord outbox drainer delivers one item at a time and an amend or delete
+ * can hold the key across WildDuck calls that may hang, so an unbounded wait would stall every
+ * later queued message. Longer than a normal amend, which holds the key through its attachment
+ * fetches.
+ */
+export const CARD_LINK_LOCK_WAIT_MS = 30_000;
+
 export interface EmailOutboundApprovalsDeps {
     wildDuckClient:  Pick<WildDuckClient, 'getMessage' | 'updateMessageMetadata' | 'updateMessageFlags'>
     actionWriter:    ApprovedOutboundActionWriter
@@ -52,6 +61,29 @@ export type ApproveSendResult = { status: 'recorded' } | EmailDecisionRefusal;
 export type RejectSendResult = { status: 'rejected' } | EmailDecisionRefusal<'gone' | 'decided' | 'unreadable'>;
 export type AllowlistCandidatesResult = { status: 'ok', recipients: string[] } | EmailDecisionRefusal<'gone' | 'decided' | 'unreadable'>;
 
+/**
+ * What {@link EmailOutboundApprovals.reconcileCardLink} did: `linked` (the draft now carries the
+ * link, or already did), `obsolete` (the draft is gone, not a draft or superseded), `unreadable`
+ * (the read or the write failed or timed out, or the draft's key stayed held past
+ * {@link CARD_LINK_LOCK_WAIT_MS}; logged) or `conflict` (the draft carries a different
+ * card, returned as `existing`; nothing written).
+ */
+export type ReconcileCardLinkResult = { status: 'linked' | 'obsolete' | 'unreadable' } | { status: 'conflict', existing: DraftApprovalCardLink };
+
+/**
+ * What {@link EmailOutboundApprovals.readCardTarget} saw, advisory only (read without the draft's
+ * key): `active` (a draft that is neither gone nor superseded, with its stored card if any; a
+ * decision marker alone does not make it obsolete), `obsolete` (retaining any stored link as
+ * possible proof of delivery), or `unreadable` (logged).
+ */
+export type CardTarget = { status: 'active' | 'obsolete', card?: DraftApprovalCardLink } | { status: 'unreadable' };
+
+type FreshRead = { status: 'ok', draft: WildDuckMessage, meta: DraftApprovalMeta } | { status: 'obsolete', card?: DraftApprovalCardLink } | { status: 'unreadable' };
+
+function cardTarget<T extends 'active' | 'obsolete'>(status: T, card: DraftApprovalCardLink | undefined): { status: T, card?: DraftApprovalCardLink } {
+    return card === undefined ? { status } : { status, card };
+}
+
 type DecisionRead = { status: 'ok', draft: WildDuckMessage, meta: DraftApprovalMeta } | EmailDecisionRefusal<'gone' | 'unreadable'>;
 
 type DecisionState
@@ -70,6 +102,11 @@ function errorText(err: unknown): string {
 
 const DECIDED = 'The draft was already approved or rejected';
 const NO_ANSWER = `no answer within ${FINGERPRINT_READ_TIMEOUT_MS / 1000}s`;
+
+/** Two links name the same card when they share a channel and message; `edits` only counts in-place edits of that card. */
+function sameCard(a: DraftApprovalCardLink, b: DraftApprovalCardLink): boolean {
+    return a.channelId === b.channelId && a.messageId === b.messageId;
+}
 
 /**
  * The outbound-email approval operations an admin decision triggers, independent of the UI
@@ -237,6 +274,61 @@ export class EmailOutboundApprovals {
     }
 
     /**
+     * Make draft `uid` carry `link` as its approval card, under the draft's lock, from a fresh
+     * bounded read, keeping every other metaData key. Idempotent: a stored card with the same
+     * channel and message (whatever its `edits`) is already the link, and nothing is written. A
+     * different stored card is a `conflict` (returned as `existing`, nothing written) unless it is
+     * the one named by `replace` (same channel and message), which is swapped for `link` — a
+     * compare-and-set. A draft with no valid card is simply linked. Read and write failures are
+     * logged and reported `unreadable`, as is a draft key still held by someone else after
+     * {@link CARD_LINK_LOCK_WAIT_MS}: the outbox replay calls this, and must not stall behind a
+     * hung amend.
+     */
+    async reconcileCardLink(uid: number, link: DraftApprovalCardLink, replace?: DraftApprovalCardLink): Promise<ReconcileCardLinkResult> {
+        try {
+            const locked = await this.withDraftLockWithin(uid, CARD_LINK_LOCK_WAIT_MS, async (): Promise<ReconcileCardLinkResult> => {
+                const fresh = await this.readFresh(uid, 'Could not read the draft to reconcile its approval card link');
+                if(fresh.status !== 'ok') {
+                    return { status: fresh.status };
+                }
+                const existing = fresh.meta.card;
+                if(existing !== undefined) {
+                    if(sameCard(existing, link)) {
+                        return { status: 'linked' };
+                    }
+                    if(replace === undefined || !sameCard(existing, replace)) {
+                        return { status: 'conflict', existing };
+                    }
+                }
+                await this.deps.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, uid, mergeDraftMeta(fresh.draft.metaData, { approvalCard: link }));
+                return { status: 'linked' };
+            });
+            if(locked === undefined) {
+                logger.warn({ uid, msg: `Could not reconcile the draft's approval card link: its key stayed held for ${CARD_LINK_LOCK_WAIT_MS / 1000}s` });
+                return { status: 'unreadable' };
+            }
+            return locked.value;
+        } catch (err: unknown) {
+            logger.warn({ err, uid, msg: 'Could not reconcile the draft\'s approval card link' });
+            return { status: 'unreadable' };
+        }
+    }
+
+    /**
+     * Where draft `uid`'s approval card is recorded, for deciding whether a card edit is still
+     * wanted: a bounded read WITHOUT the draft's key, so advisory only (a decision or amend may
+     * land right after). `obsolete` when the draft is gone, not a draft or superseded; a decision
+     * marker alone leaves it `active`. A read failure or timeout is logged and `unreadable`.
+     */
+    async readCardTarget(uid: number): Promise<CardTarget> {
+        const fresh = await this.readFresh(uid, 'Could not read the draft to find its approval card');
+        if(fresh.status !== 'ok') {
+            return fresh;
+        }
+        return cardTarget('active', fresh.meta.card);
+    }
+
+    /**
      * Mark `oldUid` as replaced by `newUid` (when an amend could not delete it), merging into a
      * fresh read so any decision marker is kept. The CALLER must already hold the old draft's key
      * `email-draft:<oldUid>` — the amend does, from its own read through this write, so no
@@ -304,6 +396,27 @@ export class EmailOutboundApprovals {
     }
 
     /**
+     * Run `fn` holding the draft's key, waiting at most `waitMs` for it: `{ value }` with fn's
+     * result, or undefined (fn not run) when the key was still held at the deadline. An acquire
+     * abandoned that way may still be granted later; it is released at once, so the key is
+     * never left held by nobody.
+     */
+    private async withDraftLockWithin<T>(uid: number, waitMs: number, fn: () => Promise<T>): Promise<{ value: T } | undefined> {
+        const acquiring = this.deps.draftLocks.acquire(draftLockKey(uid));
+        const acquired = await raceDeadline(acquiring, waitMs, () => {
+            void acquiring.then(release => release());
+        });
+        if(acquired === undefined) {
+            return undefined;
+        }
+        try {
+            return { value: await fn() };
+        } finally {
+            acquired.value();
+        }
+    }
+
+    /**
      * Read the draft, cancelled after {@link FINGERPRINT_READ_TIMEOUT_MS}: the message (null when
      * WildDuck has none), or undefined when no answer came in time. A read error propagates.
      */
@@ -315,6 +428,33 @@ export class EmailOutboundApprovals {
             () => controller.abort()
         );
         return read?.value;
+    }
+
+    /**
+     * One bounded read of the draft for a card-link operation, never throwing: the draft and its
+     * approval metaData, `obsolete` when gone, not a draft or superseded, or `unreadable` (logged
+     * with `msg`) on a read error or no answer in time. Takes no lock; the caller decides.
+     */
+    private async readFresh(uid: number, msg: string): Promise<FreshRead> {
+        let draft: WildDuckMessage | null | undefined;
+        try {
+            draft = await this.readBounded(uid);
+        } catch (err: unknown) {
+            logger.warn({ err, uid, msg });
+            return { status: 'unreadable' };
+        }
+        if(draft === undefined) {
+            logger.warn({ uid, msg: `${msg}: ${NO_ANSWER}` });
+            return { status: 'unreadable' };
+        }
+        if(draft === null) {
+            return { status: 'obsolete' };
+        }
+        const meta = readDraftApprovalMeta(draft.metaData);
+        if(draft.draft !== true || meta.supersededBy !== undefined) {
+            return cardTarget('obsolete', meta.card);
+        }
+        return { status: 'ok', draft, meta };
     }
 
     /** The draft and its approval metaData, read under its lock; refused when unreadable, gone, not a draft or superseded. */

@@ -334,6 +334,15 @@ describe('buildEmailApprovalCard — deleted', () => {
     });
 });
 
+describe('buildEmailApprovalCard — retired', () => {
+    test('shows a neutral grey card with no controls', () => {
+        const card = buildEmailApprovalCard({ state: 'retired' });
+
+        expect(embedOf(card)).toEqual({ title: 'Approval no longer active', color: DRAFT_GONE_GREY });
+        expect(card.components).toEqual([]);
+    });
+});
+
 describe('buildDraftGoneEmbed', () => {
     test('is a grey "no longer exists" embed', () => {
         expect(buildDraftGoneEmbed().toJSON()).toEqual({ title: 'Draft no longer exists — nothing was sent', color: 0x99_AA_B5 });

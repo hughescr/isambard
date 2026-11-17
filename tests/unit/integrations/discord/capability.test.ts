@@ -184,6 +184,19 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
         expect(result.status).toBe('sent');
     });
 
+    test('copies a completion onto the queued item and omits it when none is given', async () => {
+        const outbox = makeOutboxBackend();
+        const { cap } = makeCapability(false, outbox);
+        const completion = { kind: 'email_approval_card', draftUid: 9, edits: 1 } as const;
+
+        await cap.sendToChannel(createChannelId('channel-1'), 'Hello', { completion });
+        await cap.sendToChannel(createChannelId('channel-1'), 'Hello');
+
+        const [first, second] = (outbox.enqueue as ReturnType<typeof mock>).mock.calls.map(call => call[0] as OutboxItem);
+        expect(first.completion).toStrictEqual(completion);
+        expect(second).not.toHaveProperty('completion');
+    });
+
     test('when ready but channel returns null: returns {status: unavailable}', async () => {
         const client = makeClient(null);
         const { cap } = makeCapability(true);
@@ -542,6 +555,18 @@ describe('DiscordCapabilityImpl.sendToChannel', () => {
     });
 });
 
+const REPLAY_BOT_ID = 'bot-user-1';
+
+/** A history message the bot itself posted. */
+function ownHistoryMessage(content: string): { id: string, content: string, author: { id: string }, components: unknown[] } {
+    return { id: 'history-message', content, author: { id: REPLAY_BOT_ID }, components: [] };
+}
+
+/** A channel whose history can be read and whose own user is the bot that authored `ownHistoryMessage`. */
+function makeHistoryChannel(send: unknown, fetch: unknown): TextChannel {
+    return { id: 'ch-1', client: { user: { id: REPLAY_BOT_ID } }, send, messages: { fetch } } as unknown as TextChannel;
+}
+
 describe('createOutboxReplayDeliverFn', () => {
     test('sends text chunks first, then embeds and components in one message', async () => {
         const channel = makeChannel();
@@ -641,8 +666,8 @@ describe('createOutboxReplayDeliverFn', () => {
     test('acknowledges an unknown delivery found by its invisible code without resending', async () => {
         const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'knownmarker' }, payload: { text: 'Hello' } });
         const send = mock(async (): Promise<Message> => ({ id: 'duplicate' } as Message));
-        const fetch = mock(async () => new Map([['message-1', { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)) }]]));
-        const channel = { send, messages: { fetch } } as unknown as TextChannel;
+        const fetch = mock(async () => new Map([['message-1', ownHistoryMessage(appendDeliveryCode('Hello', deliveryTokenFor(item, 0)))]]));
+        const channel = makeHistoryChannel(send, fetch);
 
         await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel), notify: mock(() => true) })(item);
 
@@ -654,8 +679,8 @@ describe('createOutboxReplayDeliverFn', () => {
         const components = [{ type: 1, components: [{ type: 2, custom_id: 'approve', label: 'Approve', style: 3 }] }];
         const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'textandcomponents' }, payload: { text: 'Hello', components } });
         const send = mock(async (): Promise<Message> => ({ id: 'replacement' } as Message));
-        const fetch = mock(async () => new Map([['message-1', { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)) }]]));
-        const channel = { send, messages: { fetch } } as unknown as TextChannel;
+        const fetch = mock(async () => new Map([['message-1', ownHistoryMessage(appendDeliveryCode('Hello', deliveryTokenFor(item, 0)))]]));
+        const channel = makeHistoryChannel(send, fetch);
 
         await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel), notify: mock(() => true) })(item);
 
@@ -669,8 +694,8 @@ describe('createOutboxReplayDeliverFn', () => {
         const embeds = [{ title: 'Approval needed' }];
         const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'textandembed' }, payload: { text: 'Hello', embeds } });
         const send = mock(async (): Promise<Message> => ({ id: 'replacement' } as Message));
-        const fetch = mock(async () => new Map([['message-1', { content: appendDeliveryCode('Hello', deliveryTokenFor(item, 0)) }]]));
-        const channel = { send, messages: { fetch } } as unknown as TextChannel;
+        const fetch = mock(async () => new Map([['message-1', ownHistoryMessage(appendDeliveryCode('Hello', deliveryTokenFor(item, 0)))]]));
+        const channel = makeHistoryChannel(send, fetch);
 
         await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel), notify: mock(() => true) })(item);
 
@@ -684,7 +709,7 @@ describe('createOutboxReplayDeliverFn', () => {
         const item = makeOutboxItem({ progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: 'missingmarker' }, payload: { text: 'Hello' } });
         const send = mock(async (): Promise<Message> => ({ id: 'replacement' } as Message));
         const fetch = mock(async () => new Map());
-        const channel = { send, messages: { fetch } } as unknown as TextChannel;
+        const channel = makeHistoryChannel(send, fetch);
 
         await createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel), notify: mock(() => true) })(item);
 

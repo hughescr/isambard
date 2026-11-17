@@ -73,6 +73,22 @@ describe('OutboxBackend', () => {
             expect(stored.outboxRowGeneration).toEqual(expect.any(String));
         });
 
+        test('persists a completion and it parses back on dequeue, and a row without one parses without the key', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const completion = { kind: 'email_approval_card', draftUid: 7, edits: 2 } as const;
+
+            await backend.enqueue(makeItem({ completion }));
+            const stored = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item!;
+            expect(stored.completion).toStrictEqual(completion);
+            const { completion: _omitted, ...legacy } = stored;
+            ddbMock.on(QueryCommand).resolves({ Items: [stored, { ...legacy, SK: 'ITEM#1#other' }] });
+
+            const rows = await backend.dequeue('discord');
+
+            expect(rows[0].completion).toStrictEqual(completion);
+            expect(rows[1]).not.toHaveProperty('completion');
+        });
+
         test('rotates row generation for every write', async () => {
             ddbMock.on(PutCommand).resolves({});
             jest.spyOn(crypto, 'randomUUID')
@@ -678,6 +694,15 @@ describe('OutboxBackend', () => {
                 },
             });
             expect(stored?.progress).toHaveProperty('lastAttemptAt', expect.any(String));
+        });
+
+        test('keeps the completion across a retry write', async () => {
+            ddbMock.on(PutCommand).resolves({});
+            const completion = { kind: 'email_approval_card', draftUid: 7, edits: 2 } as const;
+
+            await backend.markFailed(makeItem({ completion }), 'offline', { retryable: true });
+
+            expect(ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.completion).toStrictEqual(completion);
         });
 
         test('omits nextAttemptAt when markFailed is not given a future retry', async () => {

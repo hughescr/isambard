@@ -9,6 +9,7 @@ import type { ServiceHealthRegistry } from '../../../../src/services/health-regi
 import { OutboxDeliveryDeferredError, OutboxDiscardRequestedError, OutboxVerificationPendingError, type OutboxBackend, type OutboxItem } from '../../../../src/services/outbox';
 import { outboxItemSchema } from '../../../../src/services/outbox/types';
 import { appendDeliveryCode, decodeDeliveryCode, deliveryCodeFor, maxContentLengthForDeliveryCode } from '../../../../src/utils/delivery-code';
+import { mockLogger } from '../../../setup';
 
 afterEach(() => {
     mock.restore();
@@ -39,12 +40,21 @@ function textOfParts(parts: number): string {
     return 'a'.repeat(budget * (parts - 1) + 1);
 }
 
-function historyOf(item: OutboxItem, parts: number[]): Map<string, { content: string }> {
-    return new Map(parts.map(part => [`m${part}`, { content: appendDeliveryCode('x', deliveryTokenFor(item, part)) }]));
+const BOT_ID = 'bot-user-1';
+
+interface HistoryEntry { id: string, content: string, author: { id: string }, components: unknown[] }
+
+/** A history message the bot itself posted, unless `overrides` say otherwise. */
+function historyEntry(id: string, content: string, overrides: Partial<HistoryEntry> = {}): [string, HistoryEntry] {
+    return [id, { id, content, author: { id: BOT_ID }, components: [], ...overrides }];
+}
+
+function historyOf(item: OutboxItem, parts: number[]): Map<string, HistoryEntry> {
+    return new Map(parts.map(part => historyEntry(`m${part}`, appendDeliveryCode('x', deliveryTokenFor(item, part)))));
 }
 
 function makeReplayChannel(send: (...args: unknown[]) => Promise<Message>, fetch: (...args: unknown[]) => Promise<unknown> = async () => new Map()): TextChannel {
-    return { send: mock(send), messages: { fetch: mock(fetch) } } as unknown as TextChannel;
+    return { id: 'ch-1', client: { user: { id: BOT_ID } }, send: mock(send), messages: { fetch: mock(fetch) } } as unknown as TextChannel;
 }
 
 function sentPayloads(channel: TextChannel): unknown[] {
@@ -394,6 +404,284 @@ describe('outbox replay of a queued reply', () => {
     });
 });
 
+describe('outbox replay history only trusts the bot\'s own messages', () => {
+    test('resends when the delivery code was posted by someone else', async () => {
+        const item = makeItem({ payload: { text: 'Queued words' }, progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: BUDGET_TOKEN } });
+        const foreign = new Map([historyEntry('m0', appendDeliveryCode('x', deliveryTokenFor(item, 0)), { author: { id: 'someone-else' } })]);
+        const channel = makeReplayChannel(ok, async () => foreign);
+
+        await replay(channel)(item);
+
+        expect(sentPayloads(channel)).toEqual([textPartPayload(item, 0, 'Queued words')]);
+    });
+
+    test('never matches a message with no author id against a client with no user id', async () => {
+        const item = makeItem({ payload: { text: 'Queued words' }, progress: { attemptCount: 1, outcome: 'unknown', deliveryToken: BUDGET_TOKEN } });
+        const anonymous = new Map([historyEntry('m0', appendDeliveryCode('x', deliveryTokenFor(item, 0)), { author: {} as { id: string } })]);
+        const channel = { id: 'ch-1', client: { user: null }, send: mock(ok), messages: { fetch: mock(async () => anonymous) } } as unknown as TextChannel;
+
+        await expect(replay(channel)(item)).rejects.toBeInstanceOf(OutboxVerificationPendingError);
+        expect(channel.send).not.toHaveBeenCalled();
+    });
+});
+
+describe('outbox replay of an email approval card', () => {
+    const completion = { kind: 'email_approval_card', draftUid: 7, edits: 0 } as const;
+    const embeds = [{ title: 'Approval needed' }];
+    const controls = (uid: number): unknown[] => [{ components: [{ customId: `email-send-approve:${uid}` }, { customId: `email-send-reject:${uid}` }] }];
+
+    function makeCardItem(overrides: Partial<OutboxItem> = {}): OutboxItem {
+        // Delivery mutates item.progress, so every item gets its own copy of the shared progress constants.
+        return makeItem({ type: 'email_approval', payload: { embeds, components: [] }, completion, ...overrides, progress: { ...(overrides.progress ?? { attemptCount: 0, deliveryToken: BUDGET_TOKEN }) } });
+    }
+
+    function makeCards(inspection?: { obsolete: boolean, delivered?: { channelId: string, messageId: string }, inconclusive?: true }): { inspectQueuedCard: ReturnType<typeof mock>, reconcileQueuedCard: ReturnType<typeof mock> } {
+        return { inspectQueuedCard: mock(async () => inspection ?? { obsolete: false }), reconcileQueuedCard: mock(async () => undefined) };
+    }
+
+    function replayWith(channel: TextChannel, cards: ReturnType<typeof makeCards> | undefined, notify: NotifyFn = mock(() => true)): (item: OutboxItem) => Promise<void> {
+        return createOutboxReplayDeliverFn({ fetchChannel: mock(async () => channel), notify, ...(cards === undefined ? {} : { emailApprovalCards: cards }) });
+    }
+
+    const unknownProgress = { attemptCount: 1, outcome: 'unknown', deliveryToken: BUDGET_TOKEN } as const;
+
+    test('inspects, sends, then reconciles with the final part\'s message id', async () => {
+        const item = makeCardItem({ payload: { text: 'Hello', embeds, components: [] } });
+        const order: string[] = [];
+        const cards = makeCards();
+        cards.inspectQueuedCard.mockImplementation(async () => {
+            order.push('inspect');
+            return { obsolete: false };
+        });
+        cards.reconcileQueuedCard.mockImplementation(async () => {
+            order.push('reconcile');
+        });
+        let count = 0;
+        const channel = makeReplayChannel(async () => {
+            order.push('send');
+            return { id: `sent-${count++}` } as Message;
+        });
+
+        await replayWith(channel, cards)(item);
+
+        expect(order).toEqual(['inspect', 'send', 'send', 'reconcile']);
+        expect(cards.inspectQueuedCard).toHaveBeenCalledWith(completion);
+        expect(cards.reconcileQueuedCard).toHaveBeenCalledWith(completion, { channelId: 'ch-1', messageId: 'sent-1' });
+        expect(channel.messages.fetch).not.toHaveBeenCalled();
+    });
+
+    test('does not send or read history when inspection proves delivery, and reconciles with that message', async () => {
+        const item = makeCardItem({ progress: unknownProgress });
+        const delivered = { channelId: 'ch-9', messageId: 'stored-card' };
+        const cards = makeCards({ obsolete: true, delivered });
+        const channel = makeReplayChannel(ok);
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(channel.messages.fetch).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).toHaveBeenCalledWith(completion, delivered);
+        expect(item.progress.deliveredParts).toBe(1);
+    });
+
+    test('discards with card_target_gone when the card is obsolete and still needs sending', async () => {
+        const item = makeCardItem();
+        const cards = makeCards({ obsolete: true });
+        const channel = makeReplayChannel(ok);
+
+        const rejection = replayWith(channel, cards)(item);
+
+        await expect(rejection).rejects.toBeInstanceOf(OutboxDiscardRequestedError);
+        await expect(rejection).rejects.toMatchObject({ reason: 'card_target_gone' });
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).not.toHaveBeenCalled();
+    });
+
+    test('an obsolete card whose final token is in history is delivered, not discarded', async () => {
+        const item = makeCardItem({ progress: unknownProgress });
+        const cards = makeCards({ obsolete: true });
+        const channel = makeReplayChannel(ok, async () => new Map([historyEntry('posted', appendDeliveryCode('', deliveryTokenFor(item, 0)))]));
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).toHaveBeenCalledWith(completion, { channelId: 'ch-1', messageId: 'posted' });
+        expect(item.progress.deliveredParts).toBe(1);
+        expect(item.progress.outcome).toBe('retryable');
+    });
+
+    test('a final-token message that lost its controls still counts as delivered', async () => {
+        const item = makeCardItem({ progress: unknownProgress });
+        const cards = makeCards();
+        const channel = makeReplayChannel(ok, async () => new Map([historyEntry('decided', appendDeliveryCode('', deliveryTokenFor(item, 0)), { components: [] })]));
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).toHaveBeenCalledWith(completion, { channelId: 'ch-1', messageId: 'decided' });
+    });
+
+    test('an untagged card whose live controls act on the draft is delivered', async () => {
+        const item = makeCardItem({ progress: unknownProgress });
+        const cards = makeCards();
+        const channel = makeReplayChannel(ok, async () => new Map([historyEntry('untagged', '', { components: controls(7) })]));
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).toHaveBeenCalledWith(completion, { channelId: 'ch-1', messageId: 'untagged' });
+    });
+
+    test('prefers the final-token message over a controls match', async () => {
+        const item = makeCardItem({ progress: unknownProgress });
+        const cards = makeCards();
+        const channel = makeReplayChannel(ok, async () => new Map([
+            historyEntry('controls', '', { components: controls(7) }),
+            historyEntry('token', appendDeliveryCode('', deliveryTokenFor(item, 0))),
+        ]));
+
+        await replayWith(channel, cards)(item);
+
+        expect(cards.reconcileQueuedCard).toHaveBeenCalledWith(completion, { channelId: 'ch-1', messageId: 'token' });
+    });
+
+    test('controls for another draft, or from another author, prove nothing', async () => {
+        const item = makeCardItem({ progress: unknownProgress });
+        const cards = makeCards();
+        const channel = makeReplayChannel(ok, async () => new Map([
+            historyEntry('other-draft', '', { components: controls(8) }),
+            historyEntry('foreign', '', { components: controls(7), author: { id: 'someone-else' } }),
+        ]));
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).toHaveBeenCalledTimes(1);
+        expect(cards.reconcileQueuedCard).toHaveBeenCalledWith(completion, { channelId: 'ch-1', messageId: 'sent' });
+    });
+
+    test('a controls match proves the whole item delivered, text parts included', async () => {
+        const item = makeCardItem({ payload: { text: 'Hello', embeds, components: [] }, progress: unknownProgress });
+        const cards = makeCards();
+        const channel = makeReplayChannel(ok, async () => new Map([historyEntry('untagged', '', { components: controls(7) })]));
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(item.progress.deliveredParts).toBe(2);
+    });
+
+    test('a failed reconcile is logged and does not fail the delivery, after a send or a skipped send', async () => {
+        const item = makeCardItem();
+        const failure = new Error('metadata write failed');
+        const sendCards = makeCards();
+        sendCards.reconcileQueuedCard.mockImplementation(async () => {
+            throw failure;
+        });
+        const skipCards = makeCards({ obsolete: false, delivered: { channelId: 'ch-1', messageId: 'stored' } });
+        skipCards.reconcileQueuedCard.mockImplementation(async () => {
+            throw failure;
+        });
+        mockLogger.warn.mockClear();
+
+        await replayWith(makeReplayChannel(ok), sendCards)(item);
+        await replayWith(makeReplayChannel(ok), skipCards)(makeCardItem());
+
+        expect(sendCards.reconcileQueuedCard).toHaveBeenCalledTimes(1);
+        expect(skipCards.reconcileQueuedCard).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+        expect(mockLogger.warn.mock.calls[0]?.[0]).toEqual({ err: failure, draftUid: 7, channelId: 'ch-1', messageId: 'sent', msg: 'Could not reconcile the delivered approval card' });
+        expect(mockLogger.warn.mock.calls[1]?.[0]).toEqual({ err: failure, draftUid: 7, channelId: 'ch-1', messageId: 'stored', msg: 'Could not reconcile the delivered approval card' });
+    });
+
+    test('a failed inspection is advisory: it is logged and delivery goes ahead', async () => {
+        const item = makeCardItem();
+        const cards = makeCards();
+        const failure = new Error('read failed');
+        cards.inspectQueuedCard.mockImplementation(async () => {
+            throw failure;
+        });
+        mockLogger.warn.mockClear();
+        const channel = makeReplayChannel(ok);
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).toHaveBeenCalledTimes(1);
+        expect(mockLogger.warn.mock.calls[0]?.[0]).toEqual({ err: failure, draftUid: 7, msg: 'Could not inspect the queued approval card; delivering it without that check' });
+        expect(cards.reconcileQueuedCard).toHaveBeenCalledWith(completion, { channelId: 'ch-1', messageId: 'sent' });
+    });
+
+    test('a send failure skips reconcile and rethrows', async () => {
+        const item = makeCardItem();
+        const failure = new Error('Missing Permissions');
+        const cards = makeCards();
+        const channel = makeReplayChannel(async () => {
+            throw failure;
+        });
+
+        await expect(replayWith(channel, cards)(item)).rejects.toBe(failure);
+        expect(cards.reconcileQueuedCard).not.toHaveBeenCalled();
+    });
+
+    test('items with no completion, or no presenter wired, behave as generic items', async () => {
+        const cards = makeCards();
+        const generic = makeCardItem({ completion: undefined });
+        const channel = makeReplayChannel(ok);
+
+        await replayWith(channel, cards)(generic);
+        await replayWith(makeReplayChannel(ok), undefined)(makeCardItem());
+
+        expect(cards.inspectQueuedCard).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).not.toHaveBeenCalled();
+        expect(channel.send).toHaveBeenCalledTimes(1);
+    });
+
+    test('a completion on an item with nothing to send is ignored', async () => {
+        const cards = makeCards();
+
+        await replayWith(makeReplayChannel(ok), cards)(makeCardItem({ payload: {} }));
+
+        expect(cards.inspectQueuedCard).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).not.toHaveBeenCalled();
+    });
+
+    test.each([false, true])('an inconclusive inspection (obsolete: %p) waits for verification: no history read, no send, no discard', async (obsolete) => {
+        const item = makeCardItem({ progress: unknownProgress });
+        const cards = makeCards({ obsolete, inconclusive: true });
+        const channel = makeReplayChannel(ok);
+
+        await expect(replayWith(channel, cards)(item)).rejects.toBeInstanceOf(OutboxVerificationPendingError);
+
+        expect(channel.messages.fetch).not.toHaveBeenCalled();
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).not.toHaveBeenCalled();
+        expect(item.progress).toEqual(unknownProgress);
+    });
+
+    test('an obsolete card with every part already delivered resolves as delivered, not discarded', async () => {
+        const item = makeCardItem({ progress: { attemptCount: 1, deliveryToken: BUDGET_TOKEN, deliveredParts: 1 } });
+        const cards = makeCards({ obsolete: true });
+        const channel = makeReplayChannel(ok);
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(channel.messages.fetch).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).not.toHaveBeenCalled();
+        expect(item.progress.deliveredParts).toBe(1);
+    });
+
+    test('a fully-delivered item with no proof of where the card is does not reconcile', async () => {
+        const item = makeCardItem({ progress: { attemptCount: 1, deliveryToken: BUDGET_TOKEN, deliveredParts: 1 } });
+        const cards = makeCards();
+        const channel = makeReplayChannel(ok);
+
+        await replayWith(channel, cards)(item);
+
+        expect(channel.send).not.toHaveBeenCalled();
+        expect(cards.reconcileQueuedCard).not.toHaveBeenCalled();
+    });
+});
+
 // ---- DiscordCapabilityImpl.sendText ----
 
 function makeRegistry(available: boolean): ServiceHealthRegistry {
@@ -650,6 +938,20 @@ describe('DiscordCapabilityImpl.sendText', () => {
 
         expect(enqueued(outbox).origin).toBe('notification');
         expect(outboxItemSchema.parse(enqueued(outbox)).origin).toBe('notification');
+    });
+
+    test('copies a completion onto the queued item, which still parses, and omits it otherwise', async () => {
+        const outbox = makeOutbox();
+        const { cap } = makeTextCapability({ ready: false, outbox });
+        const completion = { kind: 'email_approval_card', draftUid: 9, edits: 1 } as const;
+
+        await cap.sendText(createChannelId('ch-1'), 'Hello', { completion });
+        await cap.sendText(createChannelId('ch-1'), 'Hello');
+
+        const [first, second] = (outbox.enqueue as ReturnType<typeof mock>).mock.calls.map(call => call[0] as OutboxItem);
+        expect(first.completion).toStrictEqual(completion);
+        expect(outboxItemSchema.parse(first).completion).toStrictEqual(completion);
+        expect(second).not.toHaveProperty('completion');
     });
 
     test('treats an empty reply id as no reply, so the queued row still parses', async () => {

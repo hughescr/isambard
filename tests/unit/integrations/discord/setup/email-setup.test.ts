@@ -341,6 +341,7 @@ describe('setupEmail — isSendableChannel type guard', () => {
 
 describe('buildEmailApprovalCardTransport', () => {
     const CARD: EmailApprovalCard = { embeds: [], components: [] };
+    const COMPLETION = { kind: 'email_approval_card', draftUid: 41, edits: 0 } as const;
     const REF = { channelId: 'admin-ch', messageId: 'card-1' };
 
     function transport(client: unknown, discordCapability?: unknown, sleep = noopSleep): ReturnType<typeof buildEmailApprovalCardTransport> {
@@ -355,8 +356,8 @@ describe('buildEmailApprovalCardTransport', () => {
     it('posts a card through the capability with high-priority approval outbox metadata', async () => {
         const sendToChannel = mock(async (_channelId: string, _payload: unknown, _metadata: unknown) => ({ status: 'queued' as const, outboxId: 'o1' }));
 
-        expect(await transport({}, { sendToChannel }).postCard(CARD)).toEqual({ status: 'queued', outboxId: 'o1' });
-        expect(sendToChannel.mock.calls).toEqual([[ADMIN_REVIEW_CHANNEL_ID, CARD, { priority: 'high', type: 'email_approval' }]]);
+        expect(await transport({}, { sendToChannel }).postCard(CARD, COMPLETION)).toEqual({ status: 'queued', outboxId: 'o1' });
+        expect(sendToChannel.mock.calls).toEqual([[ADMIN_REVIEW_CHANNEL_ID, CARD, { priority: 'high', type: 'email_approval', completion: COMPLETION }]]);
     });
 
     it('posts a card straight to the admin review channel without a capability, returning the sent message', async () => {
@@ -364,7 +365,7 @@ describe('buildEmailApprovalCardTransport', () => {
         const send = mock(async (_payload: unknown) => message);
         const fetch = mock(async (_channelId: string) => ({ send }));
 
-        expect(await transport({ channels: { fetch } }).postCard(CARD)).toEqual({ status: 'sent', message: message as never });
+        expect(await transport({ channels: { fetch } }).postCard(CARD, COMPLETION)).toEqual({ status: 'sent', message: message as never });
         expect(fetch.mock.calls).toEqual([[ADMIN_REVIEW_CHANNEL_ID]]);
         expect(send.mock.calls).toEqual([[CARD]]);
     });
@@ -376,7 +377,7 @@ describe('buildEmailApprovalCardTransport', () => {
         const sleep = mock(async (_ms: number) => undefined);
         const fetch = mock(async () => channel);
 
-        await expect(transport({ channels: { fetch } }, undefined, sleep).postCard(CARD)).rejects.toBeInstanceOf(ChannelNotAccessibleError);
+        await expect(transport({ channels: { fetch } }, undefined, sleep).postCard(CARD, COMPLETION)).rejects.toBeInstanceOf(ChannelNotAccessibleError);
         expect(fetch).toHaveBeenCalledTimes(3);
     });
 
@@ -388,7 +389,7 @@ describe('buildEmailApprovalCardTransport', () => {
             await gate.promise;
             return { id: 'm' };
         });
-        const operation = transport({ channels: { fetch: mock(async () => ({ send })) } }).postCard(CARD);
+        const operation = transport({ channels: { fetch: mock(async () => ({ send })) } }).postCard(CARD, COMPLETION);
 
         await started.promise;
         await drainMicrotasks();
