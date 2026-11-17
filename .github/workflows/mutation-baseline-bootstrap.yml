@@ -5,11 +5,12 @@
 # (bun version or bun.lock) — the mutate job fails fast telling you so.
 # Full ops runbook: the mutate job comment in ci.yml.
 #
-# TEMPORARY PIN: the mutation baseline is currently built with a pinned custom bun
-# build (the bun_download_url input default; upstream main 5df04abfe8 + the
-# inspector-fix PRs oven-sh/bun#34219 #34220 #34221 #34222). REVERT the default
-# to '' when an official bun release ships those fixes. ci.yml's mutate job
-# carries the same pin and must move in lockstep (shared fingerprint).
+# Bun: stock latest via oven-sh/setup-bun, identical to ci.yml's mutate job. The
+# fingerprint embeds `bun --version`, so both workflows must resolve the same bun
+# or CI never finds the seeded baseline. The bun_download_url input is an optional
+# override for trials only; empty (the default) means normal version resolution.
+# A baseline seeded from an override has a different fingerprint and is not used
+# by ci.yml.
 #
 # Why sharded: full CI-config execution is 13,591 mutants ≈ 12h at concurrency 2
 # (measured 61m58s at concurrency 12 locally, ~3.3 s/mutant/worker; the ~3.2 s/mutant
@@ -73,10 +74,10 @@ on:
   workflow_dispatch:
     inputs:
       bun_download_url:
-        description: 'URL of the bun-linux-x64 zip to install. Default: the temporarily-pinned custom bun build (upstream main 5df04abfe8 + inspector-fix PRs oven-sh/bun#34219 #34220 #34221 #34222) — see the TEMPORARY PIN note in the header. Override for trials; set empty for stock setup-bun version resolution.'
+        description: 'Trials only: URL of a bun-linux-x64 zip to install instead of stock latest. Leave empty for normal runs; a baseline seeded from an override is not found by ci.yml (different fingerprint).'
         required: false
         type: string
-        default: 'https://craigs-public-bucket.s3.us-west-2.amazonaws.com/bun-trial/5df04abf/bun-linux-x64-baseline.zip'
+        default: ''
 
 # Two overlapping bootstraps would interleave saves and waste hours; queue instead.
 concurrency:
@@ -127,7 +128,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest   # inert while bun-download-url is set; active again if the input is emptied
+          bun-version: latest   # ignored when the trial-override URL below is non-empty
           bun-download-url: ${{ inputs.bun_download_url }}
       - uses: actions/setup-node@v7
         with:
@@ -160,11 +161,11 @@ jobs:
           set -o pipefail
           bun run mutate -- --mutate "$MUTATE_GLOBS" 2>&1 | tee mutate.log
 
-      # TEMPORARY, remove after stryker-bun-runner 1.3.3: the runner's inspector
-      # stream can silently truncate mid-run and still exit 0 with a
-      # plausible-looking score. "no inspector test found" is that truncation's
-      # signature — turn it into an explicit red naming the cause instead of a
-      # quiet false-green (which a saved shard baseline would then propagate).
+      # Guard: if the runner's inspector stream silently truncates mid-run it can
+      # still exit 0 with a plausible-looking score. "no inspector test found" is
+      # that truncation's signature — turn it into an explicit red naming the cause
+      # instead of a quiet false-green (which a saved shard baseline would then
+      # propagate).
       - name: Detect silent inspector-stream truncation
         run: |
           if grep -q "no inspector test found" mutate.log; then
