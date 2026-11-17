@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -47,7 +47,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -58,61 +58,124 @@ jobs:
 
   # Mutation gate: the FULL mutate glob (src/**/*.ts minus src/index.ts, tools/**/*.ts),
   # incremental against a baseline in actions/cache. Stryker's own incremental differ
-  # decides what re-executes — CI no longer second-guesses it with hand-rolled
-  # changed-files scoping (tools/ci-mutate-scope.sh is deleted: it re-implemented the
-  # differ outside Stryker, test→src import mapping and all). Test-only changes are
-  # handled BY the differ: with real perTest coverage a newly added test is seen as
-  # 'added' and its covered mutants re-execute. That soundness requires
+  # decides what re-executes; CI does no changed-files scoping of its own. Test-only
+  # changes are handled BY the differ: with real perTest coverage a newly added test is
+  # seen as 'added' and its covered mutants re-execute. That soundness requires
   # @hughescr/stryker-bun-runner >= 1.3.1 — earlier versions promoted multi-test-covered
-  # mutants to static coverage (observable as a hard coveredBy cap of 6 in pre-fix
+  # mutants to static coverage (observable as a hard coveredBy cap of 6 in their
   # reports), blinding the differ to added tests. Do not run this job design on <= 1.3.0.
   #
+  # The baseline is one cache entry holding two files: reports/stryker-incremental.json
+  # (Stryker's verdicts) and reports/stryker-baseline-meta.json (provenance: for each of
+  # 14 file slices, the toolchain fingerprint and time of its last forced refresh).
+  # The toolchain fingerprint (runner OS + bun version + bun.lock hash) is provenance and
+  # a restore preference, not a partition: a run prefers the newest baseline saved under
+  # its own fingerprint and otherwise inherits the newest baseline of any fingerprint.
+  # mutation-baseline.yml re-earns an inherited baseline slice by slice, 2 slices a night,
+  # so every slice is re-run under the current toolchain about once a week. The picker's
+  # order: never-refreshed slices first, then slices inherited from another toolchain,
+  # then slices on the current toolchain; oldest refresh first within each group.
+  # tools/mutation-baseline.ts owns the meta file, the slices and the checks below.
+  #
   # Honesty invariants:
-  #   - ALL-GREEN BASELINES: the save step runs only on success(), and break=100 means
-  #     success implies zero Survived/NoCoverage in the report. So every Survived this
-  #     job ever reports was executed fresh in that same run; a stale or nuked cache
-  #     degrades to more work or an honest red (timeout / cold-start), never a false
-  #     green and never a stale false-survivor red. (Load-bearing coupling: this holds
-  #     only while thresholds.break stays 100 AND the save step stays gated on
-  #     success() — change either and the scrub question in the runbook reopens.)
+  #   - SURVIVOR-FREE BASELINES: a baseline is saved only by a green trusted gate run
+  #     (break=100 ⇒ zero Survived/NoCoverage in the report) or by a slice refresh that
+  #     deleted every Survived/NoCoverage entry it found before saving. So every Survived
+  #     this job reports was executed fresh in that same run, and a survivor a refresh
+  #     found re-executes in every gate run until a test kills it. (Load-bearing
+  #     coupling: this holds only while thresholds.break stays 100, this job's save stays
+  #     gated on success(), and the refresh's `finish` step keeps deleting survivors
+  #     before its save — change any of them and the scrub question in the runbook
+  #     reopens.)
+  #   - INHERITANCE WINDOW: an inherited Killed verdict was earned under another
+  #     toolchain and is trusted until its slice is refreshed under the current one
+  #     (≈1 week at 2 slices a night). The gate step enforces the bound per slice: a
+  #     non-empty slice stamped with a fingerprint other than the current one and last
+  #     refreshed more than 10 days ago turns the gate red (BASELINE OVERDUE), naming the
+  #     slice, the fingerprint it is inherited from and its refresh date. A slice on the
+  #     current fingerprint is never overdue, however old. The gate only reads the meta
+  #     file; only a slice refresh writes it. A pull request that changes the toolchain
+  #     itself (bun.lock, .bun-version) sees every slice as inherited, so it is overdue
+  #     only if some slice is also more than 10 days old, i.e. only when develop's
+  #     rotation has stalled.
+  #   - A SECOND TOOLCHAIN CHANGE DURING A CATCH-UP restarts nothing. The rotation is a
+  #     round-robin in the order above: slices not yet on the current toolchain go before
+  #     any that are, oldest refresh first, straight to the newest toolchain, and seven
+  #     nights after the latest change every slice is on it. Each slice's own refresh date is its overdue
+  #     clock, so a later change cannot reset it.
   #   - Known residual differ gap (upstream, being filed): a Survived mutant with ONLY
   #     static coverage is never invalidated by an added test. Unreachable in CI (no
   #     saved baseline contains Survived — see above). It IS live for the LOCAL
-  #     gitignored baseline, where red runs do write Survived — see triage step 3.
+  #     gitignored baseline, where red runs do write Survived — see triage step 7.
   #     No automated scrub in CI: there is nothing to scrub.
-  #   - PRs restore but never save — a fork cannot poison the baseline trusted runs use.
-  #   - Toolchain fingerprint (runner OS + bun version + bun.lock hash) partitions the
-  #     key space: verdicts never cross a toolchain change (the differ itself has no
-  #     toolchain awareness). Stated cost: any bun release (bun-version: latest floats)
-  #     or dependency bump orphans the baseline — expect the fail-fast cold-start red
-  #     below, then re-seed.
-  #   - Cold start is an EXPLICIT red with instructions, not a doomed run: full-glob
-  #     fresh is 13,591 mutants ≈ 12h at concurrency 2 (measured 61m58s at
-  #     concurrency 12 locally, ~3.3 s/mutant/worker; the ~3.2 s/mutant CI wall rate
-  #     is an ASSUMPTION — recalibrate from the bootstrap pilot shard's real duration)
-  #     vs the 6-hour hosted cap.
+  #   - ONLY THE DEFAULT BRANCH SAVES. Pull requests and non-default branches (main
+  #     included, and a mutation-baseline.yml dispatch on a feature ref) restore but never
+  #     save, so they always read the default branch's baseline: GitHub searches a ref's
+  #     own caches before the default branch's, so any other ref's save would shadow the
+  #     refreshed baseline for that ref. A fork cannot poison the baseline either.
+  #   - A gate save never clobbers a refresh: if the newest matching cache entry changed
+  #     while this run executed (normally a nightly refresh landed), the save is skipped
+  #     and the summary says so; the next run re-executes this run's delta through the
+  #     differ. Known residual: the "newer baseline?" recheck and the save are not
+  #     atomic, so a refresh that saves in the few seconds between them can be
+  #     overwritten; the overwritten slice keeps its older stamp, so the rotation picks
+  #     it again and re-exposes any survivor within the week.
+  #   - A slice refresh is red unless it completed: Stryker exited 0, or exited non-zero
+  #     with its final "under breaking threshold" line in the log (an interrupted run can
+  #     leave a partial report). Truncated, incomplete, or empty-log runs save nothing,
+  #     and a save that did not land in the cache turns the slot red.
+  #   - A missing or incomplete baseline is an EXPLICIT fast red with the seed command,
+  #     not a doomed run: the full glob from scratch is ≈13 h (below) vs the 6-hour
+  #     hosted-job cap.
+  #
+  # Numbers. Measured on seed run 44050398682: CI concurrency 2 (stryker.conf.mjs) runs
+  # 1 typescript-checker process + 1 test-runner process; ≈2.0 s wall per executed mutant
+  # (10,991 mutant runs in 372 min). ESTIMATED from that run: the full glob has ≈39,000
+  # instrumented / ≈23,500 executed mutants, so a serialized full seed takes ≈13 h and
+  # one slice ≈1 h.
   #
   # RUNBOOK (ops):
+  #   Rollout: scheduled and dispatched workflows run only from the default branch, so
+  #     mutation-baseline.yml does nothing (no nightly refresh, `gh workflow run` fails)
+  #     until it is on develop. Merge it, then seed.
   #   Nuke the baseline cache:
-  #     gh cache list --key stryker-incremental-v1- --limit 100 --json id --jq '.[].id' \
+  #     gh cache list --key stryker-incremental-v2- --limit 100 --json id --jq '.[].id' \
   #       | xargs -n1 gh cache delete
-  #     (or bump the -v1- segment in BOTH this file and
-  #     mutation-baseline-bootstrap.yml; LRU + 7-day idle eviction reap the orphans)
-  #   Re-seed (first-time, after a nuke, after any bun/bun.lock bump):
-  #     gh workflow run mutation-baseline-bootstrap.yml --ref develop
-  #     (~13h across 13 serialized shard jobs, smallest first — the first is a ~30 min
-  #     calibration pilot; check its wall time before the multi-hour shards burn time.
-  #     mutate runs during that window may go red on a partial baseline — re-run them
-  #     once bootstrap finishes.)
+  #     (or bump the -v2- segment in BOTH this file and mutation-baseline.yml; LRU +
+  #     7-day idle eviction reap the orphans)
+  #   Seed (first time, after a nuke):
+  #     gh workflow run mutation-baseline.yml --ref develop -f slots=14
+  #     (≈13 h, estimate: 14 serialized slot jobs, each saving on top of the last. Gate
+  #     runs during the seed go red with BASELINE INCOMPLETE; re-run them once it ends.
+  #     A slot that fails leaves its slice unstamped; dispatch again with -f slots=<n>
+  #     and the stalest slices are picked first.)
+  #   Bun bump: edit .bun-version (every job in both workflows reads it). The fingerprint
+  #     changes; gate runs inherit the newest baseline and the nightly refresh re-earns
+  #     it within ≈1 week. A bun.lock change works the same way.
   #   Stuck-red triage:
   #     1. Real survivor? Every CI Survived is fresh, not cached. Reproduce under CI
   #        config without touching the local baseline:
   #          GITHUB_SHA=smoke bun mutate -- --mutate <file> \
   #            --reporters clear-text,progress --incrementalFile "$TMPDIR/smoke.json"
   #        and kill it with a test.
-  #     2. Timeout red? Diff too large for its budget, or partial/cold baseline —
-  #        gate locally or re-seed; do not raise the budget.
-  #     3. LOCAL stuck red on a static-coverage mutant after a genuine fix (the differ
+  #     2. Refresh survivor: a mutation-baseline.yml slot is red and its summary lists
+  #        each mutant (file:line:col, mutator, status, replacement). The saved baseline
+  #        has those entries removed, so every gate run re-executes them and stays red
+  #        until a test kills them — reproduce and kill as in step 1. Typical cause: a
+  #        toolchain change (bun, a dependency) or a Linux-only code path.
+  #     3. BASELINE INCOMPLETE (gate step): a non-empty slice has never been refreshed.
+  #        A seed is running (wait for it) or needed (seed command above). Check:
+  #          gh run list --workflow mutation-baseline.yml
+  #     4. BASELINE OVERDUE (gate step): the named slices are stamped with another
+  #        fingerprint and were last refreshed more than 10 days ago, so the nightly
+  #        refresh is red or not running. Check its runs (command in step 3), fix the
+  #        cause (often a refresh survivor, step 2), then catch up with
+  #        gh workflow run mutation-baseline.yml --ref develop -f slots=<overdue count>.
+  #     5. Timeout red? Diff too large for its budget — gate locally or split it; do not
+  #        raise the budget.
+  #     6. Not red, but "save skipped: newer baseline" in the summary: a refresh saved
+  #        while this run executed. Nothing to do; the next run re-executes this delta.
+  #     7. LOCAL stuck red on a static-coverage mutant after a genuine fix (the differ
   #        gap above; local baselines DO contain Survived because local red runs write
   #        the incremental file). Surgical — drop static/uncovered Survived entries so
   #        only those re-execute:
@@ -132,20 +195,19 @@ jobs:
       group: mutate-${{ github.ref }}
       cancel-in-progress: false
     # Warm-cache typical: install ~3 min + dry run + differ + a handful of mutants,
-    # well under 15 min. Budgets from the ASSUMED ~3.2 s/mutant CI wall rate
-    # (recalibrate from the bootstrap pilot shard's real duration): PR 60 min ≈
-    # ~1,000 fresh mutants (an entire mid-size subsystem in one PR); push/dispatch
-    # 120 min ≈ ~2,150 (merge batches, plus the save). A diff that exceeds its
-    # budget goes honestly red: gate it locally or split it.
+    # well under 15 min. Budgets at the measured ≈2.0 s per executed mutant, less ~6 min
+    # of install and dry run (estimates): PR 60 min ≈ 1,600 fresh mutants (an entire
+    # mid-size subsystem in one PR); push/dispatch 120 min ≈ 3,400 (merge batches, plus
+    # the save). A diff that exceeds its budget goes honestly red: gate it locally or
+    # split it.
     timeout-minutes: ${{ github.event_name == 'pull_request' && 60 || 120 }}
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
-          # Stock latest bun, same as test-linux/test-macos. The baseline fingerprint below
-          # embeds `bun --version`, and mutation-baseline-bootstrap.yml must resolve the
-          # same bun, or the seeded baseline is never found here.
-          bun-version: latest
+          # Same pinned bun as every other job and mutation-baseline.yml; the
+          # fingerprint below records it.
+          bun-version-file: .bun-version
 
       # Fingerprint and baseline check run BEFORE the ~3 min install so a cold start
       # fails in seconds. bun --version needs only setup-bun; hashFiles needs checkout.
@@ -153,38 +215,51 @@ jobs:
         id: toolchain
         run: echo "fingerprint=${{ runner.os }}-bun$(bun --version)-lock${{ hashFiles('bun.lock') }}" >> "$GITHUB_OUTPUT"
 
-      # Restore always, PRs included. base_ref||ref_name: PRs restore their base
-      # branch's lineage, pushes/dispatches their own; then any branch on the same
-      # fingerprint (GitHub's cache isolation already scopes what a PR may read).
-      # The sha-prefixed restore-key serves re-runs of an already-saved commit.
+      # Restore always, PRs included. The key is never saved (run id + attempt), so it
+      # never hits exactly; the restore-keys take the newest entry under this
+      # fingerprint, else the newest under any fingerprint (inheritance). No branch or
+      # sha in the preference: either would pin a reader to an entry older than the
+      # latest refresh. GitHub's cache scoping already limits what a PR may read (its
+      # own ref, its base branch, the default branch); since only the default branch
+      # saves, every ref ends up reading the default branch's baseline.
       - name: Restore mutation baseline
         id: baseline
         uses: actions/cache/restore@v4
         with:
-          path: reports/stryker-incremental.json
-          key: stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.base_ref || github.ref_name }}-${{ github.sha }}
+          path: |
+            reports/stryker-incremental.json
+            reports/stryker-baseline-meta.json
+          key: stryker-incremental-v2-${{ steps.toolchain.outputs.fingerprint }}-lookup-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.base_ref || github.ref_name }}-${{ github.sha }}-
-            stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.base_ref || github.ref_name }}-
-            stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-
+            stryker-incremental-v2-${{ steps.toolchain.outputs.fingerprint }}-
+            stryker-incremental-v2-
 
       - name: Require a baseline (cold start fails fast, loudly)
         env:
           FINGERPRINT: ${{ steps.toolchain.outputs.fingerprint }}
-          MATCHED: ${{ steps.baseline.outputs.cache-matched-key }}
         run: |
           if [ ! -f reports/stryker-incremental.json ]; then
-            MSG="No mutation baseline cached for toolchain fingerprint '$FINGERPRINT'. A fresh full-glob run (~12h at concurrency 2) cannot fit this job, so failing now instead of at the timeout. Seed one: gh workflow run mutation-baseline-bootstrap.yml --ref develop — then re-run this job. (Expected after a bun/dependency bump or a cache nuke.)"
-            echo "$MSG"; echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
+            MSG="No mutation baseline cached under any toolchain fingerprint (current: '$FINGERPRINT'). A fresh full-glob run (≈13 h, estimate) cannot fit this job, so failing now instead of at the timeout. Seed one: gh workflow run mutation-baseline.yml --ref develop -f slots=14 — then re-run this job. (Expected on first rollout or after a cache nuke.)"
+            echo "::error::$MSG"; echo "$MSG" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          echo "Baseline restored from: $MATCHED" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      # Reads the meta file (never writes it), writes the provenance table (matched
+      # key, per-slice state, refresh date and age) to the summary, and goes red on
+      # BASELINE INCOMPLETE or BASELINE OVERDUE (runbook steps 3-4). Red here stops the
+      # job before Stryker: an incomplete baseline would send whole unseeded slices
+      # through the full glob, a doomed run.
+      - name: Check baseline provenance
+        env:
+          FINGERPRINT: ${{ steps.toolchain.outputs.fingerprint }}
+          MATCHED_KEY: ${{ steps.baseline.outputs.cache-matched-key }}
+        run: bun tools/mutation-baseline.ts gate
 
       # Full mutate glob from stryker.conf.mjs; the differ works out the delta.
       # Dashboard: the merged incremental report is cumulative whole-repo state, so a
@@ -201,21 +276,67 @@ jobs:
       # still exit 0 with a plausible-looking score. "no inspector test found" is
       # that truncation's signature — turn it into an explicit red naming the cause
       # instead of a quiet false-green.
+      # A missing or empty log proves nothing, so it is red too. (The Stryker step's
+      # `set -o pipefail` already fails the job if tee itself fails.)
       - name: Detect silent inspector-stream truncation
         run: |
+          if [ ! -s mutate.log ]; then
+            echo "::error::mutate.log is missing or empty, so the run cannot be checked for inspector-stream truncation."
+            exit 1
+          fi
           if grep -q "no inspector test found" mutate.log; then
             echo "::error::Stryker inspector stream truncated mid-run (stryker-bun-runner bug, fixed in 1.3.3) — the mutation score above is not trustworthy."
             exit 1
           fi
 
-      # Trusted, green runs only — this gate is what makes ALL-GREEN BASELINES an
-      # invariant, which the honesty story above rests on. sha+run_id+attempt suffix
-      # means saves never collide (run_id matters: two dispatches of the same commit
-      # both have run_attempt=1, and actions/cache silently skips a duplicate key).
+      # Save-race check: look up (without downloading) what the restore step would
+      # match now. A different key means a newer baseline landed while this run
+      # executed, normally a nightly refresh on develop; saving on top would replace
+      # it with a baseline built from the older restore.
+      - name: Look up the newest baseline again
+        id: recheck
+        # Only the default branch saves (invariants above), so only it needs the race check.
+        if: success() && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            reports/stryker-incremental.json
+            reports/stryker-baseline-meta.json
+          key: stryker-incremental-v2-${{ steps.toolchain.outputs.fingerprint }}-lookup-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            stryker-incremental-v2-${{ steps.toolchain.outputs.fingerprint }}-
+            stryker-incremental-v2-
+          lookup-only: true
+
+      - name: Skip the save if a newer baseline landed
+        id: race
+        if: success() && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+        env:
+          RESTORED_KEY: ${{ steps.baseline.outputs.cache-matched-key }}
+          LATEST_KEY: ${{ steps.recheck.outputs.cache-matched-key }}
+        run: |
+          if [ "$LATEST_KEY" != "$RESTORED_KEY" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            MSG="Save skipped: newer baseline '$LATEST_KEY' landed during this run (restored '$RESTORED_KEY'). The next run re-executes this run's delta."
+            echo "$MSG"; echo "**$MSG**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Trusted, green runs only — this gate is half of SURVIVOR-FREE BASELINES, which
+      # the honesty story above rests on. `skip == 'false'` (not `!= 'true'`) so a
+      # missing race verdict never saves. sha+run_id+attempt suffix means saves never
+      # collide (run_id matters: two dispatches of the same commit both have
+      # run_attempt=1, and actions/cache silently skips a duplicate key).
       # ~32 MB each vs the 10 GB repo cap; LRU + 7-day idle eviction handle buildup.
       - name: Save mutation baseline (trusted, green runs only)
-        if: success() && github.event_name != 'pull_request'
+        # Default branch only: GitHub restores a ref's own caches before the default
+        # branch's, so a save from main or a feature branch would shadow develop's
+        # refreshed baseline for that ref.
+        if: success() && github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch && steps.race.outputs.skip == 'false'
         uses: actions/cache/save@v4
         with:
-          path: reports/stryker-incremental.json
-          key: stryker-incremental-v1-${{ steps.toolchain.outputs.fingerprint }}-${{ github.ref_name }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            reports/stryker-incremental.json
+            reports/stryker-baseline-meta.json
+          key: stryker-incremental-v2-${{ steps.toolchain.outputs.fingerprint }}-${{ github.ref_name }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}

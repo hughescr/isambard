@@ -1,0 +1,266 @@
+# Keep the CI mutation baseline (actions/cache, read by ci.yml's mutate job) honest
+# under the current toolchain. The mutate files are split into 14 slices by path hash
+# (tools/mutation-baseline.ts). Each slot job picks the stalest slice (never-refreshed
+# slices first, then slices inherited from another toolchain, then slices on the
+# current toolchain; oldest refresh first within each group), re-runs every
+# mutant in it with --force, deletes any Survived/NoCoverage entries from the
+# incremental file, stamps the slice with the current toolchain fingerprint and saves.
+# Only a run on the default branch saves; a dispatch on any other ref is a dry run
+# whose result is discarded (GitHub restores a branch's own caches before the default
+# branch's, so a non-default save would shadow the refreshed baseline for that branch).
+# A baseline inherited from an older bun or bun.lock is thereby re-earned slice by
+# slice, and ci.yml's gate step goes red when a slice still stamped with an older
+# fingerprint was last refreshed more than 10 days ago. Only this workflow's `finish`
+# step writes the meta file; `pick` and the gate only read it.
+#
+#   Nightly: 2 slots (≈1 h each, estimate), so every slice refreshes about weekly.
+#   Seed (first time, after a cache nuke; ≈13 h, estimate):
+#     gh workflow run mutation-baseline.yml --ref develop -f slots=14
+#
+# Scheduled and dispatched runs exist only once this file is on the default branch.
+# Cache key family, measured numbers and the ops runbook: the mutate job comment in
+# ci.yml.
+name: Mutation baseline
+
+on:
+  schedule:
+    - cron: '17 9 * * *'   # 09:17 UTC ≈ 01:17 Pacific
+  workflow_dispatch:
+    inputs:
+      slots:
+        description: 'Number of slices to refresh, 1-14, one after another (14 = full seed).'
+        required: false
+        type: string
+        default: '2'
+
+# Two runs at once would restore the same baseline and the later save would drop the
+# earlier one's slice; queue instead.
+concurrency:
+  group: mutation-baseline
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      slots: ${{ steps.slots.outputs.json }}
+    steps:
+      - name: Validate slot count
+        id: slots
+        shell: bash
+        env:
+          SLOTS: ${{ inputs.slots || '2' }}   # schedule runs have no inputs
+        run: |
+          if ! [[ "$SLOTS" =~ ^([1-9]|1[0-4])$ ]]; then
+            echo "::error::slots must be an integer from 1 to 14, got '$SLOTS'"
+            exit 1
+          fi
+          echo "json=$(seq 1 "$SLOTS" | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  refresh:
+    name: Refresh slot ${{ matrix.slot }}
+    needs: plan
+    runs-on: ubuntu-latest
+    # One slice is ≈1 h at the measured ≈2.0 s per executed mutant (estimate), plus
+    # ~6 min install and dry run; 350 stays under the 360-min hosted cap.
+    timeout-minutes: 350
+    strategy:
+      max-parallel: 1    # load-bearing: each slot restores the previous slot's save
+      fail-fast: false   # a red slot (e.g. a real survivor) must not cancel the rest
+      matrix:
+        slot: ${{ fromJSON(needs.plan.outputs.slots) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Visible, not silent: the save steps below are gated on the default branch.
+      - name: Warn that a non-default ref is a dry run
+        if: github.ref_name != github.event.repository.default_branch
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          MSG="Dry run: '$REF_NAME' is not the default branch '$DEFAULT_BRANCH', so this refresh runs but its result is not saved; only the default branch writes baselines."
+          echo "::warning::$MSG"; echo "**$MSG**" >> "$GITHUB_STEP_SUMMARY"
+
+      # Same fingerprint and key family as ci.yml's mutate job — sharing it is the point.
+      - name: Compute toolchain fingerprint
+        id: toolchain
+        run: echo "fingerprint=${{ runner.os }}-bun$(bun --version)-lock${{ hashFiles('bun.lock') }}" >> "$GITHUB_OUTPUT"
+
+      # Same lookup as ci.yml. A miss is fine: the first seed slot starts empty.
+      - name: Restore mutation baseline
+        id: baseline
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            reports/stryker-incremental.json
+            reports/stryker-baseline-meta.json
+          key: stryker-incremental-v2-${{ steps.toolchain.outputs.fingerprint }}-lookup-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            stryker-incremental-v2-${{ steps.toolchain.outputs.fingerprint }}-
+            stryker-incremental-v2-
+
+      - name: Pick the stalest slice
+        id: pick
+        env:
+          FINGERPRINT: ${{ steps.toolchain.outputs.fingerprint }}
+          MATCHED_KEY: ${{ steps.baseline.outputs.cache-matched-key }}
+        run: bun tools/mutation-baseline.ts pick
+
+      # One definition of the save key, read by both the save and the landed-check below.
+      # Unique per slice and run, so a re-run never collides with an earlier save
+      # (actions/cache silently skips a duplicate key).
+      - name: Name the refresh cache key
+        id: savekey
+        env:
+          FINGERPRINT: ${{ steps.toolchain.outputs.fingerprint }}
+          REF_NAME: ${{ github.ref_name }}
+          SLICE: ${{ steps.pick.outputs.slice }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: echo "key=stryker-incremental-v2-$FINGERPRINT-$REF_NAME-refresh-s$SLICE-$RUN_ID-$RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      # --force re-runs every mutant in the slice regardless of cached verdicts; the
+      # rest of the baseline is carried over unchanged (stryker.conf.mjs ignorePatterns
+      # must stay broader than any --mutate scope for that). The step always passes and
+      # records Stryker's exit code and tee's, so `finish` still runs after a threshold
+      # red (the completion step below decides whether the run really finished).
+      # Env indirection keeps the invocation shell-injection-inert by construction.
+      - name: Mutation testing (forced, one slice)
+        id: stryker
+        shell: bash
+        env:
+          MUTATE_GLOBS: ${{ steps.pick.outputs.globs }}
+          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+        run: |
+          set +e
+          bun run mutate -- --mutate "$MUTATE_GLOBS" --force 2>&1 | tee mutate.log
+          codes=("${PIPESTATUS[@]}")   # read both pipe members in one statement
+          code=${codes[0]}
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "tee=${codes[1]}" >> "$GITHUB_OUTPUT"
+          echo "Stryker exited $code, tee exited ${codes[1]}"
+          exit 0
+
+      # Guard: if the runner's inspector stream silently truncates mid-run it can
+      # still exit 0 with a plausible-looking score. "no inspector test found" is
+      # that truncation's signature — turn it into an explicit red naming the cause.
+      # Its failure skips `finish` and the save: nothing from a truncated run is kept.
+      # A missing or empty log proves nothing, so it is red too.
+      - name: Detect silent inspector-stream truncation
+        id: truncation
+        run: |
+          if [ ! -s mutate.log ]; then
+            echo "::error::mutate.log is missing or empty, so the run cannot be checked for inspector-stream truncation."
+            exit 1
+          fi
+          if grep -q "no inspector test found" mutate.log; then
+            echo "::error::Stryker inspector stream truncated mid-run (stryker-bun-runner bug, fixed in 1.3.3) — the mutation score above is not trustworthy."
+            exit 1
+          fi
+
+      # Positive evidence of a completed run: Stryker exited 0, or exited non-zero and
+      # logged its final threshold line (so the incremental report is the finished one,
+      # not a partial write from an interrupted run). A tee failure means the log is
+      # itself incomplete. Its failure skips `finish` and the save.
+      - name: Require a completed Stryker run
+        id: completion
+        env:
+          STRYKER_EXIT: ${{ steps.stryker.outputs.exit }}
+          TEE_EXIT: ${{ steps.stryker.outputs.tee }}
+        run: |
+          if [ "$TEE_EXIT" != "0" ]; then
+            echo "::error::tee exited $TEE_EXIT, so mutate.log may be incomplete; the run is not trusted and nothing is saved."
+            exit 1
+          fi
+          if [ "$STRYKER_EXIT" != "0" ] && ! grep -q "under breaking threshold" mutate.log; then
+            echo "::error::Stryker exited $STRYKER_EXIT without its final 'under breaking threshold' line: the run did not complete (interrupted or crashed), so its report is not trusted and nothing is saved."
+            exit 1
+          fi
+
+      # Deletes this run's Survived/NoCoverage entries and stamps the slice (save=true),
+      # or changes nothing when Stryker failed without survivors, e.g. a dry-run
+      # failure (save=false). Its exit code is recorded, not raised, so a survivor red
+      # still saves the survivor-free baseline.
+      - name: Finish the slice
+        id: finish
+        # success(): every earlier step passed. The Stryker step always passes, so a threshold red still gets here.
+        # steps.truncation/completion.outcome: a truncated or incomplete run is never finished or saved, even if a guard is ever made continue-on-error.
+        if: success() && steps.truncation.outcome == 'success' && steps.completion.outcome == 'success'
+        shell: bash
+        env:
+          FINGERPRINT: ${{ steps.toolchain.outputs.fingerprint }}
+          MATCHED_KEY: ${{ steps.baseline.outputs.cache-matched-key }}
+          SLICE: ${{ steps.pick.outputs.slice }}
+          STRYKER_EXIT: ${{ steps.stryker.outputs.exit }}
+        run: |
+          set +e
+          bun tools/mutation-baseline.ts finish --slice "$SLICE" --stryker-exit "$STRYKER_EXIT"
+          code=$?
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "finish exited $code"
+          exit 0
+
+      # Default branch only: GitHub restores the current branch's own caches before the
+      # default branch's, so a save from any other ref would shadow the refreshed
+      # baseline for that ref. Key from the savekey step (unique per slice and run).
+      - name: Save the refreshed baseline
+        id: save
+        if: success() && steps.finish.outputs.save == 'true' && github.ref_name == github.event.repository.default_branch
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            reports/stryker-incremental.json
+            reports/stryker-baseline-meta.json
+          key: ${{ steps.savekey.outputs.key }}
+
+      # actions/cache/save only warns when the upload fails, so look the exact key up
+      # (no restore-keys: only this save can hit it) and fail the slot if it is absent.
+      - name: Look up the saved baseline
+        id: landed
+        if: success() && steps.save.outcome == 'success'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            reports/stryker-incremental.json
+            reports/stryker-baseline-meta.json
+          key: ${{ steps.savekey.outputs.key }}
+          lookup-only: true
+
+      # Runs before the verdict step; the verdict step's always() lets it still name any
+      # survivor when this one fails.
+      - name: Fail the job if the save did not land
+        if: steps.save.outcome == 'success' && steps.landed.outputs.cache-hit != 'true'
+        env:
+          SAVE_KEY: ${{ steps.savekey.outputs.key }}
+        run: |
+          echo "::error::The refreshed baseline did not land in the cache (key '$SAVE_KEY' not found after the save): this slot's refresh is lost, so the slot is red."
+          exit 1
+
+      # The job's verdict, applied after the save: red on a survivor (finish exit 1),
+      # on a Stryker failure with nothing to save (finish exit 2), or on any other
+      # Stryker or finish failure. always(): it must also name survivors when the
+      # save-landed check failed. It runs only after `finish`, so a truncated or
+      # incomplete run (finish skipped) stays red on its own earlier step.
+      - name: Fail the job on a red refresh
+        if: always() && steps.finish.outcome == 'success'
+        env:
+          STRYKER_EXIT: ${{ steps.stryker.outputs.exit }}
+          FINISH_EXIT: ${{ steps.finish.outputs.exit }}
+        run: |
+          if [ "$STRYKER_EXIT" != "0" ] || [ "$FINISH_EXIT" != "0" ]; then
+            echo "::error::Slice refresh red: Stryker exited $STRYKER_EXIT, finish exited $FINISH_EXIT (summary above has the details)."
+            exit 1
+          fi

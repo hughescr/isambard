@@ -15,12 +15,13 @@ const strykerConfig = await withTestFilesExcludedFromTypeCheck(await withMutator
     // the upstream differ gap — a Survived mutant with ONLY static coverage is never
     // invalidated by an added test — can then hold local red after a genuine fix: delete the
     // file and re-run, or use the surgical jq scrub in ci.yml's runbook. In CI the same file
-    // is restored from actions/cache and saved back ONLY from green trusted runs (break=100
-    // ⇒ saved baselines contain no Survived verdicts), so a stale or nuked cache degrades to
-    // extra work or an honest red, never a false green. Requires
-    // @hughescr/stryker-bun-runner >= 1.3.1: earlier versions promoted multi-test-covered
-    // mutants to static coverage, blinding the differ to added tests. Keys, save gating,
-    // cold-start bootstrap, and the ops runbook: .github/workflows/ci.yml.
+    // is restored from actions/cache and saved back ONLY from green trusted gate runs
+    // (break=100) or from a slice refresh that deleted the Survived/NoCoverage entries it
+    // found, so saved baselines contain no Survived verdicts and a nuked cache degrades to
+    // an honest red. Requires @hughescr/stryker-bun-runner >= 1.3.1: earlier versions
+    // promoted multi-test-covered mutants to static coverage, blinding the differ to added
+    // tests. Keys, save gating and the ops runbook: .github/workflows/ci.yml; the nightly
+    // slice refresh and seed: .github/workflows/mutation-baseline.yml.
     incremental:       true,
     reporters:         isCI ? ['clear-text', 'progress', 'dashboard'] : ['llm-mutator', 'progress', 'json', 'html'],
     testRunner:        'bun',
@@ -36,7 +37,7 @@ const strykerConfig = await withTestFilesExcludedFromTypeCheck(await withMutator
     // An exhaustive mutant-to-killer-test map is optional.
     disableBail:       false,
     mutate:            ['src/**/*.ts', '!src/index.ts', 'tools/**/*.ts'], // Do not mutate the entry point; tools/ included so disable comments take effect
-    ignorePatterns:    ['**', '!src/**/*.ts', '!tests/**/*.ts', '!tests/**/*.json', '!tools/**/*.ts', '!bunfig.toml', '!tsconfig.json', '!*.ts', '!*.mjs', '!sst/**/*.ts', '!.ast-grep/**', '!sgconfig.yml', '!package.json', '!scripts/**/*.ts'], // Only include source and test files in the mutation testing process, plus .ast-grep/ (ast-grep-rules.test.ts reads rule YAML from RULE_PATH inside the sandbox — without this the dry run fails with ENOENT before any mutant can run), package.json (tests/unit/helpers/sdk-frames.test.ts imports it directly) and scripts/**/*.ts (tests/unit/scripts/spike-argv.test.ts imports scripts/spike-argv) — without these two the sandbox throws "Cannot find module" for any mutant run that loads those tests, which Stryker reports as RuntimeError (excluded from the mutation score) rather than Killed/Survived, silently hiding real survivors. LOAD-BEARING breadth: these patterns must stay BROADER than any --mutate scope (incl. the CI bootstrap shards) — the incremental differ preserves out-of-scope baseline entries only for files it can still read; narrow this and out-of-scope files look deleted, silently discarding their cached verdicts (degrades to re-execution, not unsoundness). sgconfig.yml is included because ast-grep-rules.test.ts parses it.
+    ignorePatterns:    ['**', '!src/**/*.ts', '!tests/**/*.ts', '!tests/**/*.json', '!tools/**/*.ts', '!bunfig.toml', '!tsconfig.json', '!*.ts', '!*.mjs', '!sst/**/*.ts', '!.ast-grep/**', '!sgconfig.yml', '!package.json', '!scripts/**/*.ts'], // Only include source and test files in the mutation testing process, plus .ast-grep/ (ast-grep-rules.test.ts reads rule YAML from RULE_PATH inside the sandbox — without this the dry run fails with ENOENT before any mutant can run), package.json (tests/unit/helpers/sdk-frames.test.ts imports it directly) and scripts/**/*.ts (tests/unit/scripts/spike-argv.test.ts imports scripts/spike-argv) — without these two the sandbox throws "Cannot find module" for any mutant run that loads those tests, which Stryker reports as RuntimeError (excluded from the mutation score) rather than Killed/Survived, silently hiding real survivors. LOAD-BEARING breadth: these patterns must stay BROADER than any --mutate scope (incl. the CI refresh slices in .github/workflows/mutation-baseline.yml) — the incremental differ preserves out-of-scope baseline entries only for files it can still read; narrow this and out-of-scope files look deleted, silently discarding their cached verdicts (degrades to re-execution, not unsoundness). sgconfig.yml is included because ast-grep-rules.test.ts parses it.
     thresholds:        { high: 100, low: 100, 'break': 100 },
     concurrency:       isCI ? 2 : 18,
     tempDirName:       '.stryker-tmp',
