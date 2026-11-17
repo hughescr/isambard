@@ -80,7 +80,7 @@ See [../docs/architecture.md](../docs/architecture.md) for the subsystem map and
 bun run dev:sst      # Development with SST shell and hot reload
 bun run test         # Run tests
 bun mutate           # Mutation testing (incremental; see Quality Gates)
-bun run lint         # Oxlint (node, type-aware, --deny-warnings) + ESLint on package.json + Stryker directive check
+bun run lint         # Oxlint (node, type-aware, --deny-warnings) + ESLint on package.json + ast-grep scan + Stryker directive check
 bun run lint:fix     # Oxlint --fix + ESLint --fix on package.json
 bun run lint:overview # Same checks as lint, with Oxlint's grouped output for triage
 bun run check:ast-grep # ast-grep syntax bans (.ast-grep/ plus the shared package's rules, via sgconfig.yml)
