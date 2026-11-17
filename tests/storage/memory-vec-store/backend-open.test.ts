@@ -121,7 +121,10 @@ describe('SQLite configuration selection with injected probes', () => {
 
     it('calls Bun\'s static setter when default dependencies select an override', () => {
         const overridePath = '/custom/sqlite.dylib';
+        const previousPlatform = process.platform;
         const previousOverride = process.env.SQLITE_VEC_LIB_PATH;
+        // The default dependencies only select an override on macOS.
+        Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
         process.env.SQLITE_VEC_LIB_PATH = overridePath;
         const setCustomSQLite = jest.spyOn(Database, 'setCustomSQLite')
             .mockImplementation(() => { throw new Error('SQLite already loaded'); });
@@ -130,6 +133,7 @@ describe('SQLite configuration selection with injected probes', () => {
             expect(() => configureFreshSQLite()).not.toThrow();
             expect(setCustomSQLite).toHaveBeenCalledWith(overridePath);
         } finally {
+            Object.defineProperty(process, 'platform', { value: previousPlatform, configurable: true });
             if(previousOverride === undefined) {
                 delete process.env.SQLITE_VEC_LIB_PATH;
             } else {
