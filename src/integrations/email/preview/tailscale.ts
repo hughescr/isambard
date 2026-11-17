@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { BoundedRunner } from './bounded-runner';
+import { EmailPreviewError } from '@/errors';
 
 /**
  * The only path an Isambard instance publishes on the Mac's tailnet host: one per preview port,
@@ -118,7 +119,7 @@ function handlerAt(session: ServeSession | null, hostPort: string, path: string)
 export async function openTailscaleCli(deps: TailscaleDeps): Promise<TailscaleCli> {
     const found = deps.which('tailscale') ?? (await deps.fileExists(MAC_APP_TAILSCALE_CLI) ? MAC_APP_TAILSCALE_CLI : undefined);
     if(found === undefined) {
-        throw new Error('Tailscale CLI not found (no `tailscale` on PATH and no /Applications/Tailscale.app); install Tailscale');
+        throw new EmailPreviewError('Tailscale CLI not found (no `tailscale` on PATH and no /Applications/Tailscale.app); install Tailscale');
     }
     const cli = found;
 
@@ -127,10 +128,10 @@ export async function openTailscaleCli(deps: TailscaleDeps): Promise<TailscaleCl
         try {
             result = await deps.run([cli, ...args], { timeout: deps.timeoutMs });
         } catch (err: unknown) {
-            throw new Error(`${commandText(args)} did not finish: ${errorText(err)}`, { cause: err });
+            throw new EmailPreviewError(`${commandText(args)} did not finish: ${errorText(err)}`, err);
         }
         if(result.exitCode !== 0) {
-            throw new Error(`${commandText(args)} failed (exit ${result.exitCode}): ${result.stderr.trim().replaceAll(/\s+/gu, ' ')}`);
+            throw new EmailPreviewError(`${commandText(args)} failed (exit ${result.exitCode}): ${result.stderr.trim().replaceAll(/\s+/gu, ' ')}`);
         }
         return result.stdout;
     }
@@ -141,11 +142,11 @@ export async function openTailscaleCli(deps: TailscaleDeps): Promise<TailscaleCl
         try {
             json = JSON.parse(stdout);
         } catch{
-            throw new Error(`${commandText(args)} printed output that is not JSON`);
+            throw new EmailPreviewError(`${commandText(args)} printed output that is not JSON`);
         }
         const parsed = schema.safeParse(json);
         if(!parsed.success) {
-            throw new Error(`${commandText(args)} printed JSON of an unexpected shape`);
+            throw new EmailPreviewError(`${commandText(args)} printed JSON of an unexpected shape`);
         }
         return parsed.data;
     }
@@ -165,14 +166,14 @@ export async function openTailscaleCli(deps: TailscaleDeps): Promise<TailscaleCl
         async readSelf() {
             const status = await query(['status', '--json'], statusSchema);
             if(status.BackendState !== 'Running') {
-                throw new Error(`Tailscale is not connected on this Mac (state ${status.BackendState}); open Tailscale and sign in`);
+                throw new EmailPreviewError(`Tailscale is not connected on this Mac (state ${status.BackendState}); open Tailscale and sign in`);
             }
             const self = status.Self;
             if(!self?.DNSName) {
-                throw new Error('Tailscale reports no MagicDNS name for this Mac; turn on MagicDNS in the Tailscale admin console (DNS page)');
+                throw new EmailPreviewError('Tailscale reports no MagicDNS name for this Mac; turn on MagicDNS in the Tailscale admin console (DNS page)');
             }
             if(!status.CertDomains?.length) {
-                throw new Error('Tailscale HTTPS certificates are not enabled for this tailnet; turn on HTTPS Certificates in the Tailscale admin console (DNS page), then restart Izzy');
+                throw new EmailPreviewError('Tailscale HTTPS certificates are not enabled for this tailnet; turn on HTTPS Certificates in the Tailscale admin console (DNS page), then restart Izzy');
             }
             return {
                 dnsName: self.DNSName.replace(/\.$/u, ''),
@@ -185,14 +186,14 @@ export async function openTailscaleCli(deps: TailscaleDeps): Promise<TailscaleCl
             const hostPort = hostPortOf(dnsName);
             const sessions = [config, ...Object.values(config?.Foreground ?? {})];
             if(sessions.some(session => session?.AllowFunnel?.[hostPort] === true)) {
-                throw new Error(`Tailscale Funnel is on for ${hostPort}; refusing to publish draft previews where the internet can reach them`);
+                throw new EmailPreviewError(`Tailscale Funnel is on for ${hostPort}; refusing to publish draft previews where the internet can reach them`);
             }
             const target = targetFor(port);
             const mountPath = previewMountPath(port);
             for(const path of [mountPath, `${mountPath}/`]) {
                 const foreign = sessions.map(session => handlerAt(session, hostPort, path)).find(handler => handler !== undefined && handler.Proxy !== target);
                 if(foreign !== undefined) {
-                    throw new Error(`https://${hostPort}${path} is already served by ${foreign.Proxy ?? 'a handler that is not a proxy'}, not this Izzy (${target}); refusing to replace it: remove that mount or set EMAIL_PREVIEW_PORT to another port`);
+                    throw new EmailPreviewError(`https://${hostPort}${path} is already served by ${foreign.Proxy ?? 'a handler that is not a proxy'}, not this Izzy (${target}); refusing to replace it: remove that mount or set EMAIL_PREVIEW_PORT to another port`);
                 }
             }
         },
@@ -205,7 +206,7 @@ export async function openTailscaleCli(deps: TailscaleDeps): Promise<TailscaleCl
             // `serve` can exit 0 without changing anything (e.g. when HTTPS still needs enabling),
             // so the mount only counts once serve status shows it.
             if(!await mountedHere(dnsName, port)) {
-                throw new Error(`\`tailscale serve\` did not publish ${previewMountPath(port)} → ${targetFor(port)}; check \`tailscale serve status\``);
+                throw new EmailPreviewError(`\`tailscale serve\` did not publish ${previewMountPath(port)} → ${targetFor(port)}; check \`tailscale serve status\``);
             }
         },
 

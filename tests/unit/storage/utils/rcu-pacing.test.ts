@@ -1,4 +1,6 @@
 import { describe, expect, mock, test, jest, beforeEach, afterEach } from 'bun:test';
+import { ErrorCode } from '@/errors/codes';
+import { ConsumedCapacityMissingError } from '@/errors/storage';
 import {
     createRcuPacer, paceAfterRead, pacingDelayMs, recordRcuPage, requireConsumedReadUnits, waitForRcuPacer,
     sleepRespectingSignal
@@ -14,6 +16,17 @@ describe('requireConsumedReadUnits', () => {
         expect(() => requireConsumedReadUnits(undefined, 'GSI1 query for events')).toThrow(
             new Error('GSI1 query for events reported no ConsumedCapacity; refusing to continue without RCU pacing')
         );
+    });
+
+    test('fails with a typed error carrying its own code and the request label', () => {
+        let thrown: unknown;
+        try {
+            requireConsumedReadUnits(undefined, 'GSI1 query for events');
+        } catch (error: unknown) {
+            thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(ConsumedCapacityMissingError);
+        expect(thrown).toMatchObject({ code: ErrorCode.CONSUMED_CAPACITY_MISSING, context: { label: 'GSI1 query for events' } });
     });
 });
 

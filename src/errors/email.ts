@@ -46,6 +46,20 @@ export class EmailProcessingError extends EmailError {
     }
 }
 
+/**
+ * Error thrown when the draft-preview setup (the Tailscale CLI, its status and serve config)
+ * cannot publish a preview, or refuses to because publishing would be unsafe.
+ */
+export class EmailPreviewError extends EmailError {
+    constructor(message: string, cause?: unknown) {
+        super(message, ErrorCode.EMAIL_PREVIEW_ERROR);
+        this.name = 'EmailPreviewError';
+        if(cause !== undefined) {
+            this.cause = cause;
+        }
+    }
+}
+
 // ============================================================================
 // WildDuck Errors
 // ============================================================================

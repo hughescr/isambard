@@ -9,8 +9,34 @@ import {
     ContactNotFoundError,
     ContactLastIdentifierError,
     ContactNoIdentifiersError,
-    BatchWriteExhaustedError
+    BatchWriteExhaustedError,
+    ConsumedCapacityMissingError,
+    MemoryAccessRepairConflictError
 } from '@/errors/storage';
+
+describe('ConsumedCapacityMissingError', () => {
+    test('names the request and carries its own code', () => {
+        const error = new ConsumedCapacityMissingError('GSI1 query for events');
+        expect(error).toBeInstanceOf(ConsumedCapacityMissingError);
+        expect(error).toBeInstanceOf(StorageError);
+        expect(error.name).toBe('ConsumedCapacityMissingError');
+        expect(error.code).toBe(ErrorCode.CONSUMED_CAPACITY_MISSING);
+        expect(error.message).toBe('GSI1 query for events reported no ConsumedCapacity; refusing to continue without RCU pacing');
+        expect(error.context).toEqual({ label: 'GSI1 query for events' });
+    });
+});
+
+describe('MemoryAccessRepairConflictError', () => {
+    test('names the memory path and carries its own code', () => {
+        const error = new MemoryAccessRepairConflictError('/state/a.md');
+        expect(error).toBeInstanceOf(MemoryAccessRepairConflictError);
+        expect(error).toBeInstanceOf(StorageError);
+        expect(error.name).toBe('MemoryAccessRepairConflictError');
+        expect(error.code).toBe(ErrorCode.MEMORY_ACCESS_REPAIR_CONFLICT);
+        expect(error.message).toBe('Memory access repair conflicts exceeded for /state/a.md');
+        expect(error.context).toEqual({ path: '/state/a.md' });
+    });
+});
 
 describe('StorageError', () => {
     test('should be an instance of StorageError, IsambardError, and Error', () => {

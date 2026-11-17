@@ -13,8 +13,21 @@ import {
     WellKnownChannelNotFoundError,
     PresenceError,
     StatusGenerationError,
-    ResponseUnavailableError
+    ResponseUnavailableError,
+    InvalidDeliveryTokenError
 } from '@/errors/discord';
+
+describe('InvalidDeliveryTokenError', () => {
+    test('names the offending character and carries its own code', () => {
+        const error = new InvalidDeliveryTokenError('!');
+        expect(error).toBeInstanceOf(InvalidDeliveryTokenError);
+        expect(error).toBeInstanceOf(DiscordError);
+        expect(error.name).toBe('InvalidDeliveryTokenError');
+        expect(error.code).toBe(ErrorCode.INVALID_DELIVERY_TOKEN);
+        expect(error.message).toBe('Delivery token contains unsupported character: !');
+        expect(error.context).toEqual({ character: '!' });
+    });
+});
 
 describe('DiscordError', () => {
     test('should have correct inheritance chain', () => {

@@ -167,6 +167,7 @@ function sendPayloadWithDeliveryToken(content: ChannelContent, item: OutboxItem)
         : content;
     // A component-only payload receives an otherwise invisible content field so an
     // ambiguous initial send remains discoverable during outbox replay.
+    // boundary cast: ChannelContent's un-parameterised ActionRowBuilder[] and the discord.js message options differ only in builder generics; the object (content/embeds/components plus nonce and enforceNonce) is passed to send() unchanged, so runtime shape is identical
     return { ...payload, content: appendDeliveryCode(payload.content ?? '', nonce), nonce, enforceNonce: true } as unknown as Parameters<TextChannel['send']>[0];
 }
 

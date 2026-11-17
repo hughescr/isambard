@@ -19,7 +19,9 @@ export {
     ContactNotFoundError,
     ContactLastIdentifierError,
     ContactNoIdentifiersError,
-    BatchWriteExhaustedError
+    BatchWriteExhaustedError,
+    ConsumedCapacityMissingError,
+    MemoryAccessRepairConflictError
 } from './storage';
 
 export {
@@ -34,7 +36,8 @@ export {
     InvalidSnowflakeError,
     WellKnownChannelNotFoundError,
     PresenceError,
-    StatusGenerationError
+    StatusGenerationError,
+    InvalidDeliveryTokenError
 } from './discord';
 
 export { PathSecurityError, MediaProcessingError } from './utils';
@@ -46,6 +49,7 @@ export {
     EmailError,
     ClassifierError,
     EmailProcessingError,
+    EmailPreviewError,
     WildDuckError,
     WildDuckAuthError
 } from './email';
@@ -89,5 +93,7 @@ export {
 export {
     VectorIndexError,
     VectorIndexClosedError,
-    VectorIndexUnavailableError
+    VectorIndexUnavailableError,
+    VectorCrossCheckError
 } from './vector-index';
+export type { VectorCrossCheckReason } from './vector-index';

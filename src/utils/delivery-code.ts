@@ -2,6 +2,8 @@
  * Invisible Separator and Invisible Plus bound a delivery code. Its payload uses
  * zero-width space, non-joiner, joiner, and word joiner to encode base-36 tokens.
  */
+import { InvalidDeliveryTokenError } from '@/errors';
+
 const START_SENTINEL = '⁣';
 const END_SENTINEL = '⁤';
 const ZERO_WIDTH_DIGITS = ['​', '‌', '‍', '⁠'] as const;
@@ -16,7 +18,7 @@ const DIGITS_PER_TOKEN_CHARACTER = 3;
 function encodeTokenCharacter(character: string): string {
     const value = TOKEN_ALPHABET.indexOf(character);
     if(value === -1) {
-        throw new Error(`Delivery token contains unsupported character: ${character}`);
+        throw new InvalidDeliveryTokenError(character);
     }
     const high = ZERO_WIDTH_DIGITS[Math.floor(value / 16)]!;
     const middle = ZERO_WIDTH_DIGITS[Math.floor(value / 4) % 4]!;

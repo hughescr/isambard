@@ -16,6 +16,7 @@ import {
     type TagIndexReadItem,
     classifyMemoryPath
 } from './types';
+import { MemoryAccessRepairConflictError } from '@/errors';
 
 type FailedMemoryItem = Record<string, { M?: Record<string, unknown> }>;
 
@@ -213,7 +214,7 @@ export class MemoryToolBackend extends DynamoTableAccess {
                 return;
             }
         }
-        throw new Error(`Memory access repair conflicts exceeded for ${path}`);
+        throw new MemoryAccessRepairConflictError(path);
     }
 
     private async tryMemoryAccessRepair(repair: Omit<UpdateCommandInput, 'TableName'>, path: MemoryPath): Promise<boolean> {

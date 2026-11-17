@@ -20,10 +20,9 @@ Never write production code without a failing test. Tests are not optional.
 
 ### Quality Gates
 Before any PR or commit:
-- [ ] All tests pass (`bun test`)
+- [ ] All tests pass (`bun run test`)
 - [ ] Zero TypeScript errors (`bun run typecheck`)
-- [ ] Zero lint warnings (`bun run lint`)
-- [ ] No new ast-grep findings (`bun run check:ast-grep`; currently 22 pre-existing findings — 21 `no-throw-new-error`, 1 `require-comment-on-double-cast` — tracked in #191; do not add to them)
+- [ ] Zero lint warnings and zero ast-grep findings (`bun run lint` runs Oxlint, the package.json ESLint check, the ast-grep scan and the Stryker directive check)
 - [ ] Mutation score = 100% (`bun mutate` — incremental over the full mutate glob, so only mutants your change affects re-execute; not `bun run mutate` or `npx stryker`. `reports/stryker-incremental.json` is sandbox-protected; use `dangerouslyDisableSandbox: true`.)
 
 ### Test Performance Anti-Patterns
@@ -79,7 +78,6 @@ See [../docs/architecture.md](../docs/architecture.md) for the subsystem map and
 ## Commands
 ```bash
 bun run dev:sst      # Development with SST shell and hot reload
-bun run dev:docker   # Full stack with DynamoDB containers
 bun run test         # Run tests
 bun mutate           # Mutation testing (incremental; see Quality Gates)
 bun run lint         # Oxlint (node, type-aware, --deny-warnings) + ESLint on package.json + Stryker directive check

@@ -6,6 +6,7 @@ import { markDraftReviewState } from './draft-review-state';
 import type { WildDuckClient, WildDuckMessage } from './wildduck-client';
 import type { ActivityLogger, NotifyFn } from '@/agent';
 import { EmailFolder } from '@/config';
+import { EmailProcessingError } from '@/errors';
 import { raceDeadline, type ApprovalCardRef, type ApprovedOutboundActionBackend, type ApprovedOutboundActionWriter } from '@/services';
 
 /** Which admin control approved the send; only the activity-log failure text differs. */
@@ -220,7 +221,7 @@ export class EmailOutboundApprovals {
             return await this.withDraftLock(uid, async () => {
                 const fresh = await this.readBounded(uid);
                 if(fresh === undefined) {
-                    throw new Error(NO_ANSWER);
+                    throw new EmailProcessingError(NO_ANSWER);
                 }
                 if(fresh?.draft !== true) {
                     return false;
@@ -247,7 +248,7 @@ export class EmailOutboundApprovals {
                     return true;
                 }
                 if(fresh === undefined) {
-                    throw new Error(NO_ANSWER);
+                    throw new EmailProcessingError(NO_ANSWER);
                 }
                 await this.deps.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, oldUid, mergeDraftMeta(fresh.metaData, { supersededBy: newUid }));
                 return true;

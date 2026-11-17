@@ -28,6 +28,22 @@ export class VectorIndexClosedError extends VectorIndexError {
     }
 }
 
+/** Why a vector cross-check run refused to complete. */
+export type VectorCrossCheckReason = 'mass_absence' | 'unprocessed_keys_exhausted' | 'requeue_not_converged';
+
+/**
+ * Thrown when a vector cross-check run cannot complete safely: a page the table reports wholly
+ * absent, UnprocessedKeys retries spent, or a requeued row that never converged.
+ */
+export class VectorCrossCheckError extends VectorIndexError {
+    declare public readonly context: { reason: VectorCrossCheckReason };
+
+    constructor(message: string, reason: VectorCrossCheckReason) {
+        super(message, ErrorCode.VECTOR_CROSS_CHECK_ERROR, { reason });
+        this.name = 'VectorCrossCheckError';
+    }
+}
+
 /**
  * Thrown when the VectorIndex cannot be opened (e.g. file permission error, disk full,
  * corrupt database, or schema migration failure).

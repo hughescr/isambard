@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { ErrorCode } from '@/errors/codes';
+import { InvalidDeliveryTokenError } from '@/errors/discord';
 import { DISCORD_MAX_LENGTH } from '@/integrations/discord/messages';
 import { appendDeliveryCode, decodeDeliveryCode, deliveryCodeFor, deliveryTokenForBase, maxContentLengthForDeliveryCode, DELIVERY_TOKEN_MAX_LENGTH } from '@/utils/delivery-code';
 
@@ -50,6 +52,14 @@ describe('zero-width delivery code', () => {
 
     test('throws for a token character outside the base-36 alphabet', () => {
         expect(() => deliveryCodeFor('!')).toThrow('Delivery token contains unsupported character: !');
+        let thrown: unknown;
+        try {
+            deliveryCodeFor('a!');
+        } catch (error: unknown) {
+            thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(InvalidDeliveryTokenError);
+        expect(thrown).toMatchObject({ code: ErrorCode.INVALID_DELIVERY_TOKEN, context: { character: '!' } });
     });
 
     test('tolerates a trailing start sentinel after the final end sentinel', () => {

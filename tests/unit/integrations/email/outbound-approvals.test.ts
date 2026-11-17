@@ -1,6 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { mockLogger } from '../../../setup';
 import type { NotifyParams } from '@/agent';
+import { ErrorCode } from '@/errors/codes';
+import { EmailProcessingError } from '@/errors/email';
 import { ApprovalCardEditGate } from '@/integrations/discord/approvals/card-edit-gate';
 import { EmailOutboundApprovals, FINGERPRINT_READ_TIMEOUT_MS, emailSendParamsSchema, type EmailOutboundApprovalsDeps } from '@/integrations/email/outbound-approvals';
 import type { WildDuckClient, WildDuckMessage } from '@/integrations/email/wildduck-client';
@@ -14,6 +16,17 @@ const LINK = { channelId: 'admin-ch', messageId: 'card-msg', edits: 0 };
 const DRAFT_DATE = '2026-09-23T11:59:00.000Z';
 const MESSAGE_ID = '<draft@example.com>';
 const UUID_PATTERN = /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/;
+
+/** The `err` field of the first logged object in a logger mock's calls. */
+function loggedErr(calls: unknown[][]): unknown {
+    return (calls[0][0] as { err: unknown }).err;
+}
+
+/** The in-lock read that gets no answer within the timeout must fail as a typed EmailProcessingError. */
+function expectNoAnswerError(err: unknown): void {
+    expect(err).toBeInstanceOf(EmailProcessingError);
+    expect(err).toMatchObject({ code: ErrorCode.EMAIL_PROCESSING_ERROR, message: 'no answer within 10s' });
+}
 
 function draftWith(metaData?: Record<string, unknown>, extra: Partial<WildDuckMessage> = {}): WildDuckMessage {
     return {
@@ -591,7 +604,8 @@ describe('EmailOutboundApprovals', () => {
 
             expect(await linking).toBe(false);
             expect(h.updateMetadata).not.toHaveBeenCalled();
-            expect(mockLogger.warn).toHaveBeenCalledWith({ err: new Error('no answer within 10s'), uid: UID, msg: 'Could not link the draft to its approval card' });
+            expect(mockLogger.warn).toHaveBeenCalledWith({ err: expect.any(EmailProcessingError), uid: UID, msg: 'Could not link the draft to its approval card' });
+            expectNoAnswerError(loggedErr(mockLogger.warn.mock.calls));
         });
     });
 
@@ -633,7 +647,8 @@ describe('EmailOutboundApprovals', () => {
 
             expect(await marking).toBe(false);
             expect(h.updateMetadata).not.toHaveBeenCalled();
-            expect(mockLogger.error).toHaveBeenCalledWith({ err: new Error('no answer within 10s'), oldUid: UID, newUid: 55, msg: 'Could not mark the replaced draft as superseded' });
+            expect(mockLogger.error).toHaveBeenCalledWith({ err: expect.any(EmailProcessingError), oldUid: UID, newUid: 55, msg: 'Could not mark the replaced draft as superseded' });
+            expectNoAnswerError(loggedErr(mockLogger.error.mock.calls));
         });
     });
 

@@ -32,8 +32,6 @@ jobs:
         run: bun run lint
       - name: Typecheck
         run: bun run typecheck
-      - name: ast-grep
-        run: bun run check:ast-grep
 
   # Authoritative run of the full test suite on the production platform (macOS), including
   # a real-Darwin install of node-llama-cpp's prebuilt binaries. Honest scoping note: the

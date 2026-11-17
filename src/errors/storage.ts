@@ -67,6 +67,36 @@ export class DynamoTimeoutError extends StorageError {
     }
 }
 
+/**
+ * Error thrown when DynamoDB omits ConsumedCapacity from a paced read. Pacing cannot continue
+ * without the figure, so the caller fails closed instead of issuing an unpaced follow-up.
+ */
+export class ConsumedCapacityMissingError extends StorageError {
+    declare public readonly context: { label: string };
+
+    constructor(label: string) {
+        super(
+            `${label} reported no ConsumedCapacity; refusing to continue without RCU pacing`,
+            ErrorCode.CONSUMED_CAPACITY_MISSING,
+            { label }
+        );
+        this.name = 'ConsumedCapacityMissingError';
+    }
+}
+
+/**
+ * Error thrown when recording a memory access keeps losing conditional-write races
+ * on the access-count repair, so the bounded retries are spent.
+ */
+export class MemoryAccessRepairConflictError extends StorageError {
+    declare public readonly context: { path: string };
+
+    constructor(path: string) {
+        super(`Memory access repair conflicts exceeded for ${path}`, ErrorCode.MEMORY_ACCESS_REPAIR_CONFLICT, { path });
+        this.name = 'MemoryAccessRepairConflictError';
+    }
+}
+
 // ============================================================================
 // Contact Errors
 // ============================================================================

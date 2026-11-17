@@ -100,6 +100,19 @@ export class InvalidSnowflakeError extends DiscordError {
     }
 }
 
+/**
+ * Error thrown when a delivery token holds a character outside the base-36 alphabet
+ * the zero-width delivery code can encode.
+ */
+export class InvalidDeliveryTokenError extends DiscordError {
+    declare public readonly context: { character: string };
+
+    constructor(character: string) {
+        super(`Delivery token contains unsupported character: ${character}`, ErrorCode.INVALID_DELIVERY_TOKEN, { character });
+        this.name = 'InvalidDeliveryTokenError';
+    }
+}
+
 // ============================================================================
 // Channel Registry Errors
 // ============================================================================

@@ -2,6 +2,8 @@ import { describe, test, expect, beforeEach, afterEach, jest } from 'bun:test';
 import { DynamoDBDocumentClient, UpdateCommand, GetCommand, PutCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
 import { mockClient } from 'aws-sdk-client-mock';
 import { mockLogger } from '../../../setup';
+import { ErrorCode } from '@/errors/codes';
+import { MemoryAccessRepairConflictError } from '@/errors/storage';
 import { DynamoTimeoutError } from '@/storage/dynamo-retry';
 import { MemoryToolBackend } from '@/storage/memory-tool/backend';
 import type { MemoryPath } from '@/storage/memory-tool/types';
@@ -13,6 +15,15 @@ const failure = (metadata?: { M?: Record<string, unknown>, NULL?: boolean } | 'a
         name: 'ConditionalCheckFailedException',
         ...(present && { Item: { PK: { S: 'DIR#/state' }, SK: { S: 'FILE#a.md' }, ...(metadata !== 'absent' && { metadata }) } }),
     });
+
+async function rejectionOf(pending: Promise<unknown>): Promise<unknown> {
+    try {
+        await pending;
+    } catch (error: unknown) {
+        return error;
+    }
+    return undefined;
+}
 
 /** Drains a bounded number of pending microtask ticks so a rejected mock command's error propagates up through the await chain before fake timers are advanced. */
 async function flushMicrotasks(remaining: number): Promise<void> {
@@ -110,13 +121,17 @@ describe('recordMemoryAccess', () => {
             .rejectsOnce(failure({ NULL: true })).rejectsOnce(failure({ NULL: true }))
             .rejectsOnce(failure({ NULL: true })).rejectsOnce(failure({ NULL: true }))
             .rejectsOnce(failure({ NULL: true })).rejectsOnce(failure({ NULL: true })).resolves({});
-        await expect(backend.recordMemoryAccess([path, '/state/b.md' as MemoryPath], now)).rejects.toThrow(`Memory access repair conflicts exceeded for ${path}`);
+        const error = await rejectionOf(backend.recordMemoryAccess([path, '/state/b.md' as MemoryPath], now));
+        expect(error).toBeInstanceOf(MemoryAccessRepairConflictError);
+        expect(error).toMatchObject({ code: ErrorCode.MEMORY_ACCESS_REPAIR_CONFLICT, message: `Memory access repair conflicts exceeded for ${path}`, context: { path } });
         expect(ddb.commandCalls(UpdateCommand)).toHaveLength(7);
     });
 
     test('makes the third repair attempt before rejecting', async () => {
         ddb.on(UpdateCommand).rejects(failure({ NULL: true }));
-        await expect(backend.recordMemoryAccess([path], now)).rejects.toThrow(`Memory access repair conflicts exceeded for ${path}`);
+        const error = await rejectionOf(backend.recordMemoryAccess([path], now));
+        expect(error).toBeInstanceOf(MemoryAccessRepairConflictError);
+        expect(error).toMatchObject({ code: ErrorCode.MEMORY_ACCESS_REPAIR_CONFLICT, message: `Memory access repair conflicts exceeded for ${path}`, context: { path } });
         expect(ddb.commandCalls(UpdateCommand)).toHaveLength(6);
     });
 

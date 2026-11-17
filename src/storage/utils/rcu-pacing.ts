@@ -8,13 +8,15 @@
  * below the budget whatever the items cost.
  */
 
+import { ConsumedCapacityMissingError } from '@/errors';
+
 /**
  * The request's DynamoDB-reported read units.
- * @throws {Error} When DynamoDB omitted ConsumedCapacity; `label` names the request.
+ * @throws {ConsumedCapacityMissingError} When DynamoDB omitted ConsumedCapacity; `label` names the request.
  */
 export function requireConsumedReadUnits(consumedReadUnits: number | undefined, label: string): number {
     if(consumedReadUnits === undefined) {
-        throw new Error(`${label} reported no ConsumedCapacity; refusing to continue without RCU pacing`);
+        throw new ConsumedCapacityMissingError(label);
     }
     return consumedReadUnits;
 }

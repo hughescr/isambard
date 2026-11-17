@@ -4,6 +4,7 @@ import { createDraftPreviewHandler } from './handler';
 import { startDraftPreviewServer, type PreviewServe, type PreviewServer } from './server';
 import { openTailscaleCli, previewMountPath, type TailscaleCli, type TailscaleDeps } from './tailscale';
 import type { EmailPreviewConfig } from '@/config';
+import { EmailPreviewError } from '@/errors';
 
 const HOUR_MS = 3_600_000;
 
@@ -87,7 +88,7 @@ function startAuto(config: EmailPreviewConfig, deps: StartDraftPreviewDeps): Dra
         const self = await tailscale.readSelf();
         const allowedLogins = config.allowedLogins ?? (self.login === undefined ? undefined : [self.login]);
         if(allowedLogins === undefined) {
-            throw new Error('Tailscale lists no login for this Mac\'s owner; set EMAIL_PREVIEW_ALLOWED_LOGINS');
+            throw new EmailPreviewError('Tailscale lists no login for this Mac\'s owner; set EMAIL_PREVIEW_ALLOWED_LOGINS');
         }
         await tailscale.preflight(self.dnsName, port);
         if(stopping) {

@@ -1,6 +1,9 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, it, jest } from 'bun:test';
 import type { BatchGetCommand } from '@aws-sdk/lib-dynamodb';
+import { ErrorCode } from '@/errors/codes';
+import { ConsumedCapacityMissingError } from '@/errors/storage';
+import { VectorCrossCheckError, type VectorCrossCheckReason } from '@/errors/vector-index';
 import { MemoryToolKeyGenerator } from '@/storage/memory-tool/key-generator';
 import { createIndexLayer } from '@/storage/memory-tool/types';
 import { VectorIndex } from '@/storage/memory-vec-store/backend';
@@ -29,7 +32,20 @@ const NOW = 5000;
 const VERSION = Date.parse('2026-09-25T01:00:00.000Z');
 const HOUR_MS = 60 * 60 * 1000;
 const RUN_FAILED = 'Vector cross-check failed; retry scheduled';
-const NOT_CONVERGED = new Error('Vector cross-check requeue did not converge');
+const NO_CAPACITY = 'Vector cross-check BatchGetItem reported no ConsumedCapacity; refusing to continue without RCU pacing';
+const NOT_CONVERGED = 'Vector cross-check requeue did not converge';
+const RETRIES_EXHAUSTED = 'Vector cross-check exhausted UnprocessedKeys retries';
+
+/** The one failed-run log line's error, after checking the log line itself. */
+function runFailure(logger: { error: ReturnType<typeof jest.fn> }): unknown {
+    expect(logger.error.mock.calls).toHaveLength(1);
+    expect(logger.error.mock.calls[0]?.[0].msg).toBe(RUN_FAILED);
+    return logger.error.mock.calls[0]?.[0].error;
+}
+
+/** The fields a typed VectorCrossCheckError carries, for `toMatchObject` after an `instanceof` check. */
+const crossCheckFields = (message: string, reason: VectorCrossCheckReason): Record<string, unknown> => ({ code: ErrorCode.VECTOR_CROSS_CHECK_ERROR, message, context: { reason } });
+const NO_CAPACITY_FIELDS = { code: ErrorCode.CONSUMED_CAPACITY_MISSING, message: NO_CAPACITY, context: { label: 'Vector cross-check BatchGetItem' } };
 const identityHash = async (n: number, content = 'unchanged'): Promise<string> => sha256Hex(`/identity/${n}.md\n${content}`);
 const sks = (...ns: number[]): string[] => ns.map(n => key(n).SK);
 const numberOf = (sk: string): number => Number(sk.slice('FILE#'.length, -'.md'.length));
@@ -168,7 +184,9 @@ describe('weekly vector cross-check', () => {
         const logger = makeLogger();
         const scheduler = createVectorCrossCheckScheduler({ vectorIndex: index, docClient: { getDocClient }, tableName: 'test', indexer: { enqueue: jest.fn(), drain: async () => {} }, logger, sleep: async () => {} });
         await scheduler.runOnce();
-        expect(logger.error.mock.calls).toEqual([[{ error: new Error('Vector cross-check refused mass absence: 1/1 keys missing (wrong table or stage?)'), msg: RUN_FAILED }]]);
+        const error = runFailure(logger);
+        expect(error).toBeInstanceOf(VectorCrossCheckError);
+        expect(error).toMatchObject(crossCheckFields('Vector cross-check refused mass absence: 1/1 keys missing (wrong table or stage?)', 'mass_absence'));
         expect(getDocClient).toHaveBeenCalledTimes(1);
         expect(index.getHash(key(1).PK, key(1).SK)).toBe('x');
         expect(index.getCrossCheckState()?.lastCompletedRowid).toBe(0);
@@ -184,7 +202,9 @@ describe('weekly vector cross-check', () => {
         const scheduler = createVectorCrossCheckScheduler({ vectorIndex: index, docClient: { send }, tableName: 'test', indexer: { enqueue: jest.fn(), drain: async () => {} }, logger, now: () => 10_000, sleep: async () => {} });
         await scheduler.runOnce();
         expect(send).toHaveBeenCalledTimes(1);
-        expect(logger.error.mock.calls).toEqual([[{ error: new Error('Vector cross-check BatchGetItem reported no ConsumedCapacity; refusing to continue without RCU pacing'), msg: RUN_FAILED }]]);
+        const error = runFailure(logger);
+        expect(error).toBeInstanceOf(ConsumedCapacityMissingError);
+        expect(error).toMatchObject(NO_CAPACITY_FIELDS);
         expect(index.getCrossCheckState()).toStrictEqual({ nextDueAt: 3_610_000, lastRunAt: null, lastCompletedRowid: 0 });
         expect(index.getHash(key(1).PK, key(1).SK)).toBe('x');
     });
@@ -195,7 +215,9 @@ describe('weekly vector cross-check', () => {
         const send = jest.fn(async () => ({ Responses: {} }));
         const { scheduler, logger } = makeScheduler({ docClient: { send } });
         await scheduler.runOnce();
-        expect(logger.error.mock.calls).toEqual([[{ error: new Error('Vector cross-check BatchGetItem reported no ConsumedCapacity; refusing to continue without RCU pacing'), msg: RUN_FAILED }]]);
+        const error = runFailure(logger);
+        expect(error).toBeInstanceOf(ConsumedCapacityMissingError);
+        expect(error).toMatchObject(NO_CAPACITY_FIELDS);
     });
 
     it('retries unprocessed keys with shared RCU pacing and keeps a strongly present row', async () => {
@@ -253,7 +275,9 @@ describe('weekly vector cross-check', () => {
         expect(enqueue).toHaveBeenCalledWith({ kind: 'upsert', path: '/identity/1.md', layer: 'identity', content: 'new', ttl: undefined, sourceUpdatedAt: Date.parse(raw.updatedAt) });
         expect(drain).toHaveBeenCalledTimes(1);
         expect(send).toHaveBeenCalledTimes(3);
-        expect(logger.error.mock.calls[0]?.[0].error).toEqual(new Error('Vector cross-check requeue did not converge'));
+        const error = logger.error.mock.calls[0]?.[0].error;
+        expect(error).toBeInstanceOf(VectorCrossCheckError);
+        expect(error).toMatchObject(crossCheckFields(NOT_CONVERGED, 'requeue_not_converged'));
         expect(index.getCrossCheckState()?.lastCompletedRowid).toBe(0);
     });
 
@@ -484,7 +508,9 @@ describe('weekly vector cross-check', () => {
         const logger = { info: jest.fn(), error: jest.fn() };
         await createVectorCrossCheckScheduler({ vectorIndex: index, docClient: { send }, tableName: 'test', indexer: { enqueue: jest.fn(), drain: async () => {} }, logger, now: () => 1000, sleep: async () => {} }).runOnce();
         expect(send).toHaveBeenCalledTimes(11);
-        expect(logger.error.mock.calls[0]?.[0].error).toEqual(new Error('Vector cross-check exhausted UnprocessedKeys retries'));
+        const error = logger.error.mock.calls[0]?.[0].error;
+        expect(error).toBeInstanceOf(VectorCrossCheckError);
+        expect(error).toMatchObject(crossCheckFields(RETRIES_EXHAUSTED, 'unprocessed_keys_exhausted'));
         expect(index.getCrossCheckState()?.lastCompletedRowid).toBe(0);
     });
 
@@ -839,7 +865,9 @@ describe('weekly vector cross-check', () => {
         const { scheduler, logger } = makeScheduler({ docClient: { send }, sleep: recordingSleep(sleeps) });
         await scheduler.runOnce();
         expect(sleeps).toEqual([1000, 2000, 4000, 8000, 16_000, 30_000, 30_000, 30_000, 30_000, 30_000]);
-        expect(logger.error.mock.calls).toEqual([[{ error: new Error('Vector cross-check exhausted UnprocessedKeys retries'), msg: RUN_FAILED }]]);
+        const error = runFailure(logger);
+        expect(error).toBeInstanceOf(VectorCrossCheckError);
+        expect(error).toMatchObject(crossCheckFields(RETRIES_EXHAUSTED, 'unprocessed_keys_exhausted'));
     });
 
     it('keeps going past a page just under both the RCU and requeue budgets', async () => {
@@ -1076,7 +1104,9 @@ describe('weekly vector cross-check', () => {
         const { send } = fakeTable(() => memoryItem(1, 'new'));
         const { scheduler, logger } = makeScheduler({ docClient: { send }, indexer: withDrain(removeRow1) });
         await scheduler.runOnce();
-        expect(logger.error.mock.calls).toEqual([[{ error: NOT_CONVERGED, msg: RUN_FAILED }]]);
+        const error = runFailure(logger);
+        expect(error).toBeInstanceOf(VectorCrossCheckError);
+        expect(error).toMatchObject(crossCheckFields(NOT_CONVERGED, 'requeue_not_converged'));
     });
 
     it('does not treat a requeue with the wrong indexed TTL as converged', async () => {
@@ -1089,7 +1119,9 @@ describe('weekly vector cross-check', () => {
         });
         const { scheduler, logger } = makeScheduler({ docClient: { send }, indexer });
         await scheduler.runOnce();
-        expect(logger.error.mock.calls).toEqual([[{ error: NOT_CONVERGED, msg: RUN_FAILED }]]);
+        const error = runFailure(logger);
+        expect(error).toBeInstanceOf(VectorCrossCheckError);
+        expect(error).toMatchObject(crossCheckFields(NOT_CONVERGED, 'requeue_not_converged'));
     });
 
     it('does not treat a requeue recreated at a later rowid as converged', async () => {
@@ -1103,6 +1135,8 @@ describe('weekly vector cross-check', () => {
         });
         const { scheduler, logger } = makeScheduler({ docClient: { send }, indexer });
         await scheduler.runOnce();
-        expect(logger.error.mock.calls).toEqual([[{ error: NOT_CONVERGED, msg: RUN_FAILED }]]);
+        const error = runFailure(logger);
+        expect(error).toBeInstanceOf(VectorCrossCheckError);
+        expect(error).toMatchObject(crossCheckFields(NOT_CONVERGED, 'requeue_not_converged'));
     });
 });

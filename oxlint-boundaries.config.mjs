@@ -12,8 +12,8 @@ import { defineBoundaries } from '@hughescr/oxlint-config-default';
  *
  * Module Hierarchy (from independent to dependent):
  * 1. utils      - Pure utilities, no domain knowledge
- *    Note: utils/path-validator.ts, utils/contained-fs.ts, utils/media/**, and
- *    utils/assert-never.ts are allowed to import from errors (throw typed errors).
+ *    Note: utils/path-validator.ts, utils/contained-fs.ts, utils/media/**,
+ *    utils/assert-never.ts, and utils/delivery-code.ts are allowed to import from errors (throw typed errors).
  *    This is scoped via fileInternalPath.
  * 2. errors     - Error types, minimal dependencies
  * 3. config     - Configuration loading, minimal dependencies
@@ -116,6 +116,7 @@ export const architecture = defineBoundaries({
             { from: { element: { type: 'utils', fileInternalPath: 'contained-fs.ts' } }, allow: { to: { element: { type: ['errors'] } } } },
             { from: { element: { type: 'utils', fileInternalPath: 'media/**' } }, allow: { to: { element: { type: ['errors'] } } } },
             { from: { element: { type: 'utils', fileInternalPath: 'assert-never.ts' } }, allow: { to: { element: { type: ['errors'] } } } },
+            { from: { element: { type: 'utils', fileInternalPath: 'delivery-code.ts' } }, allow: { to: { element: { type: ['errors'] } } } },
             { from: { element: { type: 'errors' } },  allow: { to: { element: { type: ['utils'] } } } },
             { from: { element: { type: 'config' } },  allow: { to: { element: { type: ['utils', 'errors'] } } } },
             { from: { element: { type: 'storage' } },  allow: { to: { element: { type: ['utils', 'errors', 'config'] } } } },

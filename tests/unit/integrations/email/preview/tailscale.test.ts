@@ -1,4 +1,6 @@
 import { describe, test, expect, mock } from 'bun:test';
+import { ErrorCode } from '@/errors/codes';
+import { EmailPreviewError } from '@/errors/email';
 import type { CommandResult } from '@/integrations/email/preview/bounded-runner';
 import { MAC_APP_TAILSCALE_CLI, openTailscaleCli, previewMountPath, type TailscaleCli, type TailscaleDeps } from '@/integrations/email/preview/tailscale';
 
@@ -55,10 +57,13 @@ async function cli(script: Script, overrides: Partial<TailscaleDeps> = {}): Prom
     return { tailscale: await openTailscaleCli(d), run: d.run };
 }
 
+/** The rejection of `pending`, which every Tailscale failure must make a typed EmailPreviewError. */
 async function rejection(pending: Promise<unknown>): Promise<Error> {
     try {
         await pending;
     } catch (err: unknown) {
+        expect(err).toBeInstanceOf(EmailPreviewError);
+        expect((err as EmailPreviewError).code).toBe(ErrorCode.EMAIL_PREVIEW_ERROR);
         return err as Error;
     }
     throw new Error('expected a rejection');

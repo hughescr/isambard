@@ -24,16 +24,20 @@ classDiagram
     StorageError <|-- ContactLastIdentifierError
     StorageError <|-- ContactNoIdentifiersError
     StorageError <|-- BatchWriteExhaustedError
+    StorageError <|-- ConsumedCapacityMissingError
+    StorageError <|-- MemoryAccessRepairConflictError
     StorageError <|-- VectorIndexError
 
     VectorIndexError <|-- VectorIndexClosedError
     VectorIndexError <|-- VectorIndexUnavailableError
+    VectorIndexError <|-- VectorCrossCheckError
 
 
     DiscordError <|-- ChannelNotFoundByIdError
     DiscordError <|-- ChannelNotAccessibleError
     DiscordError <|-- MessageFetchError
     DiscordError <|-- InvalidSnowflakeError
+    DiscordError <|-- InvalidDeliveryTokenError
     DiscordError <|-- ChannelRegistryError
     DiscordError <|-- PresenceError
 
@@ -46,6 +50,7 @@ classDiagram
     IsambardError <|-- EmailError
     EmailError <|-- ClassifierError
     EmailError <|-- EmailProcessingError
+    EmailError <|-- EmailPreviewError
     EmailError <|-- WildDuckError
     WildDuckError <|-- WildDuckAuthError
 

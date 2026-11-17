@@ -7,6 +7,7 @@ import { createRcuPacer, recordRcuPage, sleepRespectingSignal, waitForRcuPacer }
 import type { VectorIndex } from './backend.js';
 import { sha256Hex } from './hash.js';
 import type { AsyncIndexer } from './indexer.js';
+import { ConsumedCapacityMissingError, VectorCrossCheckError } from '@/errors';
 
 export const VECTOR_CROSS_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 const RETRY_MS = 60 * 60 * 1000;
@@ -59,7 +60,7 @@ function checkAbort(signal: AbortSignal): void {
 /** Refuse to tombstone a fully absent page: the configured table or stage may be wrong. */
 function assertSafeAbsence(checked: number, absent: number): void {
     if(absent === checked) {
-        throw new Error(`Vector cross-check refused mass absence: ${absent}/${checked} keys missing (wrong table or stage?)`);
+        throw new VectorCrossCheckError(`Vector cross-check refused mass absence: ${absent}/${checked} keys missing (wrong table or stage?)`, 'mass_absence');
     }
 }
 
@@ -136,7 +137,7 @@ function createReader(deps: VectorCrossCheckDeps, signal: AbortSignal, counts: C
             const units = response.ConsumedCapacity?.[0]?.CapacityUnits;
             // Fail closed: an unreported read must not be followed by an unpaced retry or phase.
             recordRcuPage(pacer, units, RCU_PER_SECOND, true, () => {
-                throw new Error('Vector cross-check BatchGetItem reported no ConsumedCapacity; refusing to continue without RCU pacing');
+                throw new ConsumedCapacityMissingError('Vector cross-check BatchGetItem');
             }, now);
             counts.rcu += units!;
             for(const item of response.Responses?.[deps.tableName] ?? []) {
@@ -145,7 +146,7 @@ function createReader(deps: VectorCrossCheckDeps, signal: AbortSignal, counts: C
             pending = (response.UnprocessedKeys?.[deps.tableName]?.Keys ?? []) as { PK: string, SK: string }[];
             if(pending.length > 0) {
                 if(++retries > 10) {
-                    throw new Error('Vector cross-check exhausted UnprocessedKeys retries');
+                    throw new VectorCrossCheckError('Vector cross-check exhausted UnprocessedKeys retries', 'unprocessed_keys_exhausted');
                 }
                 // DynamoDB requests exponential backoff for UnprocessedKeys; reuse the shared
                 // deadline so a retry also pays any outstanding RCU debt.
@@ -267,7 +268,7 @@ async function checkPage(deps: VectorCrossCheckDeps, page: Snapshot[], signal: A
             const hash = await sha256Hex(`${candidate.path}\n${item.content}`);
             const indexed = indexedRow(deps, candidate.row);
             if(indexed?.contentHash !== hash || indexed.ttl !== (storedTtl(raw) ?? null)) {
-                throw new Error('Vector cross-check requeue did not converge');
+                throw new VectorCrossCheckError('Vector cross-check requeue did not converge', 'requeue_not_converged');
             }
         }
     }
