@@ -134,6 +134,16 @@ describe('openContainedForRead', () => {
         expect(await sizeOf(root, path.join(fs.realpathSync(root), 'x.pdf'))).toBe(PDF.length);
     });
 
+    test('accepts a path lexically under a symlinked root even though it is outside the real root', async () => {
+        const { root } = freshRoot();
+        const linkedRoot = path.join(path.dirname(root), 'linked-root');
+        fs.symlinkSync(fs.realpathSync(root), linkedRoot);
+        fs.writeFileSync(path.join(root, 'x.pdf'), PDF);
+
+        expect(await sizeOf(linkedRoot, 'x.pdf')).toBe(PDF.length);
+        expect(await sizeOf(linkedRoot, path.join(linkedRoot, 'x.pdf'))).toBe(PDF.length);
+    });
+
     test('reads a file of exactly maxBytes and rejects one byte more', async () => {
         const { root } = freshRoot();
         fs.writeFileSync(path.join(root, 'x.pdf'), PDF);
