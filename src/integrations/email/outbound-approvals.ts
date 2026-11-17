@@ -79,7 +79,8 @@ const NO_ANSWER = `no answer within ${FINGERPRINT_READ_TIMEOUT_MS / 1000}s`;
  * This class is the only writer of an existing draft's WildDuck metaData (#158). WildDuck
  * replaces metaData wholesale, so every write — the approval marker, the rejection, the card
  * link and `supersededBy` — runs under the draft's key `email-draft:<uid>` on the shared gate
- * and merges into a read taken inside that lock, never into an earlier snapshot. Decisions read
+ * (taken here, except for `supersededBy`, whose caller — the amend — already holds it) and
+ * merges into a read taken inside that lock, never into an earlier snapshot. Decisions read
  * and write under the same key, so of two decisions for one UID — from one card or two — the
  * first wins and the second sees it.
  */
@@ -237,22 +238,23 @@ export class EmailOutboundApprovals {
 
     /**
      * Mark `oldUid` as replaced by `newUid` (when an amend could not delete it), merging into a
-     * read taken under the old draft's lock so any decision marker is kept. True when written or
-     * when the old UID is already gone; false (logged) on any failure.
+     * fresh read so any decision marker is kept. The CALLER must already hold the old draft's key
+     * `email-draft:<oldUid>` — the amend does, from its own read through this write, so no
+     * decision can land on the old UID before it is superseded — and this method does not take
+     * it: the gate is not re-entrant. True when written or when the old UID is already gone;
+     * false (logged) on any failure.
      */
-    async markSuperseded(oldUid: number, newUid: number): Promise<boolean> {
+    async markSupersededLocked(oldUid: number, newUid: number): Promise<boolean> {
         try {
-            return await this.withDraftLock(oldUid, async () => {
-                const fresh = await this.readBounded(oldUid);
-                if(fresh === null) {
-                    return true;
-                }
-                if(fresh === undefined) {
-                    throw new EmailProcessingError(NO_ANSWER);
-                }
-                await this.deps.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, oldUid, mergeDraftMeta(fresh.metaData, { supersededBy: newUid }));
+            const fresh = await this.readBounded(oldUid);
+            if(fresh === null) {
                 return true;
-            });
+            }
+            if(fresh === undefined) {
+                throw new EmailProcessingError(NO_ANSWER);
+            }
+            await this.deps.wildDuckClient.updateMessageMetadata(EmailFolder.Drafts, oldUid, mergeDraftMeta(fresh.metaData, { supersededBy: newUid }));
+            return true;
         } catch (err: unknown) {
             logger.error({ err, oldUid, newUid, msg: 'Could not mark the replaced draft as superseded' });
             return false;

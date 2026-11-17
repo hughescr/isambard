@@ -74,7 +74,7 @@ function makeHarness(stored: WildDuckMessage | null, card: ApprovalCardMessage =
     });
     const presenter = new EmailApprovalCardPresenter({
         wildDuckClient: { getMessage },
-        draftMeta:      { linkCard, markSuperseded },
+        draftMeta:      { linkCard, markSupersededLocked: markSuperseded },
         postCard,
         fetchChannel,
         reply,
@@ -455,7 +455,7 @@ describe('EmailApprovalCardPresenter', () => {
         });
     });
 
-    test('markSuperseded delegates to the draft metaData owner', async () => {
+    test('markSuperseded delegates to the draft metaData owner\'s held-lock write', async () => {
         const h = makeHarness(null);
         h.markSuperseded.mockImplementation(async () => false);
 
@@ -467,7 +467,7 @@ describe('EmailApprovalCardPresenter', () => {
         const fetchChannel = mock(async (_channelId: string): Promise<ApprovalCardChannel | null> => null);
         const presenter = new EmailApprovalCardPresenter({
             wildDuckClient: { getMessage: mock(async () => draft(NEW_UID, { approvalCard: LINK })) },
-            draftMeta:      { linkCard: mock(async () => true), markSuperseded: mock(async () => true) },
+            draftMeta:      { linkCard: mock(async () => true), markSupersededLocked: mock(async () => true) },
             postCard:       mock(async (): Promise<SendResult> => ({ status: 'unavailable' })),
             fetchChannel,
             reply:          mock(async () => undefined),

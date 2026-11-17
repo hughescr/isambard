@@ -1,9 +1,12 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn, jest } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { buildAdminRejectedSubsection } from '../../../src/agent/context-builder';
 import { buildAttachments, createEmailMCPServer, type EmailApprovalCardPort, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
-import { WildDuckError, type WildDuckClient, type WildDuckSearchParams } from '../../../src/integrations/email/wildduck-client';
+import { ApprovalCardEditGate } from '../../../src/integrations/discord/approvals/card-edit-gate';
+import { EmailOutboundApprovals } from '../../../src/integrations/email/outbound-approvals';
+import { WildDuckError, type WildDuckClient, type WildDuckMessage, type WildDuckSearchParams, type WildDuckUploadPayload } from '../../../src/integrations/email/wildduck-client';
+import type { ApprovedOutboundAction } from '../../../src/services';
 import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
 import type { ServiceHealthEntry } from '../../../src/services/types';
@@ -3887,6 +3890,356 @@ describe('createEmailMCPServer', () => {
                 expect.objectContaining({ subject: '', text: '' }),
                 42
             );
+        });
+
+        test('uploads no recipients when neither the amend nor the original draft has a To', async () => {
+            mockGetMessageAmend.mockImplementation(async () => ({ id: 42, subject: 'S', text: 'T' }));
+            const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest) });
+
+            await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+            const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
+            expect(payload.to).toEqual([]);
+        });
+
+        describe('under the draft lock', () => {
+            let events: string[];
+            let draftLocks: { acquire: ReturnType<typeof mock> };
+            let present: ReturnType<typeof mock>;
+
+            beforeEach(() => {
+                events = [];
+                draftLocks = {
+                    acquire: mock(async (key: string) => {
+                        events.push(`acquire ${key}`);
+                        return () => {
+                            events.push(`release ${key}`);
+                        };
+                    }),
+                };
+                mockGetMessageAmend.mockImplementation(async () => {
+                    events.push('read');
+                    return originalDraft;
+                });
+                mockUploadMessageAmend.mockImplementation(async () => {
+                    events.push('upload');
+                    return { id: 55, previousDeleted: true };
+                });
+                mockDeleteMessageAmend.mockImplementation(async () => {
+                    events.push('delete');
+                });
+                present = mock(async () => {
+                    events.push('present');
+                    return 'posted';
+                });
+            });
+
+            test('reads, uploads and releases email-draft:<uid> before presenting the new draft', async () => {
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present) });
+
+                const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+                expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+                expect(events).toEqual(['acquire email-draft:42', 'read', 'upload', 'release email-draft:42', 'present']);
+            });
+
+            test('deletes a left-behind old draft before releasing the key', async () => {
+                mockUploadMessageAmend.mockImplementation(async () => {
+                    events.push('upload');
+                    return { id: 55, previousDeleted: false };
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present) });
+
+                await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+                expect(events).toEqual(['acquire email-draft:42', 'read', 'upload', 'delete', 'release email-draft:42', 'present']);
+            });
+
+            test('marks an undeletable old draft superseded before releasing the key', async () => {
+                mockUploadMessageAmend.mockImplementation(async () => {
+                    events.push('upload');
+                    return { id: 55, previousDeleted: false };
+                });
+                mockDeleteMessageAmend.mockImplementation(async () => {
+                    events.push('delete');
+                    throw new Error('network down');
+                });
+                const markSuperseded = mock(async () => {
+                    events.push('superseded');
+                    return true;
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present, { markSuperseded }) });
+
+                const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+                expect(getText(result)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+                expect(events).toEqual(['acquire email-draft:42', 'read', 'upload', 'delete', 'superseded', 'release email-draft:42', 'present']);
+            });
+
+            test.each([
+                ['an approved draft', { ...originalDraft, metaData: { approval: { actionId: 'a', at: 'b' } } }, 'Draft Drafts:42 has an admin approval recorded; it can\'t be amended.'],
+                ['a replaced draft', { ...originalDraft, metaData: { supersededBy: 60 } }, 'Draft Drafts:42 was already replaced by Drafts:60.'],
+                ['a missing draft', null, 'Draft Drafts:42 not found.'],
+            ])('releases the key after refusing %s, uploading nothing', async (_label, draft, text) => {
+                mockGetMessageAmend.mockImplementation(async () => {
+                    events.push('read');
+                    return draft;
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present) });
+
+                const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+                expect(result).toEqual({ content: [{ type: 'text', text }], isError: true });
+                expect(events).toEqual(['acquire email-draft:42', 'read', 'release email-draft:42']);
+            });
+
+            test.each([
+                ['the read', 'read', ['acquire email-draft:42', 'read', 'release email-draft:42']],
+                ['the upload', 'upload', ['acquire email-draft:42', 'read', 'upload', 'release email-draft:42']],
+                ['marking the old draft superseded', 'superseded', ['acquire email-draft:42', 'read', 'upload', 'delete', 'superseded', 'release email-draft:42']],
+            ])('releases the key when %s throws, presenting nothing', async (_label, failing, expected) => {
+                const fail = (step: string): void => {
+                    events.push(step);
+                    if(step === failing) {
+                        throw new Error(`${step} failed`);
+                    }
+                };
+                mockGetMessageAmend.mockImplementation(async () => {
+                    fail('read');
+                    return originalDraft;
+                });
+                mockUploadMessageAmend.mockImplementation(async () => {
+                    fail('upload');
+                    return { id: 55, previousDeleted: false };
+                });
+                mockDeleteMessageAmend.mockImplementation(async () => {
+                    events.push('delete');
+                    throw new Error('network down');
+                });
+                const markSuperseded = mock(async () => {
+                    fail('superseded');
+                    return true;
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present, { markSuperseded }) });
+
+                const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+                expect(result.isError).toBe(true);
+                expect(getText(result)).toContain(`${failing} failed`);
+                expect(events).toEqual(expected);
+            });
+
+            test('builds the upload from the read taken inside the lock, not from the draft as it was before', async () => {
+                let stored: Record<string, unknown> = { ...originalDraft, metaData: { approvalCard: LINK } };
+                mockGetMessageAmend.mockImplementation(async () => stored);
+                const held = Promise.withResolvers<undefined>();
+                draftLocks.acquire.mockImplementation(async () => {
+                    await held.promise;
+                    return () => { /* intentionally empty */ };
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present) });
+
+                const amending = getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+                await drainMicrotasks(50);
+                expect(draftLocks.acquire.mock.calls).toEqual([['email-draft:42']]);
+                expect(mockGetMessageAmend).not.toHaveBeenCalled();
+                stored = { id: 42, subject: 'Fresh Subject', text: 'Fresh body', to: [{ address: 'fresh@example.com' }], metaData: { approvalCard: { ...LINK, edits: 4 } } };
+                held.resolve(undefined);
+                const result = await amending;
+
+                const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
+                expect(payload).toMatchObject({ subject: 'Fresh Subject', text: 'Fresh body', to: [{ address: 'fresh@example.com' }], metaData: { approvalCard: { ...LINK, edits: 5 } } });
+                expect(mockGetMessageAmend).toHaveBeenCalledTimes(1);
+                expect(present.mock.calls).toEqual([[55, 42]]);
+                expect(result.isError).toBeUndefined();
+            });
+        });
+
+        describe('against a concurrent admin approval on the shared gate (#161)', () => {
+            const CARD_REF = { channelId: 'admin-ch', messageId: 'card-1' };
+            const notFoundError = (): WildDuckError => new WildDuckError('WildDuck API error: 404 Not Found', undefined, { status: 404 });
+
+            let events: string[];
+            let drafts: Map<number, WildDuckMessage>;
+            let rows: Map<string, ApprovedOutboundAction>;
+            let gate: ApprovalCardEditGate;
+            let approvals: EmailOutboundApprovals;
+            let raceClient: WildDuckClient;
+            let previousDeleted: boolean;
+            let uploadHold: Promise<unknown>;
+            let markerHold: Promise<unknown>;
+            let deleteFailure: Error | undefined;
+            let metadataFailure: Error | undefined;
+
+            const serverWithGate = (): ReturnType<typeof createEmailMCPServer> => createEmailMCPServer({
+                wildDuckClient: raceClient,
+                draftLocks:     gate,
+                markSuperseded: async (oldUid: number, newUid: number) => approvals.markSupersededLocked(oldUid, newUid),
+            });
+
+            beforeEach(() => {
+                jest.useFakeTimers();
+                events = [];
+                drafts = new Map([[42, {
+                    id:        42,
+                    draft:     true,
+                    messageId: '<draft-42@example.com>',
+                    date:      '2026-11-17T09:00:00.000Z',
+                    subject:   'Original Subject',
+                    to:        [{ address: 'original-to@example.com' }],
+                    text:      'Original body text',
+                    metaData:  { approvalCard: LINK },
+                }]]);
+                rows = new Map();
+                gate = new ApprovalCardEditGate();
+                previousDeleted = true;
+                uploadHold = Promise.resolve();
+                markerHold = Promise.resolve();
+                deleteFailure = undefined;
+                metadataFailure = undefined;
+                raceClient = {
+                    getUserAddresses: mockGetUserAddresses,
+                    getMessage:       mock(async (_folder: string, uid: number) => {
+                        events.push(`read ${uid}`);
+                        const draft = drafts.get(uid);
+                        return draft === undefined ? null : { ...draft };
+                    }),
+                    updateMessageMetadata: mock(async (_folder: string, uid: number, metaData: Record<string, unknown>) => {
+                        events.push(`metadata ${uid}`);
+                        await markerHold;
+                        if(metadataFailure) {
+                            throw metadataFailure;
+                        }
+                        const draft = drafts.get(uid);
+                        if(draft === undefined) {
+                            throw notFoundError();
+                        }
+                        drafts.set(uid, { ...draft, metaData });
+                    }),
+                    uploadReplacingDraft: mock(async (payload: WildDuckUploadPayload, previousUid: number) => {
+                        events.push('upload');
+                        await uploadHold;
+                        drafts.set(55, { id: 55, draft: true, subject: payload.subject, to: payload.to, text: payload.text, metaData: payload.metaData });
+                        if(previousDeleted) {
+                            drafts.delete(previousUid);
+                        }
+                        return { id: 55, previousDeleted };
+                    }),
+                    deleteMessage: mock(async (_folder: string, uid: number) => {
+                        events.push(`delete ${uid}`);
+                        if(deleteFailure) {
+                            throw deleteFailure;
+                        }
+                        if(!drafts.delete(uid)) {
+                            throw notFoundError();
+                        }
+                    }),
+                } as unknown as WildDuckClient;
+                approvals = new EmailOutboundApprovals({
+                    wildDuckClient: raceClient,
+                    actionWriter:   {
+                        create: async (action: ApprovedOutboundAction) => {
+                            events.push('row');
+                            rows.set(action.id, action);
+                        },
+                    },
+                    actionReader: { get: async (id: string) => rows.get(id) },
+                    draftLocks:   gate,
+                    notify:       () => true,
+                });
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            test('an approval arriving while the amend uploads waits for it, then finds the old draft gone', async () => {
+                const upload = Promise.withResolvers<undefined>();
+                uploadHold = upload.promise;
+
+                const amending = getToolHandler(serverWithGate(), 'amendAndResubmitDraft')({ message: 'Drafts:42', body: 'New body' });
+                await drainMicrotasks(50);
+                expect(events).toEqual(['read 42', 'upload']);
+                const approving = approvals.approveSend(42, 'direct', CARD_REF);
+                await drainMicrotasks(50);
+                expect(events).toEqual(['read 42', 'upload']);
+                upload.resolve(undefined);
+                const [amended, approved] = await Promise.all([amending, approving]);
+
+                expect(approved).toEqual({ status: 'refused', reason: 'gone', detail: 'The draft is no longer in Drafts' });
+                expect(rows.size).toBe(0);
+                expect(getText(amended)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+                expect(events).toEqual(['read 42', 'upload', 'read 42']);
+            });
+
+            test('an approval waits while the amend deletes the old draft WildDuck left behind', async () => {
+                previousDeleted = false;
+                const upload = Promise.withResolvers<undefined>();
+                uploadHold = upload.promise;
+
+                const amending = getToolHandler(serverWithGate(), 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+                await drainMicrotasks(50);
+                const approving = approvals.approveSend(42, 'direct', CARD_REF);
+                await drainMicrotasks(50);
+                upload.resolve(undefined);
+                const [amended, approved] = await Promise.all([amending, approving]);
+
+                expect(approved).toEqual({ status: 'refused', reason: 'gone', detail: 'The draft is no longer in Drafts' });
+                expect(rows.size).toBe(0);
+                expect(getText(amended)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+                expect(events).toEqual(['read 42', 'upload', 'delete 42', 'read 42']);
+            });
+
+            test('an approval waits while the amend marks an undeletable old draft superseded, under the held key and without deadlock', async () => {
+                previousDeleted = false;
+                deleteFailure = new Error('network down');
+                const upload = Promise.withResolvers<undefined>();
+                uploadHold = upload.promise;
+
+                const amending = getToolHandler(serverWithGate(), 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+                await drainMicrotasks(50);
+                const approving = approvals.approveSend(42, 'direct', CARD_REF);
+                await drainMicrotasks(50);
+                upload.resolve(undefined);
+                const [amended, approved] = await Promise.all([amending, approving]);
+
+                expect(approved).toEqual({ status: 'refused', reason: 'gone', detail: 'The draft was replaced by Drafts:55' });
+                expect(rows.size).toBe(0);
+                expect(drafts.get(42)?.metaData).toEqual({ approvalCard: LINK, supersededBy: 55 });
+                expect(getText(amended)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55).');
+                expect(events).toEqual(['read 42', 'upload', 'delete 42', 'read 42', 'metadata 42', 'read 42']);
+            });
+
+            test('an approval that took the key first is seen by the amend, which uploads and deletes nothing', async () => {
+                const marker = Promise.withResolvers<undefined>();
+                markerHold = marker.promise;
+
+                const approving = approvals.approveSend(42, 'direct', CARD_REF);
+                await drainMicrotasks(50);
+                expect(events).toEqual(['read 42', 'metadata 42']);
+                const amending = getToolHandler(serverWithGate(), 'amendAndResubmitDraft')({ message: 'Drafts:42', body: 'New body' });
+                await drainMicrotasks(50);
+                expect(events).toEqual(['read 42', 'metadata 42']);
+                marker.resolve(undefined);
+                const [approved, amended] = await Promise.all([approving, amending]);
+
+                expect(approved).toEqual({ status: 'recorded' });
+                expect(amended).toEqual({ content: [{ type: 'text', text: 'Draft Drafts:42 has an admin approval recorded; it can\'t be amended.' }], isError: true });
+                expect(events).toEqual(['read 42', 'metadata 42', 'row', 'read 42']);
+                expect(drafts.has(42)).toBe(true);
+                expect(drafts.has(55)).toBe(false);
+            });
+
+            test('when the old draft can be neither deleted nor marked superseded, warns and releases the key', async () => {
+                previousDeleted = false;
+                deleteFailure = new Error('network down');
+                metadataFailure = new Error('wildduck down');
+
+                const amended = await getToolHandler(serverWithGate(), 'amendAndResubmitDraft')({ message: 'Drafts:42' });
+
+                expect(getText(amended)).toBe('Message saved to Drafts, pending admin approval (draft UID: 55). Warning: the previous version Drafts:42 could not be removed; delete it with deleteDraft.');
+                expect(gate.pendingEdit('email-draft:42')).toBeUndefined();
+            });
         });
     });
 

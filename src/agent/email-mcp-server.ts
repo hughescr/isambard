@@ -11,7 +11,7 @@ import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthG
 import { EmailFolder } from '@/config';
 import { EmailProcessingError, WildDuckError } from '@/errors';
 // eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage } from '@/integrations/email';
+import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckUploadPayload } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner } from '@/utils';
@@ -64,6 +64,21 @@ function amendCarry(metaData: unknown, meta: DraftApprovalMeta): { metaData: Rec
     };
 }
 
+/** What an amend changes; an absent field keeps the draft's own value. */
+interface DraftAmendment {
+    from:     WildDuckUploadPayload['from']
+    subject?: string
+    body?:    string
+    to?:      WildDuckUploadPayload['to']
+}
+
+/** An amend's new UID, the tool-text warning about its old UID ('' when none), and the edit number its card will show. */
+interface AmendedDraft {
+    newUid:  number
+    warning: string
+    edits:   number
+}
+
 /** Whether a WildDuck call failed because the message does not exist. */
 function isNotFound(err: unknown): boolean {
     return err instanceof WildDuckError && err.context?.status === 404;
@@ -84,7 +99,10 @@ export interface EmailApprovalCardPort {
     present(uid: number, previousUid?: number): Promise<ApprovalCardPresentation>
     /** Mark a just-deleted draft's card deleted (read before the delete); never throws. */
     markDeleted(draft: WildDuckMessage, uid: number): Promise<void>
-    /** Mark `oldUid` replaced by `newUid` when an amend could not delete it; false when that failed too. */
+    /**
+     * Mark `oldUid` replaced by `newUid` when an amend could not delete it; false when that failed
+     * too. Called holding `email-draft:<oldUid>`, so it must not take that key (the gate is not re-entrant).
+     */
     markSuperseded(oldUid: number, newUid: number): Promise<boolean>
 }
 
@@ -99,9 +117,9 @@ interface EmailMCPServerOptions {
     allowlist?:             PersonAllowlist
     /** Optional admin approval cards for non-allowlisted outbound email (the Discord presenter) */
     approvalCards?:         EmailApprovalCardPort
-    /** Marks an amended draft's old UID superseded when no approval cards are configured (EmailOutboundApprovals.markSuperseded) */
+    /** Marks an amended draft's old UID superseded when no approval cards are configured; called holding `email-draft:<oldUid>` (EmailOutboundApprovals.markSupersededLocked) */
     markSuperseded?:        (oldUid: number, newUid: number) => Promise<boolean>
-    /** The process-wide approval card gate; deleteDraft holds `email-draft:<uid>` on it so it cannot race an admin decision */
+    /** The process-wide approval card gate; deleteDraft and amendAndResubmitDraft hold `email-draft:<uid>` on it so they cannot race an admin decision */
     draftLocks?:            DraftLocks
     /** Optional service health registry for fast-fail guards */
     healthRegistry?:        ServiceHealthRegistry
@@ -419,7 +437,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
     /**
      * Remove an amended draft's old UID that WildDuck's replace left behind: delete it (already
      * gone counts), or failing that mark it superseded. Returns a warning for the tool text when
-     * both failed, else ''.
+     * both failed, else ''. Runs holding `email-draft:<oldUid>`, so the supersede write is the
+     * held-lock one and never takes that key again.
      */
     async function removeReplacedDraft(oldUid: number, newUid: number): Promise<string> {
         try {
@@ -433,6 +452,46 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         }
         const marked = await (approvalCards ? approvalCards.markSuperseded(oldUid, newUid) : options.markSuperseded?.(oldUid, newUid)) ?? false;
         return marked ? '' : ` Warning: the previous version ${EmailFolder.Drafts}:${oldUid} could not be removed; delete it with deleteDraft.`;
+    }
+
+    /**
+     * The locked section of an amend; the caller holds `email-draft:<uid>` throughout. Reads the
+     * draft fresh, refuses it when gone, approved or already replaced, uploads the new version
+     * built from THAT read (subject, body and To fall back to it; the card link and edit number
+     * come from it), and removes the old UID — WildDuck's replace, else a delete, else
+     * `supersededBy` — so no decision can land on the old UID between the read and its removal.
+     * Returns the refusal as a tool result, or the new UID, a warning for the tool text ('' when
+     * the old UID is gone or superseded) and the edit number the card will show. Anything else
+     * the new version must carry from the old draft (read from WildDuck) belongs here too.
+     */
+    async function replaceAmendedDraft(uid: number, draftRef: string, amendment: DraftAmendment): Promise<AmendedDraft | CallToolResult> {
+        const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
+        if(!original) {
+            return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found.` }], isError: true };
+        }
+        const meta = readDraftApprovalMeta(original.metaData);
+        const refusal = amendRefusal(draftRef, meta);
+        if(refusal !== undefined) {
+            return { content: [{ type: 'text' as const, text: refusal }], isError: true };
+        }
+
+        // Re-upload as a new UID replacing the old one, carrying the card link (one more edit) and
+        // a fresh preview token, and nothing else of the old metaData — never a decision, a
+        // reason or the old token.
+        const carry = amendCarry(original.metaData, meta);
+        const { id: newUid, previousDeleted } = await wildDuckClient.uploadReplacingDraft({
+            from:     amendment.from,
+            to:       amendment.to ?? original.to ?? [],
+            subject:  amendment.subject ?? original.subject ?? '',
+            text:     amendment.body ?? original.text ?? '',
+            draft:    true,
+            metaData: carry.metaData,
+        }, uid);
+
+        // WildDuck's replace is not atomic: if it did not delete the old UID, delete it now, or
+        // failing that mark it superseded so no click, amend or preview uses it.
+        const warning = previousDeleted ? '' : await removeReplacedDraft(uid, newUid);
+        return { newUid, warning, edits: carry.edits };
     }
 
     return createSdkMcpServer({
@@ -809,63 +868,34 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
                         // Drafts-only schema has already decoded the message UID.
                         const { uid } = args.message;
-
-                        // Fetch original draft
                         const draftRef = formatMailboxMessageRef(args.message);
-                        const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
-                        if(!original) {
-                            return {
-                                content: [{ type: 'text' as const, text: `Draft ${draftRef} not found.` }],
-                                isError: true,
-                            };
-                        }
-                        const meta = readDraftApprovalMeta(original.metaData);
-                        const refusal = amendRefusal(draftRef, meta);
-                        if(refusal !== undefined) {
-                            return { content: [{ type: 'text' as const, text: refusal }], isError: true };
-                        }
 
-                        // Apply amendments
-                        const subject = args.subject ?? original.subject ?? '';
-                        const body    = args.body ?? original.text ?? '';
-
-                        // Normalize args.to: undefined → use original recipients; structured/plain string → array
+                        // Normalize args.to: undefined → keep the draft's recipients; structured/plain string → array
                         const argToArr = normalizeToAddresses(args.to);
-                        const argToAddresses = argToArr
-                            ? argToArr.map((addr): { name?: string, address: string } => {
-                                if(typeof addr === 'string') {
-                                    return { address: addr };
-                                }
-                                return { name: addr.name, address: addr.email_address };
-                            })
-                            : undefined;
-                        const toAddresses    = argToAddresses ?? (original.to ?? []);
+                        const to = argToArr?.map((addr): { name?: string, address: string } => {
+                            if(typeof addr === 'string') {
+                                return { address: addr };
+                            }
+                            return { name: addr.name, address: addr.email_address };
+                        });
 
-                        // Re-upload as a new UID replacing the old one, carrying the card link (one more
-                        // edit) and a fresh preview token, and nothing else of the old metaData — never a
-                        // decision, a reason or the old token.
-                        const carry = amendCarry(original.metaData, meta);
-                        const { id: newUid, previousDeleted } = await wildDuckClient.uploadReplacingDraft({
-                            from,
-                            to:       toAddresses,
-                            subject,
-                            text:     body,
-                            draft:    true,
-                            metaData: carry.metaData,
-                        }, uid);
-
-                        // WildDuck's replace is not atomic: if it did not delete the old UID, delete it
-                        // now, or failing that mark it superseded so no click, amend or preview uses it.
-                        const warning = previousDeleted ? '' : await removeReplacedDraft(uid, newUid);
+                        // Read, refuse, upload and remove the old UID holding the draft's key, so an
+                        // approval recorded meanwhile is seen (and the draft kept) and none can land on
+                        // the old UID before it is gone or superseded (#161). The card is presented after
+                        // the key is released (lock order is card key, then draft key).
+                        const amended = await withDraftLock(uid, async () => replaceAmendedDraft(uid, draftRef, { from, subject: args.subject, body: args.body, to }));
+                        if('content' in amended) {
+                            return amended;
+                        }
 
                         // Always route through approval — amended drafts require human review.
                         return submitOrRequestApproval(
-                            newUid,
+                            amended.newUid,
                             false,
-                            warning,
+                            amended.warning,
                             // Stryker disable next-line StringLiteral: empty string — successMessage is unreachable when isAllowed=false always routes to approval
                             '',
-                            { uid, edits: carry.edits }
+                            { uid, edits: amended.edits }
                         );
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }

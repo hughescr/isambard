@@ -29,7 +29,7 @@ export interface ApprovalCardChannel {
 export interface EmailApprovalCardPresenterDeps {
     wildDuckClient: Pick<WildDuckClient, 'getMessage'>
     /** The only writer of an existing draft's metaData (link, supersede), under the draft's lock. */
-    draftMeta:      Pick<EmailOutboundApprovals, 'linkCard' | 'markSuperseded'>
+    draftMeta:      Pick<EmailOutboundApprovals, 'linkCard' | 'markSupersededLocked'>
     /** Post a new card to the admin channel (the outbox may queue it while Discord is offline). */
     postCard:       (card: EmailApprovalCard) => Promise<SendResult>
     /** The card's channel, or null when it cannot be reached. */
@@ -117,8 +117,9 @@ export class EmailApprovalCardPresenter implements EmailApprovalCardPort {
         }
     }
 
+    /** The amend calls this holding `email-draft:<oldUid>`, so the write must not take that key again. */
     async markSuperseded(oldUid: number, newUid: number): Promise<boolean> {
-        return this.deps.draftMeta.markSuperseded(oldUid, newUid);
+        return this.deps.draftMeta.markSupersededLocked(oldUid, newUid);
     }
 
     /**

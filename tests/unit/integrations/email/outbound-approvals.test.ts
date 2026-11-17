@@ -609,20 +609,32 @@ describe('EmailOutboundApprovals', () => {
         });
     });
 
-    describe('markSuperseded', () => {
-        test('merges supersededBy into the in-lock read of the old uid, keeping a decision marker', async () => {
+    describe('markSupersededLocked', () => {
+        test('merges supersededBy into a fresh read of the old uid, keeping a decision marker, without taking its key', async () => {
             const h = makeHarness({}, draftWith({ approval: { actionId: 'act-1', at: 'x' } }));
 
-            expect(await h.ops.markSuperseded(UID, 55)).toBe(true);
+            expect(await h.ops.markSupersededLocked(UID, 55)).toBe(true);
 
             expect(h.updateMetadata.mock.calls).toEqual([['Drafts', UID, { approval: { actionId: 'act-1', at: 'x' }, supersededBy: 55 }]]);
-            expect(h.events).toEqual(['acquire:email-draft:42', 'acquired:email-draft:42', 'getMessage', 'metadata', 'release:email-draft:42']);
+            expect(h.events).toEqual(['getMessage', 'metadata']);
+            expect(h.acquire).not.toHaveBeenCalled();
+        });
+
+        test('completes while the caller holds the old uid\'s key on the gate, which is not re-entrant', async () => {
+            const h = makeHarness();
+            const release = await h.gate.acquire('email-draft:42');
+            try {
+                expect(await h.ops.markSupersededLocked(UID, 55)).toBe(true);
+                expect(h.store.draft?.metaData).toEqual({ approvalCard: LINK, keep: 'me', supersededBy: 55 });
+            } finally {
+                release();
+            }
         });
 
         test('reports true without writing when the old uid is already gone', async () => {
             const h = makeHarness({}, null);
 
-            expect(await h.ops.markSuperseded(UID, 55)).toBe(true);
+            expect(await h.ops.markSupersededLocked(UID, 55)).toBe(true);
             expect(h.updateMetadata).not.toHaveBeenCalled();
         });
 
@@ -633,7 +645,7 @@ describe('EmailOutboundApprovals', () => {
                 throw failure;
             });
 
-            expect(await h.ops.markSuperseded(UID, 55)).toBe(false);
+            expect(await h.ops.markSupersededLocked(UID, 55)).toBe(false);
             expect(mockLogger.error).toHaveBeenCalledWith({ err: failure, oldUid: UID, newUid: 55, msg: 'Could not mark the replaced draft as superseded' });
         });
 
@@ -641,7 +653,7 @@ describe('EmailOutboundApprovals', () => {
             const h = makeHarness();
             h.getMessage.mockImplementation(async () => Promise.withResolvers<WildDuckMessage | null>().promise);
 
-            const marking = h.ops.markSuperseded(UID, 55);
+            const marking = h.ops.markSupersededLocked(UID, 55);
             await drainMicrotasks();
             jest.advanceTimersByTime(FINGERPRINT_READ_TIMEOUT_MS);
 
