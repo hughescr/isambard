@@ -1,4 +1,4 @@
-import { OUTBOX_FAILURE_FALLBACK, type OutboxFailureClassifier, type OutboxFailure, type OutboxFailureClassification } from '@/services/outbox/failure-classifier';
+import { OUTBOX_FAILURE_FALLBACK, type OutboxFailureClassifier, type OutboxFailure, type OutboxFailureClassification } from '@/services';
 
 const ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
 const CONFIDENCE_THRESHOLD = 0.9;

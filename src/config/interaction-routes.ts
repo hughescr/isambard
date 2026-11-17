@@ -9,7 +9,7 @@
  * Their consumers are `config` itself and the Discord layer, which owns every button, modal and
  * select route since #40 moved the approval UI out of `services`/`email`/`bsky`; keeping them
  * in `config` also keeps them reachable from any layer without a boundary violation (`utils`
- * is documented as "no domain knowledge" in oxlint-boundaries.config.mjs).
+ * is documented as "no domain knowledge" in boundaries.config.mjs).
  */
 
 /** `question:{questionId}:{value}` — the generic answer-button route. */

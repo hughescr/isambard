@@ -1,11 +1,11 @@
 import type { Message } from 'discord.js';
 import { z } from 'zod';
 import { AttachmentMetadataSchema } from './attachments/types';
-// eslint-disable-next-line boundaries/dependencies -- direct import from agent/types.ts breaks circular dep: discord/types → @/agent → discord-mcp-server → @/integrations/discord
+// eslint-disable-next-line @hughescr/module-boundaries/dependencies -- direct import from agent/types.ts breaks circular dep: discord/types → @/agent → discord-mcp-server → @/integrations/discord
 import { channelIdSchema, userIdSchema } from '@/agent/types';
 import { guildIdSchema, type GuildId  } from '@/config';
 
-// eslint-disable-next-line boundaries/dependencies -- direct re-export from agent/types.ts breaks circular dep (see import above)
+// eslint-disable-next-line @hughescr/module-boundaries/dependencies -- direct re-export from agent/types.ts breaks circular dep (see import above)
 export { channelIdSchema, type ChannelId, userIdSchema, type UserId, createChannelId, createUserId, isChannelId, isUserId } from '@/agent/types';
 export { guildIdSchema, type GuildId } from '@/config';
 

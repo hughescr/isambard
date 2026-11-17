@@ -2,7 +2,7 @@ import { logger } from '@hughescr/logger';
 import { DateTime } from 'luxon';
 import { DynamoTableAccess } from '../repositories/base';
 import { type SessionId, type SessionResumeItem, sessionResumeItemSchema } from './types';
-// eslint-disable-next-line boundaries/dependencies -- type-only import (erased at compile time, no runtime edge): SessionRole is owned solely by src/agent/session/types.ts (plan amendment A1 / P8 gap override (a)); storage must not redeclare it
+// eslint-disable-next-line @hughescr/module-boundaries/dependencies -- type-only import (erased at compile time, no runtime edge): SessionRole is owned solely by src/agent/session/types.ts (plan amendment A1 / P8 gap override (a)); storage must not redeclare it
 import type { SessionRole } from '@/agent';
 
 /**

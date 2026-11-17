@@ -56,7 +56,7 @@ import * as staticBskySetupModule from '@/integrations/discord/setup/bsky-setup'
 import * as staticEmailSetupModule from '@/integrations/discord/setup/email-setup';
 import { createGuildId } from '@/integrations/discord/types';
 import * as staticWildDuckClientModule from '@/integrations/email';
-import * as staticJevModule from '@/integrations/typesafe/jev-outbox-failure-classifier';
+import * as staticJevModule from '@/integrations/typesafe';
 import * as staticZoteroModule from '@/integrations/zotero';
 import type { ZoteroDeps } from '@/integrations/zotero';
 import type { HealthChangeListener } from '@/services';

@@ -5,7 +5,7 @@
  * time header (the envelope's caller-supplied `timeHeader` covers that) and no "Sessions are
  * ephemeral" / "inbox tools will not be available" language, since the long-lived session's
  * inbox tools stay attached for every turn. `src/integrations/discord/setup/catchup-setup.ts`
- * (`runConductorInboxInit`, agent -> discord imports being forbidden by eslint-plugin-boundaries
+ * (`runConductorInboxInit`, agent -> discord imports being forbidden by boundaries.config.mjs
  * means the dependency runs the other way) is the consumer that builds `envelope.ts`'s merged
  * boot/catch-up envelope around this module's text.
  *

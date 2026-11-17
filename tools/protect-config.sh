@@ -28,7 +28,7 @@ BASENAME=$(basename "$FILE_PATH")
 # Protected config files
 PROTECTED_FILES=(
   "oxlint.config.ts"
-  "oxlint-boundaries.config.mjs"
+  "boundaries.config.mjs"
   "eslint.package-json.config.mjs"
   "tsconfig.json"
   "bunfig.toml"

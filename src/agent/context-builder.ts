@@ -11,7 +11,7 @@ import type { SummarizeEventBatchesFn } from './event-summarizer';
 import { formatTimeHeader } from './time-header';
 import type { BlueskyClient, BskyRejectionBackend } from '@/integrations/bsky';
 import { formatCalendarContext, type CalDAVClient, type CalendarRegistryBackend, type CalendarEvent, type FailedCalendarEvent, CaldavTimeoutError, CaldavAuthError } from '@/integrations/caldav';
-// eslint-disable-next-line boundaries/dependencies -- The perch context consumes public email display and draft-state contracts.
+// eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The perch context consumes public email display and draft-state contracts.
 import { formatAddressForDisplay, searchDraftsByReviewState } from '@/integrations/email';
 import type { ServiceHealthRegistry } from '@/services';
 import { type MemoryToolBackend, type MemoryPath, type MemoryToolItemData, createMemoryPath, createLayerName, CONTENT_PREVIEW_MAX_LENGTH } from '@/storage';

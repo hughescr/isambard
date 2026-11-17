@@ -36,16 +36,16 @@ Since Stryker runs each test potentially hundreds of times, even small per-test 
 6. **Unawaited `.rejects`/`.resolves` assertions** — always `await` them. Left unawaited, the assertion races its own rejection chain past the end of the test: a losing race lets the test body return before a failed expectation reports, which Bun then surfaces as an anonymous `1 tests failed:` with no test name, and the still-settling promise chain can bleed mutation coverage into whichever test runs next. *(bun-types declares `.rejects`/`.resolves` matcher methods as returning `void` even though they're thenable at runtime, so `await`-ing one trips `typescript/no-confusing-void-expression`; that rule (alongside `typescript/await-thenable`) is turned off for `tests/**/*.ts` in `oxlint.config.ts` to unblock the required `await`.)*
 
 ### Test Hygiene Enforcement
-Mechanized via Oxlint (`oxlint.config.ts`, extending the published `@hughescr/oxlint-config-default` and its `bunTest` export; JS-plugin sources: `~/code/hughescr/eslint-plugin-test-hygiene`, `~/code/hughescr/eslint-plugin-module-boundaries`) and ast-grep (`sgconfig.yml` loads Isambard's `.ast-grep/*.yml` plus the shared package's `ast-grep/` rules; run by `bun run check:ast-grep`). ESLint remains only for `package.json` (`eslint.package-json.config.mjs`).
+Mechanized via Oxlint (`oxlint.config.ts`, extending the published `@hughescr/oxlint-config-default`, its `bunTest` export and the `boundaries.config.mjs` policy fragment; JS-plugin sources: `~/code/hughescr/eslint-plugin-test-hygiene`, `~/code/hughescr/oxlint-plugin-module-boundaries`) and ast-grep (`sgconfig.yml` loads Isambard's `.ast-grep/*.yml` plus the shared package's `ast-grep/` rules; run by `bun run check:ast-grep`). ESLint remains only for `package.json` (`eslint.package-json.config.mjs`).
 
 - `@hughescr/test-hygiene/require-fake-timers-cleanup` — pair every `jest.useFakeTimers()` with `jest.useRealTimers()` in cleanup
 - `@hughescr/test-hygiene/require-mock-cleanup` — pair every `jest.spyOn()` with `jest.restoreAllMocks()`/`mockRestore()` in `afterEach`
 - `@hughescr/test-hygiene/require-mock-reset` — call configured reset helpers for setup-module mocks in `afterEach` (options in `oxlint.config.ts`)
 - `@hughescr/test-hygiene/no-mock-module-in-test-body` — `mock.module()` only in `tests/setup.ts`, never in describe/it
 - `@hughescr/module-boundaries/no-internal-in-barrel` — barrel `index.ts` must not re-export `@internal` symbols
-- `@hughescr/module-boundaries/no-cross-module-internal` — production code must not import `@internal` from another module
+- `@hughescr/module-boundaries/no-cross-module-internal` — production code must not import `@internal` from another module (modules come from `boundaries.config.mjs`)
 - `@hughescr/module-boundaries/no-star-export-from-non-barrel` — barrel `index.ts` must not `export *` from a non-barrel file (`export *` between barrels is allowed)
-- `boundaries/dependencies` (`eslint-plugin-boundaries`, policy data in `oxlint-boundaries.config.mjs`) — layered import allow-list; `no-restricted-imports` carries the #40 Discord fence
+- `@hughescr/module-boundaries/dependencies` (policy in `boundaries.config.mjs`, built with `defineBoundaries` from `@hughescr/oxlint-config-default`) — layered import allow-list, barrel-only entry into each module, and every file under `src/` belonging to a module; `no-restricted-imports` carries the #40 Discord fence
 - eslint-plugin-jest rules (hook ordering, no-done-callback, no-focused-tests, expect correctness), under the `jest-js/` alias where Oxlint has a native `jest/` namesake
 - ast-grep syntax bans (each rule id is the name to use in an ignore comment): Isambard's `.ast-grep/` owns `no-foreach-async`, `no-throw-new-error`, `no-raw-console`, `no-process-env-outside-config`, `no-unwrapped-json-parse`, `no-optional-chain-non-null-assertion`, `no-as-branded-type`, `no-module-level-let-in-mcp-servers`, `require-comment-on-double-cast`, `directive-no-whole-file-disable-in-src`; the shared package owns `no-test-*`, `no-silent-catch-undefined`, the five directive/disable rules below, the `sonar-*` ports and the `security-*` literal tripwires. Shared rules (and the project directive rule) use the base id in `.ts`, `<id>-javascript` in JS/JSX/`.mjs`, `<id>-tsx` in TSX; suppress with the matching variant id.
 
@@ -88,5 +88,5 @@ bun run typecheck    # TypeScript validation (root tsconfig.json, then src/tscon
 bun run backfill:contact-lookup-gsi2  # Backfill GSI2 keys on existing CONTACT_LOOKUP rows
 ```
 
-- Oxlint runs under Node (`node node_modules/oxlint/bin/oxlint`), never Bun (Bun truncates large piped output; #188 tracks the return), and from the repo root: `boundaries/dependencies` resolves its globs against the working directory.
+- Oxlint runs under Node (`node node_modules/oxlint/bin/oxlint`), never Bun (Bun truncates large piped output; #188 tracks the return). `bun run lint` runs from the repo root; the boundaries rules resolve against the `root` in `boundaries.config.mjs`, so their findings do not depend on the working directory.
 - Type-aware rules (tsrs) use the nearest `tsconfig.json` to each file: `src/` against `src/tsconfig.json`, everything else against the root one.

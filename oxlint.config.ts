@@ -1,6 +1,6 @@
 import config, { bunTest, root } from '@hughescr/oxlint-config-default';
 import { defineConfig } from 'oxlint';
-import { architecture, boundaryElements } from './oxlint-boundaries.config.mjs';
+import boundaries from './boundaries.config.mjs';
 
 /**
  * Oxlint configuration: @hughescr/oxlint-config-default plus Isambard's own policy.
@@ -13,8 +13,10 @@ import { architecture, boundaryElements } from './oxlint-boundaries.config.mjs';
  * - Rule ids of leftover ESLint plugins are aliased (`eslint-core/…`, `unicorn-js/…`, `import-x-js/…`,
  *   `n-js/…`, `jest-js/…`); a disable comment must name the alias to suppress them.
  *
- * Run from the repo root with Node, never Bun (see `bun run lint`): the architectural
- * `boundaries/dependencies` rule resolves its element globs against the working directory.
+ * Run with Node, never Bun (see `bun run lint`): Bun truncates large piped output (#188). The layer
+ * rules come from boundaries.config.mjs and resolve against its own `root`, so any working directory
+ * gives the same findings; `bun run lint` runs from the repo root, where the Oxlint config and the
+ * ESLint `package.json` check are found.
  */
 
 const boundariesOrderOptions = {
@@ -32,13 +34,13 @@ const lodashPath = { name: 'lodash', message: 'Use lodash-es instead for proper 
 export default defineConfig({
     // Root-only fields (`env`, base `settings`) do not inherit through `extends`; the shared package's `root` carries them.
     ...root,
-    'extends': [config, bunTest, architecture],
+    'extends': [config, bunTest, boundaries],
 
-    // Oxlint does not inherit `settings` from extended configs, so the bunTest and boundaries settings are merged here.
+    // Oxlint does not inherit `settings` from extended configs, so the bunTest settings are merged here.
+    // The boundaries fragment carries its policy as rule options and adds no settings.
     settings: {
         ...root.settings,
         ...bunTest.settings,
-        ...architecture.settings,
     },
 
     ignorePatterns: [
@@ -75,10 +77,10 @@ export default defineConfig({
             },
         },
         {
-            files: ['oxlint-boundaries.config.mjs', 'eslint.package-json.config.mjs', 'oxlint.config.ts', 'stryker.conf.mjs'],
+            files: ['boundaries.config.mjs', 'eslint.package-json.config.mjs', 'oxlint.config.ts', 'stryker.conf.mjs'],
             rules: {
                 'import-x-js/no-extraneous-dependencies': ['error', {
-                    devDependencies: ['oxlint-boundaries.config.mjs', 'eslint.package-json.config.mjs', 'oxlint.config.ts', 'stryker.conf.mjs'],
+                    devDependencies: ['boundaries.config.mjs', 'eslint.package-json.config.mjs', 'oxlint.config.ts', 'stryker.conf.mjs'],
                 }],
             },
         },
@@ -99,8 +101,6 @@ export default defineConfig({
                     ],
                     patterns: [{ group: ['@discordjs/*'], message: discordFenceMessage }],
                 }],
-
-                '@hughescr/module-boundaries/no-cross-module-internal': ['error', { modules: boundaryElements }],
 
                 'import-x-js/order': ['warn', boundariesOrderOptions],
 

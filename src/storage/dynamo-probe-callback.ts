@@ -4,7 +4,7 @@ import type { RetryLogger } from '@/utils';
 
 /**
  * Minimal, self-contained event-sender interface so the probe callback can signal the
- * health registry without importing anything from `@/services`. `oxlint-boundaries.config.mjs`
+ * health registry without importing anything from `@/services`. `boundaries.config.mjs`
  * only allows `storage` to import `utils`, `errors` and `config` — there is no carve-out for
  * a type-only `services` import on this pair (unlike e.g. `agent`↔`email`) — so this interface
  * is declared structurally rather than derived from `ServiceHealthRegistry` via `Pick`.

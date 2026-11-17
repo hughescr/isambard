@@ -15,7 +15,7 @@
  *  1. Deliver every undelivered envelope's response once (recovery only lists turns that
  *     produced a reply, #130), through the caller's `deliver`
  *     (composed from `Conductor.deliver` + the discord-layer `sendEnvelopeResponse`, which this
- *     agent-layer module cannot import directly — see eslint-plugin-boundaries: agent never
+ *     agent-layer module cannot import directly — see boundaries.config.mjs: agent never
  *     imports discord).
  *  2. Replay messages received but never handled before a crash (`replayUnhandled`), submitting
  *     them as one envelope via the caller's `submitReplay` when there are any.

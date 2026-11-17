@@ -10,7 +10,7 @@ import { buildAdminRejectedSubsection } from './context-builder';
 import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthGuard } from './mcp-helpers';
 import { EmailFolder } from '@/config';
 import { EmailProcessingError, WildDuckError } from '@/errors';
-// eslint-disable-next-line boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
+// eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
 import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
