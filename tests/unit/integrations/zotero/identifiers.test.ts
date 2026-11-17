@@ -1,4 +1,3 @@
-/* eslint-disable sonarjs/no-clear-text-protocols -- identifier inputs intentionally include http:// DOI and arXiv links, which real citations still use */
 import { describe, expect, test } from 'bun:test';
 import {
     classifyUrl,

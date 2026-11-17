@@ -1,2 +1,3 @@
 ruleDirs:
   - .ast-grep
+  - node_modules/@hughescr/oxlint-config-default/ast-grep

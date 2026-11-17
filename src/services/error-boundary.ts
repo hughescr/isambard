@@ -59,7 +59,7 @@ export function registerErrorBoundaries(boundaryLogger: ErrorBoundaryLogger): Er
         );
         // Exit with failure code after logging — uncaughtException means the process
         // is in an indeterminate state and cannot continue safely.
-        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- uncaughtException leaves the process in an indeterminate state; exit is mandatory
+        // eslint-disable-next-line n-js/no-process-exit, unicorn/no-process-exit -- uncaughtException leaves the process in an indeterminate state; exit is mandatory
         process.exit(1);
     };
 

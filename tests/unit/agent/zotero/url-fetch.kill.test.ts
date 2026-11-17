@@ -1,4 +1,3 @@
-/* eslint-disable sonarjs/no-hardcoded-ip -- the fetcher's DNS answers and pinned addresses are literal IP addresses by definition */
 /**
  * Targeted kills for mutants that survived src/agent/zotero/url-fetch.ts (#157). Each test names,
  * in its own description or a comment, the exact boundary/branch it pins down so the mutant it

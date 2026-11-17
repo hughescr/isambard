@@ -183,11 +183,11 @@ describe('backfill CLI wiring', () => {
         const stdout = spyOn(process.stdout, 'write').mockImplementation(() => true);
         process.argv = ['bun', 'backfill-contact-lookup-gsi2.ts', '--help'];
         try {
-            // eslint-disable-next-line no-restricted-syntax -- query makes this a fresh in-process entrypoint evaluation.
+            // ast-grep-ignore: no-test-dynamic-await-import -- query makes this a fresh in-process entrypoint evaluation.
             await import(`../../../tools/backfill-contact-lookup-gsi2.ts?import-test=${String(Date.now())}`);
             expect(stdout).not.toHaveBeenCalled();
         } finally {
-            // eslint-disable-next-line require-atomic-updates -- restore the process-global argv before this test returns.
+            // eslint-disable-next-line eslint-core/require-atomic-updates -- restore the process-global argv before this test returns.
             process.argv = originalArgv;
             stdout.mockRestore();
         }
@@ -465,7 +465,7 @@ describe('runBackfillLoop', () => {
         expect(capturedLastCursor).toBeUndefined();
         expect(abortError?.message).toBe('Backfill aborted: 5 consecutive query failures at cursor undefined');
         expect(abortError?.cause).toBeInstanceOf(Error);
-        expect((abortError?.cause as Error).message).toBe('Query failure 5');
+        expect((abortError!.cause as Error).message).toBe('Query failure 5');
     });
 
     test('backoff doubles on each consecutive failure', async () => {
@@ -612,7 +612,7 @@ describe('runBackfillLoop', () => {
         expect(callCount).toBe(7);
         expect(fakeSleep).toHaveBeenCalledTimes(5);
         expect(abortError?.message).toContain('5 consecutive query failures');
-        expect((abortError?.cause as Error).message).toBe('failure after success 5');
+        expect((abortError!.cause as Error).message).toBe('failure after success 5');
     });
 
     test('processContacts errors are accumulated in totalErrors', async () => {

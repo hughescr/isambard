@@ -51,7 +51,9 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(interaction);
 
         // Should not call reply or update
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.reply).not.toHaveBeenCalled();
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.update).not.toHaveBeenCalled();
     });
 
@@ -61,7 +63,9 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(interaction);
 
         // Should not call reply or update
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.reply).not.toHaveBeenCalled();
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.update).not.toHaveBeenCalled();
     });
 
@@ -70,6 +74,7 @@ describe('createInteractionHandler', () => {
 
         await handler.handleButtonInteraction(interaction);
 
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.reply).toHaveBeenCalledWith({
             content: 'This question has expired or is no longer valid.',
             flags:   MessageFlags.Ephemeral,
@@ -79,6 +84,7 @@ describe('createInteractionHandler', () => {
     it('should propagate a rejected reply when question is not found', async () => {
         const interaction = createMockButtonInteraction('question:unknown-q:value', 'user1', 'msg1');
         const replyError = new Error('reply failed');
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test replaces the method mock without using fetchReply
         interaction.reply = mock().mockRejectedValue(replyError);
 
         await expect(handler.handleButtonInteraction(interaction)).rejects.toBe(replyError);
@@ -116,6 +122,7 @@ describe('createInteractionHandler', () => {
         const interaction = createMockButtonInteraction('question:q-answered:no', 'user2', 'msg2');
         await handler.handleButtonInteraction(interaction);
 
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.reply).toHaveBeenCalledWith({
             content: 'This question has expired or is no longer valid.',
             flags:   MessageFlags.Ephemeral,
@@ -143,10 +150,12 @@ describe('createInteractionHandler', () => {
 
         await inactiveHandler.handleButtonInteraction(interaction);
 
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.reply).toHaveBeenCalledWith({
             content: 'This question has expired or is no longer valid.',
             flags:   MessageFlags.Ephemeral,
         });
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.update).not.toHaveBeenCalled();
         expect(inactiveRegistry.resolveWithAnswer).not.toHaveBeenCalled();
     });
@@ -170,6 +179,7 @@ describe('createInteractionHandler', () => {
         const inactiveHandler = createInteractionHandler({ questionRegistry: inactiveRegistry });
         const interaction = createMockButtonInteraction('question:q-inactive-rejection:yes', 'user2', 'msg2');
         const replyError = new Error('reply failed');
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test replaces the method mock without using fetchReply
         interaction.reply = mock().mockRejectedValue(replyError);
 
         await expect(inactiveHandler.handleButtonInteraction(interaction)).rejects.toBe(replyError);
@@ -206,6 +216,7 @@ describe('createInteractionHandler', () => {
         // Clean up
         registry.cancel('q-expired');
 
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.reply).toHaveBeenCalledWith({
             content: 'This question has expired or is no longer valid.',
             flags:   MessageFlags.Ephemeral,
@@ -231,6 +242,7 @@ describe('createInteractionHandler', () => {
         const expiredHandler = createInteractionHandler({ questionRegistry: expiredRegistry });
         const interaction = createMockButtonInteraction('question:q-expired-rejection:yes', 'user2', 'msg2');
         const replyError = new Error('reply failed');
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test replaces the method mock without using fetchReply
         interaction.reply = mock().mockRejectedValue(replyError);
 
         await expect(expiredHandler.handleButtonInteraction(interaction)).rejects.toBe(replyError);
@@ -255,7 +267,9 @@ describe('createInteractionHandler', () => {
 
         await handler.handleButtonInteraction(interaction);
 
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.reply).not.toHaveBeenCalled();
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.update).toHaveBeenCalledWith({ components: [] });
         const result = await resultPromise;
         expect(result).toMatchObject({
@@ -343,6 +357,7 @@ describe('createInteractionHandler', () => {
         const waitingHandler = createInteractionHandler({ questionRegistry: waitingRegistry });
         const interaction = createMockButtonInteraction('question:q-update-rejection:yes', 'user2', 'msg2');
         const updateError = new Error('update failed');
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test replaces the method mock without using fetchReply
         interaction.update = mock().mockRejectedValue(updateError);
 
         await expect(waitingHandler.handleButtonInteraction(interaction)).rejects.toBe(updateError);
@@ -371,6 +386,7 @@ describe('createInteractionHandler', () => {
         await handler.handleButtonInteraction(interaction);
 
         // Should update the interaction (which removes buttons)
+        // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test inspects the method mock without using fetchReply
         expect(interaction.update).toHaveBeenCalledWith({
             components: [],
         });

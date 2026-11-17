@@ -30,7 +30,7 @@ let TEST_DIR = '';
  */
 function waitForEventLoopCheckpoint(): Promise<void> {
     return new Promise((resolve) => {
-        // eslint-disable-next-line no-restricted-syntax -- real macrotask turn required to observe whether a zero-delay AbortSignal.timeout has already fired; a microtask-only drain cannot expose that bug.
+        // ast-grep-ignore: no-test-set-immediate -- real macrotask turn required to observe whether a zero-delay AbortSignal.timeout has already fired; a microtask-only drain cannot expose that bug.
         setImmediate(resolve);
     });
 }

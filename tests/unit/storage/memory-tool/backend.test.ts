@@ -558,7 +558,7 @@ describe('MemoryToolBackend', () => {
 
                 const putCalls = ddbMock.commandCalls(PutCommand);
                 const tagIndexCalls = putCalls.filter(call =>
-                    (call.args[0].input.Item?.PK as string).startsWith('TAG#'));
+                    (call.args[0].input.Item!.PK as string).startsWith('TAG#'));
                 expect(tagIndexCalls).toHaveLength(0);
             });
 
@@ -584,7 +584,7 @@ describe('MemoryToolBackend', () => {
 
                     expect(result.path).toBe(testPath);
                 } finally {
-                    // eslint-disable-next-line require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
+                    // eslint-disable-next-line eslint-core/require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
                     globalThis.setTimeout = originalSetTimeout;
                 }
             });
@@ -792,7 +792,7 @@ describe('MemoryToolBackend', () => {
 
                     expect(result.content).toBe('New content');
                 } finally {
-                    // eslint-disable-next-line require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
+                    // eslint-disable-next-line eslint-core/require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
                     globalThis.setTimeout = originalSetTimeout;
                 }
             });
@@ -864,7 +864,7 @@ describe('MemoryToolBackend', () => {
 
                 const deleteCalls = ddbMock.commandCalls(DeleteCommand);
                 const tagDeletes = deleteCalls.filter(call =>
-                    (call.args[0].input.Key?.PK as string).startsWith('TAG#'));
+                    (call.args[0].input.Key!.PK as string).startsWith('TAG#'));
                 expect(tagDeletes).toHaveLength(0);
             });
 
@@ -891,7 +891,7 @@ describe('MemoryToolBackend', () => {
                         tags:        new Set(['tag1', 'tag2']),
                     });
                 } finally {
-                    // eslint-disable-next-line require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
+                    // eslint-disable-next-line eslint-core/require-atomic-updates -- test teardown: single-threaded, restoring original setTimeout
                     globalThis.setTimeout = originalSetTimeout;
                 }
             });

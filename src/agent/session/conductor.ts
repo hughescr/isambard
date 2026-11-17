@@ -2536,7 +2536,7 @@ export function createConductor(params: CreateConductorParams): Conductor {
                 await raceAgainstTimeout(waitForTurnEnd(), options.turnWaitMs);
                 // The turn may have ended while awaiting the waiter; avoid adding another await
                 // on the no-op interrupt path because the hard-deadline race observes that turn.
-                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition, sonarjs/different-types-comparison -- the await lets afterResult set currentTurn back to null despite TypeScript retaining the outer narrowing
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the await lets afterResult set currentTurn back to null despite TypeScript retaining the outer narrowing
                 if(currentTurn !== null) {
                     await interruptCurrentTurnInternal('shutdown', 'shutdown turn-wait elapsed');
                 }

@@ -684,9 +684,9 @@ describe('Discord Event Handlers', () => {
                 mockCoordinator.handleMessage.mockClear();
 
                 // Test 2: Self message (same user ID as bot) - should be ignored
-                // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
+                // eslint-disable-next-line eslint-core/require-atomic-updates -- test mock setup: single-threaded, no concurrent access
                 mockMessage.author.bot = false;
-                // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
+                // eslint-disable-next-line eslint-core/require-atomic-updates -- test mock setup: single-threaded, no concurrent access
                 mockMessage.author.id = botId;
                 await handler(mockMessage);
                 expect(mockCoordinator.handleMessage).not.toHaveBeenCalled();
@@ -695,7 +695,7 @@ describe('Discord Event Handlers', () => {
                 mockCoordinator.handleMessage.mockClear();
 
                 // Test 3: Normal user message - should be processed
-                // eslint-disable-next-line require-atomic-updates -- test mock setup: single-threaded, no concurrent access
+                // eslint-disable-next-line eslint-core/require-atomic-updates -- test mock setup: single-threaded, no concurrent access
                 mockMessage.author.id = '111111111111111111';
                 await handler(mockMessage);
                 expect(mockCoordinator.handleMessage).toHaveBeenCalled();

@@ -15,7 +15,6 @@ describe('formatTimeHeader', () => {
         RealDate = globalThis.Date;
 
         // Mock Date constructor to return fixed time
-        // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- DateMock must support both constructor and function calls like Date
             if(new.target) {
@@ -94,7 +93,6 @@ describe('formatTimeHeader', () => {
         process.env.TZ = 'UTC';
         let noArgCalls = 0;
         const laterTime = new RealDate('2026-02-10T12:30:00.000Z');
-        // eslint-disable-next-line sonarjs/function-return-type -- DateMock intentionally mirrors Date constructor signature
         const DateMock = function(this: Date | undefined, ...args: unknown[]): Date | string {
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- DateMock must support both constructor and function calls like Date
             if(new.target) {

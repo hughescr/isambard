@@ -1678,7 +1678,7 @@ describe('WildDuckClient', () => {
                     authCalls++;
                     return authResponse.promise;
                 }
-                const token = (options?.headers as Record<string, string>)['X-Access-Token'];
+                const token = (options!.headers as Record<string, string>)['X-Access-Token'];
                 if(token === 'test-auth-token') {
                     expiredRequests++;
                     if(expiredRequests === 8) {
@@ -1712,7 +1712,7 @@ describe('WildDuckClient', () => {
                     authCalls++;
                     return makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' });
                 }
-                const token = (options?.headers as Record<string, string>)['X-Access-Token'];
+                const token = (options!.headers as Record<string, string>)['X-Access-Token'];
                 if(token === 'test-auth-token' && url.endsWith('/2')) {
                     lateRequestStarted.resolve();
                     return late401.promise;
@@ -1747,7 +1747,7 @@ describe('WildDuckClient', () => {
                         ? firstAuthResponse.promise
                         : makeJsonResponse({ ...AUTH_RESPONSE, token: 'retry-token' });
                 }
-                const token = (options?.headers as Record<string, string>)['X-Access-Token'];
+                const token = (options!.headers as Record<string, string>)['X-Access-Token'];
                 if(token === 'test-auth-token') {
                     expiredRequests++;
                     if(expiredRequests === 8) {
@@ -3669,7 +3669,7 @@ describe('WildDuckClient', () => {
 
             // Should not have name property at all
             expect(result?.from).toEqual({ address: 'noname@example.com' });
-            expect((result?.from as unknown as Record<string, unknown>).name).toBeUndefined();
+            expect((result!.from as unknown as Record<string, unknown>).name).toBeUndefined();
         });
     });
 

@@ -351,7 +351,7 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
 
             // Checks read the destination, so they wait for the service like sends do. A row
             // swept above is checked on a later pass, once its revision's delay has passed.
-            const unverified = open.filter(isUnverified);
+            const unverified = open.filter(action => isUnverified(action));
             const checked = await verification.verify(unverified.length > 0 && registry.isAvailable(service) ? unverified : []);
             for(const action of checked.delivered) {
                 result.executed++;

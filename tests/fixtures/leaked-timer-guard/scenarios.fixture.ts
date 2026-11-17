@@ -1,5 +1,6 @@
-/* eslint-disable jest/expect-expect, sonarjs/assertions-in-tests -- each scenario deliberately asserts nothing: the leaked-timer guard's own afterEach is what must fail it */
-/* eslint-disable no-restricted-syntax -- the point of this fixture is REAL leaked timers (and one real elapsed wait to prove a cancelled sleep never resumes) */
+// ast-grep-ignore: no-test-set-timeout, no-test-set-interval, no-test-bun-sleep, no-test-set-immediate -- the point of this fixture is REAL leaked timers (and one real elapsed wait to prove a cancelled sleep never resumes)
+
+/* eslint-disable jest-js/expect-expect -- each scenario deliberately asserts nothing: the leaked-timer guard's own afterEach is what must fail it */
 /**
  * Scenarios that MUST each fail under the leaked-timer guard in tests/setup.ts, plus a few that
  * must PASS (they exercise the same creators but clean up). This file is not a `*.test.ts`, so a

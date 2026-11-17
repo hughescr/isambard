@@ -318,7 +318,7 @@ describe('vector backfill page', () => {
         try {
             await secondHalfStarted.promise;
             await new Promise<void>((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- a full event-loop checkpoint proves the public operation stays pending without relying on a fixed microtask count
+                // ast-grep-ignore: no-test-set-immediate -- a full event-loop checkpoint proves the public operation stays pending without relying on a fixed microtask count
                 setImmediate(resolve);
             });
             entriesWhilePending = index.entries.map(entry => entry.sk);
@@ -367,7 +367,7 @@ describe('vector backfill page', () => {
         try {
             await nextBatchStarted.promise;
             await new Promise<void>((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- a full event-loop checkpoint proves the public operation stays pending without relying on a fixed microtask count
+                // ast-grep-ignore: no-test-set-immediate -- a full event-loop checkpoint proves the public operation stays pending without relying on a fixed microtask count
                 setImmediate(resolve);
             });
             entriesWhilePending = index.entries.length;

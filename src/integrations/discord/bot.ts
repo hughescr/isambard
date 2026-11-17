@@ -463,6 +463,8 @@ function buildInteractionRoutes(deps: {
     return { buttonRoutes, modalRoutes };
 }
 
+const noop = (): void => undefined;
+
 /**
  * Creates the Discord adapter: the Discord client, its event routing, readiness, and the
  * Discord-side wiring that runs once the sessions are open.
@@ -773,8 +775,8 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         return perchLedgerStore ? [ledgerStore, perchLedgerStore] : [ledgerStore];
     }
     const conductorLedgers: readonly LedgerStore[] | undefined = buildConductorLedgers();
-    let unsubscribeToolTracking: () => void = () => undefined;
-    let unsubscribeChannelTracking: () => void = () => undefined;
+    let unsubscribeToolTracking: () => void = noop;
+    let unsubscribeChannelTracking: () => void = noop;
     if(conductorLedgers) {
         const ledgers = conductorLedgers;
         const lastToolNameByLedger = new Map<LedgerStore, string | undefined>();
@@ -920,6 +922,14 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
         } // end if(!initialized)
     });
 
+    const getRecentContext = async (): Promise<string | undefined> => {
+        if(recentMessages.length === 0) {
+            return undefined;
+        }
+        const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
+        return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
+    };
+
     /** See {@link DiscordBot.attachSessions}. */
     async function attachSessions(outcome: SessionOpenOutcome, shutdown: Pick<Shutdown, 'run'> | undefined): Promise<void> {
         if(!readyContext) {
@@ -953,14 +963,6 @@ export function createDiscordBot(options: DiscordBotOptions): DiscordBot {
             conductorOpened = true;
         }
         perchConductorOpened = outcome.perch === 'open';
-
-        const getRecentContext = async (): Promise<string | undefined> => {
-            if(recentMessages.length === 0) {
-                return undefined;
-            }
-            const sortedMessages = recentMessages.toSorted((a, b) => a.timestamp - b.timestamp);
-            return sortedMessages.map(m => (m.author === 'user' ? `User: ${m.content}` : `Izzy: ${m.content}`)).join('\n');
-        };
 
         function configurePresence(): void {
             // Setup presence manager once the conductor has actually opened (open() SUCCEEDED, not

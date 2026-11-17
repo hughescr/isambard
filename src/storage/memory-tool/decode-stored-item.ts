@@ -8,7 +8,7 @@ import { normalizeStoredMemoryToolItem, storedMemoryToolItemSchema, type MemoryT
  * {@link decodeStoredMemoryToolItem}), or undefined when absent or not valid epoch seconds.
  */
 export function storedTtl(item: object | undefined): EpochSeconds | undefined {
-    const ttl = (item as { TTL?: unknown } | undefined)?.TTL;
+    const ttl = (item as Record<string, unknown> | undefined)?.TTL;
     return isEpochSeconds(ttl) ? ttl : undefined;
 }
 

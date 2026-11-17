@@ -351,13 +351,13 @@ describe('runCli', () => {
         try {
             await Bun.write(filePath, JSON.stringify(report));
             // @ts-expect-error -- Bun resolves this cache-busting query-string specifier at runtime; tsc cannot.
-            // eslint-disable-next-line no-restricted-syntax -- query makes this a fresh in-process entrypoint evaluation.
+            // ast-grep-ignore: no-test-dynamic-await-import -- query makes this a fresh in-process entrypoint evaluation.
             await import('../../../tools/prune-static-survivors.ts?import-test=guard');
 
             expect(stdoutSpy).not.toHaveBeenCalled();
             expect(JSON.parse(await Bun.file(filePath).text())).toEqual(report);
         } finally {
-            // eslint-disable-next-line require-atomic-updates -- restore the process-global argv before this test returns.
+            // eslint-disable-next-line eslint-core/require-atomic-updates -- restore the process-global argv before this test returns.
             process.argv = originalArgv;
             stdoutSpy.mockRestore();
             rmSync(dir, { recursive: true, force: true });

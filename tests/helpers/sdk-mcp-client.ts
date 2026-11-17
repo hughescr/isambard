@@ -10,11 +10,11 @@
  * received undefined"). Tests that must see what the model sees go through here instead.
  */
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- test-only helper; the MCP client is a devDependency by design
+// eslint-disable-next-line import-x-js/no-extraneous-dependencies -- test-only helper; the MCP client is a devDependency by design
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- test-only helper; the MCP client is a devDependency by design
+// eslint-disable-next-line import-x-js/no-extraneous-dependencies -- test-only helper; the MCP client is a devDependency by design
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- test-only helper; the MCP client is a devDependency by design
+// eslint-disable-next-line import-x-js/no-extraneous-dependencies -- test-only helper; the MCP client is a devDependency by design
 import { CallToolResultSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js';
 
 async function withSdkMcpClient<T>(server: McpSdkServerConfigWithInstance, use: (client: Client) => Promise<T>): Promise<T> {

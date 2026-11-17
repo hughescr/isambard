@@ -1,4 +1,3 @@
-/* eslint-disable sonarjs/no-clear-text-protocols -- test file intentionally uses http:// URLs to verify their rejection or acceptance */
 import { describe, expect, test } from 'bun:test';
 import { validateUrl } from '../../../../src/agent/browser/host-guard';
 import type { BrowserHostPolicy } from '../../../../src/agent/browser/types';

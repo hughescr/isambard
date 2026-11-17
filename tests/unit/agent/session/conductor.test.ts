@@ -877,15 +877,15 @@ describe('createConductor', () => {
                 await openWith(h, 'sess-old');
                 expect(h.ledgerStore.get().cost.cumulativeUsd).toBe(0);
 
-                h.instances[0].emitAck(h.instances[0].consumedPrompts[0], { total_cost_usd: 0.030_103 });
+                h.instances[0].emitAck(h.instances[0].consumedPrompts[0], { total_cost_usd: 0.030103 });
                 await flush();
-                expect(h.ledgerStore.get().cost).toEqual({ cumulativeUsd: 0.030_103, lastTurnUsd: 0 });
+                expect(h.ledgerStore.get().cost).toEqual({ cumulativeUsd: 0.030103, lastTurnUsd: 0 });
 
                 const submitted = h.conductor.submit(discordEnvelope(), { priority: 'urgent', requestingChannelId: createChannelId('chan-1') });
                 await flush();
-                h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.032_069_6, ...frames.echoOf(h.instances[0].consumedPrompts[1]) }));
+                h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.0320696, ...frames.echoOf(h.instances[0].consumedPrompts[1]) }));
                 await submitted;
-                expect(h.ledgerStore.get().cost.lastTurnUsd).toBeCloseTo(0.001_966_6, 10);
+                expect(h.ledgerStore.get().cost.lastTurnUsd).toBeCloseTo(0.0019666, 10);
             });
 
             it('restores the baseline even when the acknowledgement lands after a turn has begun', async () => {
@@ -896,17 +896,17 @@ describe('createConductor', () => {
                 await flush();
                 const [handshake, turn] = h.instances[0].consumedPrompts;
 
-                h.instances[0].emitAck(handshake, { total_cost_usd: 0.030_103 });
+                h.instances[0].emitAck(handshake, { total_cost_usd: 0.030103 });
                 await flush();
                 expect(h.ledgerStore.get().turn?.kind).toBe('discord');
-                h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.032_069_6, ...frames.echoOf(turn) }));
+                h.instances[0].emit(frames.resultSuccess({ total_cost_usd: 0.0320696, ...frames.echoOf(turn) }));
                 await submitted;
 
-                expect(h.ledgerStore.get().cost.lastTurnUsd).toBeCloseTo(0.001_966_6, 10);
+                expect(h.ledgerStore.get().cost.lastTurnUsd).toBeCloseTo(0.0019666, 10);
             });
 
             it('an acknowledgement that lands before open() has journaled session_opened is applied after it, not wiped by its reset', async () => {
-                const burst = initThenAckQueryFn('sess-old', 0.030_103);
+                const burst = initThenAckQueryFn('sess-old', 0.030103);
                 const h = build({ queryFn: burst.queryFn });
                 await h.resumeStore.save('conversation', 'sess-old');
                 const events: string[] = [];
@@ -924,7 +924,7 @@ describe('createConductor', () => {
                 // The witness that this test exercises the ordering it names.
                 expect(acknowledgedBeforeSessionOpened).toEqual([true]);
                 expect(events.filter(type => type === 'session_opened' || type === 'cost_baseline')).toEqual(['session_opened', 'cost_baseline']);
-                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.030_103, 10);
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.030103, 10);
             });
 
             it('an acknowledgement from a discarded handle is ignored', async () => {
@@ -990,12 +990,12 @@ describe('createConductor', () => {
 
             it('an early acknowledgement is applied once: a later reopen does not re-apply it over the replacement\'s reset', async () => {
                 const fake = fakeQueryFn();
-                const burst = initThenAckQueryFn('sess-old', 0.030_103, fake.queryFn);
+                const burst = initThenAckQueryFn('sess-old', 0.030103, fake.queryFn);
                 const h = build({ queryFn: burst.queryFn });
                 await h.resumeStore.save('conversation', 'sess-old');
                 await h.conductor.open();
                 await flush();
-                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.030_103, 10);
+                expect(h.ledgerStore.get().cost.cumulativeUsd).toBeCloseTo(0.030103, 10);
 
                 h.conductor.requestReopen('an identity change');
                 await flush();

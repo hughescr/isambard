@@ -239,7 +239,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<void> 
         process.stdout.write(text);
     });
     const exit = deps.exit ?? ((code: number) => {
-        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the one place this process actually terminates; the CLI's own exit code is the whole point
+        // eslint-disable-next-line n-js/no-process-exit, unicorn/no-process-exit -- the one place this process actually terminates; the CLI's own exit code is the whole point
         process.exit(code);
     });
 

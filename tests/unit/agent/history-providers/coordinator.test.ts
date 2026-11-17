@@ -843,7 +843,7 @@ describe('PersonHistoryCoordinator', () => {
                 if(previousTimezone === undefined) {
                     delete process.env.TZ;
                 } else {
-                    // eslint-disable-next-line require-atomic-updates -- Restore the timezone captured before this isolated test's await.
+                    // eslint-disable-next-line eslint-core/require-atomic-updates -- Restore the timezone captured before this isolated test's await.
                     process.env.TZ = previousTimezone;
                 }
             }

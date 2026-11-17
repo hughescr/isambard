@@ -637,12 +637,12 @@ describe('reduceLedger: sdk_frame result', () => {
         it('makes the next turn\'s cost a delta against the baseline: a resumed session\'s restored total is not billed to its first turn', () => {
             const opened = reduceLedger(initialLedger('conversation'), frozenEvent({ type: 'session_opened', sessionId: 'sess-1', at: T1 }));
             const turn = reduceLedger(opened, frozenEvent({ type: 'turn_submitted', envelope: envelope(), at: T1 }));
-            const baselined = reduceLedger(turn, frozenEvent({ type: 'cost_baseline', cumulativeUsd: 0.030_103, at: T2 }));
+            const baselined = reduceLedger(turn, frozenEvent({ type: 'cost_baseline', cumulativeUsd: 0.030103, at: T2 }));
 
-            const ledger = reduceLedger(baselined, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.032_069_6 }), at: T3 }));
+            const ledger = reduceLedger(baselined, frozenEvent({ type: 'sdk_frame', frame: frames.resultSuccess({ total_cost_usd: 0.0320696 }), at: T3 }));
 
-            expect(ledger.cost.cumulativeUsd).toBeCloseTo(0.032_069_6, 10);
-            expect(ledger.cost.lastTurnUsd).toBeCloseTo(0.001_966_6, 10);
+            expect(ledger.cost.cumulativeUsd).toBeCloseTo(0.0320696, 10);
+            expect(ledger.cost.lastTurnUsd).toBeCloseTo(0.0019666, 10);
         });
 
         it('is a no-op (same reference) when the baseline matches the running cumulative', () => {

@@ -736,7 +736,7 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         const lastCall = editReply.mock.calls.at(-1)?.[0] as { content?: string, components?: unknown[] };
         expect(lastCall.content).toContain('selection failed');
         expect(lastCall.components).toEqual([]);
-        const loggedError = (mockLogger.error.mock.calls[0]?.[0] as { error: Error & { context?: unknown } }).error;
+        const loggedError = (mockLogger.error.mock.calls[0][0] as { error: Error & { context?: unknown } }).error;
         expect(loggedError.message).toBe('Invariant violated in selectCalendars: Discord returned calendar index 999 outside provided range [0..1]');
         expect(loggedError.context).toEqual({
             invariant: 'Discord returned calendar index 999 outside provided range [0..1]',
@@ -752,7 +752,7 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         await handler.handle(asChatInput);
 
         expect(mockRegistry.addServer).not.toHaveBeenCalled();
-        expect((editReply.mock.calls.at(-1)?.[0] as { content: string }).content).toContain('Calendar selection failed');
+        expect((editReply.mock.calls.at(-1)![0] as { content: string }).content).toContain('Calendar selection failed');
     });
 
     test('rejects a fractional selection index instead of flooring it onto a real calendar', async () => {
@@ -763,7 +763,7 @@ describe('CalendarCommandHandler - /calendar add-server', () => {
         await handler.handle(asChatInput);
 
         expect(mockRegistry.addServer).not.toHaveBeenCalled();
-        expect((editReply.mock.calls.at(-1)?.[0] as { content: string }).content).toContain('Calendar selection failed');
+        expect((editReply.mock.calls.at(-1)![0] as { content: string }).content).toContain('Calendar selection failed');
     });
 
     test('limits select-menu labels to Discord’s 100-character maximum', async () => {

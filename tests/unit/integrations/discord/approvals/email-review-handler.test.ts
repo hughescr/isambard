@@ -185,7 +185,7 @@ describe('EmailReviewHandler.handleButton()', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
             const callArg  = editReply.mock.calls[0]?.[0] as InteractionUpdateOptions;
             expect(callArg.components).toEqual([]);
-            const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
+            const embedData = (callArg.embeds![0] as { toJSON(): { title: string, color: number } }).toJSON();
             expect(embedData.title).toBe('Trashed');
             expect(embedData.color).toBe(0xFF_00_00);
         });
@@ -227,7 +227,7 @@ describe('EmailReviewHandler.handleButton()', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
             const callArg  = editReply.mock.calls[0]?.[0] as InteractionUpdateOptions;
             expect(callArg.components).toEqual([]);
-            const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
+            const embedData = (callArg.embeds![0] as { toJSON(): { title: string, color: number } }).toJSON();
             expect(embedData.title).toBe('Junked');
             expect(embedData.color).toBe(0xFF_00_00);
         });
@@ -279,7 +279,7 @@ describe('EmailReviewHandler.handleButton()', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
             const callArg  = editReply.mock.calls[0]?.[0] as InteractionUpdateOptions;
             expect(callArg.components).toEqual([]);
-            const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
+            const embedData = (callArg.embeds![0] as { toJSON(): { title: string, color: number } }).toJSON();
             expect(embedData.title).toBe('Allowed');
             expect(embedData.color).toBe(0x00_AA_00);
         });
@@ -356,7 +356,7 @@ describe('EmailReviewHandler.handleButton()', () => {
             expect(editReply).toHaveBeenCalledTimes(1);
             const callArg  = editReply.mock.calls[0]?.[0] as InteractionUpdateOptions;
             expect(callArg.components).toEqual([]);
-            const embedData = (callArg.embeds?.[0] as { toJSON(): { title: string, color: number } }).toJSON();
+            const embedData = (callArg.embeds![0] as { toJSON(): { title: string, color: number } }).toJSON();
             expect(embedData.title).toBe('Allowed \u2713');
             expect(embedData.color).toBe(0x00_AA_00);
         });
@@ -565,10 +565,11 @@ describe('EmailReviewHandler.handleButton()', () => {
             const wildDuck     = makeWildDuck();
             const handler      = new EmailReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction(customId, userId);
+            // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test gates the method mock without using fetchReply
             interaction.reply = mock(() => {
                 replyStarted.resolve();
                 return replyGate.promise;
-            }) as typeof interaction.reply;
+            }) as typeof interaction.reply; // eslint-disable-line typescript/no-deprecated -- method type includes the deprecated fetchReply overload; this mock does not use fetchReply
             let completed = false;
             const operation = handler.handleButton(interaction).then((): void => {
                 completed = true;
@@ -591,10 +592,11 @@ describe('EmailReviewHandler.handleButton()', () => {
             const wildDuck     = makeWildDuck();
             const handler      = new EmailReviewHandler({ wildDuckClient: wildDuck.conn, adminDiscordUserId: CRAIG_ID, allowlistInteractionHandler: makeAllowlistInteractionHandler() });
             const { interaction } = makeInteraction('email-trash:42:Review');
+            // eslint-disable-next-line typescript/no-deprecated -- discord.js marks the fetchReply overload deprecated; this test gates the method mock without using fetchReply
             interaction.deferUpdate = mock(() => {
                 deferStarted.resolve();
                 return deferGate.promise;
-            }) as typeof interaction.deferUpdate;
+            }) as typeof interaction.deferUpdate; // eslint-disable-line typescript/no-deprecated -- method type includes the deprecated fetchReply overload; this mock does not use fetchReply
             const operation = handler.handleButton(interaction);
 
             try {

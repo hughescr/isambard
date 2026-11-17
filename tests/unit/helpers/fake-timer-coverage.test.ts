@@ -1,4 +1,5 @@
-/* eslint-disable no-restricted-syntax -- this file exists to create each real timer creator under fake timers and see where it lands; every timer is either faked (discarded by useRealTimers) or awaited */
+// ast-grep-ignore: no-test-set-timeout, no-test-set-interval, no-test-bun-sleep, no-test-set-immediate -- this file exists to create each real timer creator under fake timers and see where it lands; every timer is either faked (discarded by useRealTimers) or awaited
+
 import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import nodeTimers from 'node:timers';
 import * as promiseTimers from 'node:timers/promises';

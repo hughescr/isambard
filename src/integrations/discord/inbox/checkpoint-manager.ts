@@ -77,7 +77,7 @@ export class CheckpointManager {
         const previous = this.channelWriteChains.get(channelId) ?? Promise.resolve();
         // The stored tail below always resolves, including when its caller's write rejects.
         const result = previous.then(fn);
-        // eslint-disable-next-line no-restricted-syntax -- sequencing only: stored purely as a tail marker so the NEXT write for this channel waits for this one; this write's real outcome is returned to its own caller via `result`, not swallowed
+        // ast-grep-ignore: no-silent-catch-undefined -- sequencing only: stored purely as a tail marker so the NEXT write for this channel waits for this one; this write's real outcome is returned to its own caller via `result`, not swallowed
         this.channelWriteChains.set(channelId, result.catch(() => undefined));
         return result;
     }

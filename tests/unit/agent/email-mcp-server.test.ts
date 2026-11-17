@@ -84,29 +84,28 @@ describe('createEmailMCPServer', () => {
             submitMessage:    mock(async () => { /* intentionally empty */ }),
             getMailboxId:     mock(() => undefined),
             getMailboxCounts: mock(async () => ({ total: 5, unseen: 2 })),
+            // WildDuck methods used in email operations (in addition to the base methods above)
+            listMessages:     mock(async () => []),
+            getFullMessage:   mock(async () => ({
+                uid:            1,
+                messageId:      '<test@example.com>',
+                from:           { name: 'Sender', address: 'sender@example.com' },
+                to:             [{ address: 'recipient@example.com' }],
+                cc:             [],
+                subject:        'Test Subject',
+                date:           new Date('2025-01-01T10:00:00.000Z'),
+                bodyText:       'Hello world',
+                hasAttachments: false,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [],
+            })),
+            updateMessageFlags: mock(async () => { /* intentionally empty */ }),
+            // Echoes the source uid back as the destination uid by default (as a real move often
+            // does); tests covering the destination-uid behaviour override this with a distinct value.
+            moveMessage:        mock(async (_source: string, uid: number, _dest: string) => uid),
+            getAttachment:      mock(async () => Buffer.from('attachment-data')),
         } as unknown as WildDuckClient;
-
-        // WildDuck methods used in email operations (in addition to the base methods above)
-        mockWildDuck.listMessages    = mock(async () => []);
-        mockWildDuck.getFullMessage  = mock(async () => ({
-            uid:            1,
-            messageId:      '<test@example.com>',
-            from:           { name: 'Sender', address: 'sender@example.com' },
-            to:             [{ address: 'recipient@example.com' }],
-            cc:             [],
-            subject:        'Test Subject',
-            date:           new Date('2025-01-01T10:00:00.000Z'),
-            bodyText:       'Hello world',
-            hasAttachments: false,
-            headers:        {},
-            attachments:    [],
-            attachmentMeta: [],
-        }));
-        mockWildDuck.updateMessageFlags = mock(async () => { /* intentionally empty */ });
-        // Echoes the source uid back as the destination uid by default (as a real move often
-        // does); tests covering the destination-uid behaviour override this with a distinct value.
-        mockWildDuck.moveMessage        = mock(async (_source: string, uid: number, _dest: string) => uid);
-        mockWildDuck.getAttachment      = mock(async () => Buffer.from('attachment-data'));
     });
 
     afterEach(() => {

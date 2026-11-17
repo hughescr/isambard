@@ -64,7 +64,7 @@ function makeContext(overrides: Partial<DiscordMessageContext> = {}): DiscordMes
 describe('channelListProvider', () => {
     it('exposes the exact hydrating marker from a fresh module evaluation', async () => {
         const moduleSpecifier = `@/integrations/discord/setup/discord-envelope-provider?hydrating-marker-${Bun.env.__STRYKER_ACTIVE_MUTANT__ ?? 'control'}`;
-        // eslint-disable-next-line no-restricted-syntax -- Stryker activates static mutants after the ordinary module cache is populated; a query-string import re-evaluates this module under the active mutant.
+        // ast-grep-ignore: no-test-dynamic-await-import -- Stryker activates static mutants after the ordinary module cache is populated; a query-string import re-evaluates this module under the active mutant.
         const freshModule = await import(moduleSpecifier) as { CHANNEL_LIST_HYDRATING_MARKER: string };
 
         expect(freshModule.CHANNEL_LIST_HYDRATING_MARKER).toBe(

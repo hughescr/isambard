@@ -23,5 +23,5 @@ The mutator used to key its cache on the verbatim function text sent in the prom
 
 ## Related gates
 
-- **Directive placement**: `bun run lint` runs `tools/stryker-directive-check.ts`, which enforces where a `// Stryker disable` comment may legally sit; a misplaced directive is a lint failure, not a silent no-op.
+- **Directive placement**: `bun run lint` (after Oxlint and the `package.json` ESLint pass) runs `tools/stryker-directive-check.ts`, which enforces where a `// Stryker disable` comment may legally sit; a misplaced directive is a lint failure, not a silent no-op.
 - **Static survivor pruning**: `tools/prune-static-survivors.ts` drops module-level (static-coverage-only) mutant verdicts from the incremental cache before each local run, so a static survivor from an unrelated file can't hold a local gate red after the actual fix landed.

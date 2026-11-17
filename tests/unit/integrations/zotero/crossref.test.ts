@@ -1,4 +1,3 @@
-/* eslint-disable sonarjs/no-clear-text-protocols -- the captured Crossref response really carries an http:// PDF link, and the test asserts it is passed through for the host policy to judge */
 import { afterEach, describe, expect, jest, test } from 'bun:test';
 import invalidFixture from '../../../fixtures/zotero/crossref-works-select-invalid.json';
 import okFixture from '../../../fixtures/zotero/crossref-works-select-ok.json';

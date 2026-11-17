@@ -3,7 +3,7 @@
  *
  * `buildSessionQueryOptions` is the one place that assembles the full SDK `Options` object for
  * a long-lived session query, independent of Discord/perch-specific plumbing (no import from
- * '@/app' — eslint-boundaries forbids it for the agent layer). agent.ts's `buildQueryOptions`
+ * '@/app' — the Oxlint boundaries policy forbids it for the agent layer). agent.ts's `buildQueryOptions`
  * delegates here immediately (P5), spreading in the one-shot path's `abortController`, which
  * has no place in the session core (sessions interrupt via `SessionQuery.interrupt()`, not an
  * AbortController).

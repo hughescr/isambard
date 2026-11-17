@@ -1,6 +1,4 @@
-/* eslint-disable @typescript-eslint/triple-slash-reference -- SST requires triple-slash reference for config types */
 /// <reference path="./.sst/platform/config.d.ts" />
-/* eslint-enable @typescript-eslint/triple-slash-reference -- Re-enable rule after required SST reference */
 
 export default $config({
     app(input) {

@@ -90,7 +90,7 @@ describe('ZoteroRequester invariant messages', () => {
     test('the groupId invariant names the requester and the exact bad value', () => {
         let error: unknown;
         try {
-            new ZoteroRequester({ apiKey: TEST_API_KEY, groupId: -3 });
+            void new ZoteroRequester({ apiKey: TEST_API_KEY, groupId: -3 });
         } catch (error_) {
             error = error_;
         }

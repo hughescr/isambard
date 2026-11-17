@@ -1,4 +1,5 @@
 // Email folder enum (WildDuck top-level folders, '/' separator)
+// eslint-disable-next-line @typescript-eslint/no-redeclare -- intentional const+type enum pattern
 export const EmailFolder = {
     Inbox:      'INBOX',
     CleanInbox: 'CleanInbox',
@@ -10,5 +11,4 @@ export const EmailFolder = {
     Archive:    'Archive',
     Sent:       'Sent Mail',
 } as const;
-// eslint-disable-next-line @typescript-eslint/no-redeclare -- intentional const+type enum pattern
 export type EmailFolder = typeof EmailFolder[keyof typeof EmailFolder];

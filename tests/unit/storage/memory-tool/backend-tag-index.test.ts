@@ -87,11 +87,11 @@ describe('MemoryToolBackendTagIndex', () => {
             // Let first call complete and fail, then timer is scheduled
             // process.nextTick has higher microtask priority than Promise, ensuring DynamoDB mock callbacks complete before our assertion
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher priority than Promise microtasks; needed to observe async DynamoDB mock callbacks completing
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: higher priority than Promise microtasks; needed to observe async DynamoDB mock callbacks completing
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for the thrown error to propagate through the async error handler chain
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: second flush for the thrown error to propagate through the async error handler chain
                 process.nextTick(resolve);
             });
             expect(callCount).toBe(1);
@@ -103,11 +103,11 @@ describe('MemoryToolBackendTagIndex', () => {
             // Advance exactly 100ms to fire first retry
             jest.advanceTimersByTime(100);
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher priority than Promise microtasks; needed to observe DynamoDB mock callback completion
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: higher priority than Promise microtasks; needed to observe DynamoDB mock callback completion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for error propagation chain
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: second flush for error propagation chain
                 process.nextTick(resolve);
             });
             expect(callCount).toBe(2);
@@ -120,11 +120,11 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(callCount).toBe(2);
             jest.advanceTimersByTime(1);
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher priority than Promise microtasks; needed to observe DynamoDB mock callback completion
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: higher priority than Promise microtasks; needed to observe DynamoDB mock callback completion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for error propagation chain
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: second flush for error propagation chain
                 process.nextTick(resolve);
             });
             await promise;
@@ -295,11 +295,11 @@ describe('MemoryToolBackendTagIndex', () => {
             // Let first batch call complete, then timer is scheduled
             // process.nextTick has higher microtask priority than Promise, ensuring DynamoDB mock callbacks complete before our assertion
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher microtask priority than Promise; needed for DynamoDB mock callbacks to complete before assertion
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: higher microtask priority than Promise; needed for DynamoDB mock callbacks to complete before assertion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush to let the UnprocessedItems response propagate
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: second flush to let the UnprocessedItems response propagate
                 process.nextTick(resolve);
             });
             expect(batchCallCount).toBe(1);
@@ -311,11 +311,11 @@ describe('MemoryToolBackendTagIndex', () => {
             // Advance exactly 100ms to fire first retry
             jest.advanceTimersByTime(100);
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher microtask priority for DynamoDB mock callback completion
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: higher microtask priority for DynamoDB mock callback completion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for response propagation chain
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: second flush for response propagation chain
                 process.nextTick(resolve);
             });
             expect(batchCallCount).toBe(2);
@@ -328,11 +328,11 @@ describe('MemoryToolBackendTagIndex', () => {
             expect(batchCallCount).toBe(2);
             jest.advanceTimersByTime(1);
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: higher microtask priority for DynamoDB mock callback completion
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: higher microtask priority for DynamoDB mock callback completion
                 process.nextTick(resolve);
             });
             await new Promise((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- process.nextTick required: second flush for response propagation chain
+                // ast-grep-ignore: no-test-process-next-tick -- process.nextTick required: second flush for response propagation chain
                 process.nextTick(resolve);
             });
             await promise;
@@ -1306,9 +1306,9 @@ describe('MemoryToolBackendTagIndex', () => {
             });
 
             const calls = ddbMock.commandCalls(QueryCommand);
-            const filterExpression = calls[0]?.args[0]?.input.FilterExpression;
+            const filterExpression = calls[0]?.args[0].input.FilterExpression;
             expect(filterExpression).toBe('layer = :layer AND updatedAt BETWEEN :startDate AND :endDate');
-            expect(calls[0]?.args[0]?.input.ExpressionAttributeValues?.[':layer']).toBe('identity');
+            expect(calls[0]?.args[0].input.ExpressionAttributeValues?.[':layer']).toBe('identity');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':startDate']).toBe('2024-01-01T00:00:00.000Z');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':endDate']).toBe('2024-01-31T23:59:59.999Z');
             expect(calls[0].args[0].input.ExpressionAttributeValues?.[':pk']).toBe('TAG#important');

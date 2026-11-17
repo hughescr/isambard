@@ -1,3 +1,5 @@
+// ast-grep-ignore: no-test-dynamic-await-import-javascript -- standalone Node script spawned by a test, not a bun test file: its top-level await import() loads a Stryker checker internal whose path is resolved at run time
+
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import path from 'node:path';

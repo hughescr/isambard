@@ -84,6 +84,7 @@ export function createUpdateRateLimiter(
             recordStart();
             return undefined;
         });
+        // ast-grep-ignore: no-silent-catch-undefined -- sequencing only: tail is a marker so the NEXT start waits for this ticket to settle; the ticket's own rejection is returned to the caller
         tail = ticket.catch(() => undefined);
         return ticket;
     };

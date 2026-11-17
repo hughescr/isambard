@@ -624,8 +624,8 @@ describe('rough token estimates', () => {
     });
 
     it.each([
-        ['stays below the midpoint', 0.994_999_6, 990_000],
-        ['stays above the midpoint', 0.995_000_4, 1_000_000],
+        ['stays below the midpoint', 0.9949996, 990_000],
+        ['stays above the midpoint', 0.9950004, 1_000_000],
     ] as const)('%s when a quota estimate rounds near one million tokens', (_case, costUsd, expected) => {
         const unitInput = tokens({ inputTokens: 1, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, totalTokens: 1 });
         const data = providerJson(snapshot([vendor({
@@ -1293,7 +1293,7 @@ describe('shared burn pace', () => {
 
     it('uses an exact hour when rounding fractional burn pace', () => {
         const data = providerJson(paceReport(
-            quota({ usedPercent: 70.050_011 }), quota({ usedPercent: 10 }), 3_600_000
+            quota({ usedPercent: 70.050011 }), quota({ usedPercent: 10 }), 3_600_000
         ));
         expect(object(array(data.quotas)[0]).shared_burn_percent_per_hour).toBeCloseTo(60.1, 10);
     });
@@ -1437,7 +1437,7 @@ describe('direct Anthropic fallback', () => {
 
 describe('mutation regression boundaries', () => {
     it('serializes quota headroom to ten decimal places', () => {
-        const line = render(snapshot([vendor({ quota: observation({ quotas: [quota({ usedPercent: 33.333_333_333_33 })] }) })]));
+        const line = render(snapshot([vendor({ quota: observation({ quotas: [quota({ usedPercent: 33.33333333333 })] }) })]));
         expect(line).toContain('"remaining_percent": 66.6666666667,');
     });
 });

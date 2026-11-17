@@ -182,12 +182,19 @@ See [docs/email-preview.md](docs/email-preview.md) for exactly what Izzy does wi
 | `bun test` | Run tests |
 | `bun run mutate` | Mutation testing (Stryker), LLM mutator frozen to cached mutants |
 | `bun run mutate:discover` | Mutation testing with the LLM mutator unfrozen, growing the cache within its per-run budget — see [docs/mutation-testing.md](docs/mutation-testing.md) |
-| `bun run lint` | ESLint check |
-| `bun run typecheck` | TypeScript validation |
+| `bun run lint` | Lint gate: Oxlint (under Node, type-aware via `tsrs`, with `@hughescr/oxlint-config-default`) plus ESLint on `package.json` only, plus the Stryker directive checker. Always runs `node` for Oxlint ([#188](https://github.com/hughescr/isambard/issues/188) tracks the launcher) |
+| `bun run check:ast-grep` | ast-grep syntax bans (Isambard's project-specific rules in `.ast-grep/*.yml`, plus the shared package's rules including the generic `no-test-*` and `no-silent-catch-undefined` bans, via `sgconfig.yml`) |
+| `bun run typecheck` | TypeScript validation (root `tsconfig.json`, then `src/tsconfig.json`) |
 | `bun run sst-dev` | SST development mode |
 | `bun run sst-deploy` | Deploy to AWS |
 
 Vector-index maintenance (backfill, the weekly orphan cross-check, backups; safe while Izzy runs): see [docs/vector-index-operations.md](docs/vector-index-operations.md).
+
+### Lint-directive policy
+
+Use `// eslint-disable-next-line <rule> -- <specific reason>` (or `disable-line`) for local exceptions, naming Oxlint's actual rule id/alias. Every disable needs explicit rules and a nonempty reason. **Enable directives are forbidden everywhere**, so there is no region pair for subsequent edits to break. Whole-file `eslint-disable`/`oxlint-disable` comments are allowed only outside `src/` and only before any code; a shebang, other comments and blank lines may precede them, but `'use strict'` is code. Production files under `src/` allow only local exceptions. Both block and line comments are checked. Inline `eslint`, `global`, `globals`, `exported` and `eslint-env` configuration is forbidden; use the project config instead.
+
+The five shared directive checks and Isambard's `directive-no-whole-file-disable-in-src` rule run in `bun run check:ast-grep`, not in Oxlint, so run both gates. They replace the eslint-comments plugin. Native unused-disable warnings remain enabled, but duplicate disables are not exactly covered (Oxlint does not flag a redundant next-line disable beneath a whole-file disable). See [Linting](docs/architecture.md#linting) for aliases and language-variant ids.
 
 ### Directory Structure
 
@@ -257,7 +264,7 @@ See [.claude/CLAUDE.md](.claude/CLAUDE.md) for full development instructions.
 
 - All tests must pass
 - Zero TypeScript errors
-- Zero lint warnings
+- Zero lint warnings (`bun run lint`, which runs Oxlint with `--deny-warnings`) and a clean `bun run check:ast-grep`
 - Mutation score == 100% (per stryker.conf.mjs)
 
 ## Architecture
@@ -512,10 +519,10 @@ src/
 │   │       ├── types.ts                 # CalendarRegistryScope and registry record types
 │   │       └── index.ts                 # Public exports
 │   ├── zotero/                        # Zotero Web API v3 client pinned to the shared group, Crossref/arXiv/page metadata (#157)
-│   ├── utraque/                       # Utraque schema-2 provider-capacity wire adapter (Codex/DeepSeek quota); not yet an eslint boundary element (pending)
+│   ├── utraque/                       # Utraque schema-2 provider-capacity wire adapter (Codex/DeepSeek quota); a declared boundary element
 │   │   ├── provider-capacity.ts         # Parses schema-2 provider reports; invalid schema, non-OK status, and thrown transport failures stay distinct
 │   │   └── index.ts                     # Public exports
-│   └── anthropic/                     # Direct Anthropic OAuth usage fallback; not yet an eslint boundary element (pending)
+│   └── anthropic/                     # Direct Anthropic OAuth usage fallback; a declared boundary element
 │       ├── usage-fallback.ts            # Parses the direct OAuth usage endpoint, separate from SDK rate-limit frames; never receives utraque headers
 │       └── index.ts                     # Public exports
 ├── storage/                         # DynamoDB data access layer

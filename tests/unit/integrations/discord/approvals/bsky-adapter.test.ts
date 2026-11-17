@@ -1793,7 +1793,7 @@ describe('BskyApprovalInteractionAdapter', () => {
 
                 const create = deps.sagaBackend.create as ReturnType<typeof mock>;
                 expect(create.mock.invocationCallOrder[0]).toBeLessThan(editReply.mock.invocationCallOrder[0]);
-                expect((create.mock.calls[0]?.[0] as { approvalCard: unknown }).approvalCard).toEqual(CARD);
+                expect((create.mock.calls[0][0] as { approvalCard: unknown }).approvalCard).toEqual(CARD);
             });
 
             test('should clear buttons in success editReply', async () => {
@@ -2348,7 +2348,7 @@ describe('BskyApprovalInteractionAdapter', () => {
 
                 const create = deps.sagaBackend.create as ReturnType<typeof mock>;
                 expect(create.mock.invocationCallOrder[0]).toBeLessThan(editReply.mock.invocationCallOrder[0]);
-                expect((create.mock.calls[0]?.[0] as { approvalCard: unknown }).approvalCard).toEqual(CARD);
+                expect((create.mock.calls[0][0] as { approvalCard: unknown }).approvalCard).toEqual(CARD);
             });
 
             test('hands the reply target value to the allowlist saga', async () => {

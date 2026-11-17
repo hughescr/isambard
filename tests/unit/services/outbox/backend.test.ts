@@ -649,7 +649,7 @@ describe('OutboxBackend', () => {
         test('increments an existing retry count without deleting', async () => {
             ddbMock.on(PutCommand).resolves({});
             await backend.markFailed(makeItem({ progress: { attemptCount: 1 } }), 'still offline', { retryable: true });
-            expect((ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress as { attemptCount: number }).attemptCount).toBe(2);
+            expect((ddbMock.commandCalls(PutCommand)[0].args[0].input.Item!.progress as { attemptCount: number }).attemptCount).toBe(2);
             expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
         });
 
@@ -711,7 +711,7 @@ describe('OutboxBackend', () => {
             ddbMock.on(DeleteCommand).rejects(new Error('delete failed'));
             ddbMock.on(PutCommand).resolves({});
             await expect(backend.markFailed(makeItem({ progress: { attemptCount: 9 } }), 'offline', { retryable: false })).rejects.toThrow('delete failed');
-            expect((ddbMock.commandCalls(PutCommand)[0]?.args[0].input.Item?.progress as { attemptCount: number }).attemptCount).toBe(10);
+            expect((ddbMock.commandCalls(PutCommand)[0].args[0].input.Item!.progress as { attemptCount: number }).attemptCount).toBe(10);
         });
 
         test('puts item back with error message and lastAttemptAt timestamp', async () => {

@@ -1,6 +1,7 @@
 import { type BatchWriteCommandInput, type BatchWriteCommandOutput, BatchWriteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import pLimit from 'p-limit';
 import { z } from 'zod';
+import { DynamoTableAccess } from '../repositories/base';
 import { ContactKeyGenerator } from './key-generator';
 import {
     contactIdentifierKey,
@@ -13,7 +14,6 @@ import {
     type PlatformType
 } from './types';
 import { BatchWriteExhaustedError, ContactLastIdentifierError, ContactNoIdentifiersError, ContactNotFoundError } from '@/errors';
-import { DynamoTableAccess } from '@/storage';
 
 const skOnlyRowSchema = z.object({ SK: z.string() });
 

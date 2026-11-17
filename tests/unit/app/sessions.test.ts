@@ -2596,7 +2596,7 @@ describe('session lifecycle await boundaries', () => {
             await waitUntil(() => h.identityGet.mock.calls.length === 2, `${role} first identity reload`);
             h.fireIdentityChange();
             await new Promise<void>((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- stable event-loop checkpoint proves the second read stays gated
+                // ast-grep-ignore: no-test-set-immediate -- stable event-loop checkpoint proves the second read stays gated
                 setImmediate(resolve);
             });
 
@@ -2656,7 +2656,7 @@ describe('session lifecycle await boundaries', () => {
 
             delivery.reject(new Error('delivery failed'));
             await new Promise<void>((resolve) => {
-                // eslint-disable-next-line no-restricted-syntax -- stable event-loop checkpoint lets the conductor observe the rejection
+                // ast-grep-ignore: no-test-set-immediate -- stable event-loop checkpoint lets the conductor observe the rejection
                 setImmediate(resolve);
             });
 

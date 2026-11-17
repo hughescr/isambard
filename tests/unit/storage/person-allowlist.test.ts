@@ -524,7 +524,7 @@ describe('PersonAllowlist.addPerson()', () => {
                 ExpressionAttributeValues: { ':newId': new Set([ALICE_ID]) },
             },
         });
-        expect([...(transactItems[1]?.Update?.ExpressionAttributeValues?.[':newId'] as Set<string>)]).toEqual([ALICE_ID]);
+        expect([...(transactItems[1].Update!.ExpressionAttributeValues![':newId'] as Set<string>)]).toEqual([ALICE_ID]);
 
         expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(true);
         expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
@@ -625,7 +625,7 @@ describe('PersonAllowlist.removePerson()', () => {
                 ExpressionAttributeValues: { ':oldId': new Set([ALICE_ID]) },
             },
         });
-        expect([...(transactItems[1]?.Update?.ExpressionAttributeValues?.[':oldId'] as Set<string>)]).toEqual([ALICE_ID]);
+        expect([...(transactItems[1].Update!.ExpressionAttributeValues![':oldId'] as Set<string>)]).toEqual([ALICE_ID]);
 
         expect(allowlist.isPersonAllowed(ALICE_ID)).toBe(false);
         expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
@@ -1016,7 +1016,7 @@ describe('PersonAllowlist.addPerson() notes', () => {
         await allowlist.addPerson(ALICE_ID, { notes: 'approved via email', addedBy: 'outbound-approval' });
 
         const txCalls = ddbMock.commandCalls(TransactWriteCommand);
-        const putItem = (txCalls[0]?.args[0].input.TransactItems![0] as { Put: { Item: Record<string, unknown> } }).Put.Item;
+        const putItem = (txCalls[0].args[0].input.TransactItems![0] as { Put: { Item: Record<string, unknown> } }).Put.Item;
         expect(putItem.notes).toBe('approved via email');
     });
 
@@ -1029,7 +1029,7 @@ describe('PersonAllowlist.addPerson() notes', () => {
         await allowlist.addPerson(CHARLIE_ID, { addedBy: 'discord-command' });
 
         const txCalls = ddbMock.commandCalls(TransactWriteCommand);
-        const putItem = (txCalls[0]?.args[0].input.TransactItems![0] as { Put: { Item: Record<string, unknown> } }).Put.Item;
+        const putItem = (txCalls[0].args[0].input.TransactItems![0] as { Put: { Item: Record<string, unknown> } }).Put.Item;
         // notes key must be absent entirely — not just undefined — to avoid spurious DynamoDB null attribute
         expect('notes' in putItem).toBe(false);
     });
@@ -1044,7 +1044,7 @@ describe('PersonAllowlist.addPerson() notes', () => {
         await allowlist.addPerson(ALICE_ID, { notes: '', addedBy: 'outbound-approval' });
 
         const txCalls = ddbMock.commandCalls(TransactWriteCommand);
-        const putItem = (txCalls[0]?.args[0].input.TransactItems![0] as { Put: { Item: Record<string, unknown> } }).Put.Item;
+        const putItem = (txCalls[0].args[0].input.TransactItems![0] as { Put: { Item: Record<string, unknown> } }).Put.Item;
         expect('notes' in putItem).toBe(true);
         expect(putItem.notes).toBe('');
     });

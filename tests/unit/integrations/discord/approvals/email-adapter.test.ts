@@ -1819,7 +1819,7 @@ describe('EmailApprovalInteractionAdapter over mocked operations', () => {
 
         await expect(adapter.handleButton(parts.interaction)).resolves.toBeUndefined();
 
-        const content = (parts.followUp.mock.calls[0]?.[0] as { content: string }).content;
+        const content = (parts.followUp.mock.calls[0][0] as { content: string }).content;
         expect(content).toBe(`${'x'.repeat(1997)}...`);
         expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, msg: 'Failed to send a private reply to an email approval click' });
     });

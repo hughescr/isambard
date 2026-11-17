@@ -472,7 +472,6 @@ describe('loadConfig - email preview', () => {
 
     test('fails validation for an http base URL', () => {
         process.env.EMAIL_PREVIEW_PORT = '8791';
-        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- asserting that a clear-text base URL is refused
         process.env.EMAIL_PREVIEW_PUBLIC_BASE_URL = 'http://mac.tailnet.ts.net';
 
         expect(() => loadConfig(emailResources())).toThrow(ConfigValidationError);

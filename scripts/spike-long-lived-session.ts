@@ -443,7 +443,6 @@ function lastAssistantText(events: SDKMessage[], since = 0): string {
 }
 
 // ---------------------------------------------------------------- q1 + q2 (same session)
-// eslint-disable-next-line sonarjs/function-return-type -- tri-state verdict (boolean | 'unclear') matches the verdict() helper's own parameter type used throughout this file
 function autoTurnVerdict(autoTurn: SDKMessage | undefined, notif: SDKMessage | undefined): boolean | 'unclear' {
     if(autoTurn) {
         return true;
@@ -686,6 +685,6 @@ if(import.meta.main) {
         log('spike', 'FAILED', error instanceof Error ? error.stack : String(error));
     });
     log('spike', 'done');
-    // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the SDK's child processes keep the event loop alive; exit is deliberate
+    // eslint-disable-next-line n-js/no-process-exit, unicorn/no-process-exit -- the SDK's child processes keep the event loop alive; exit is deliberate
     process.exit(status);
 }

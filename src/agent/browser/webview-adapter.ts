@@ -195,7 +195,6 @@ export function createWebViewAdapter(
         if(attempt === 0) {
             return { promise: v.navigate(url), view: v };
         }
-        // eslint-disable-next-line sonarjs/no-try-promise -- intentional: catching synchronous throws from reload() before the returned Promise can be awaited (Bun.WebView pending-slot conflict)
         try {
             return { promise: v.reload(), view: v };
         } catch (error) {
@@ -334,7 +333,7 @@ export function createWebViewAdapter(
             // Chain onto the mutex tail so concurrent calls queue and don't collide
             const result = evaluateTail.then(() => v.evaluate(expression)) as Promise<T>;
             // Update the tail: even if result rejects, the next call must still proceed
-            // eslint-disable-next-line no-restricted-syntax -- mutex tail update: result rejection is already propagated to the caller; the tail must advance regardless
+            // ast-grep-ignore: no-silent-catch-undefined -- mutex tail update: result rejection is already propagated to the caller; the tail must advance regardless
             evaluateTail = result.catch(() => undefined);
             return result;
         },

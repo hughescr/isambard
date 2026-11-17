@@ -18,10 +18,15 @@ const config: KnipConfig = {
         'scripts/**/*.ts',
     ],
     ignoreDependencies: [
-        'eslint-plugin-package-json',
+        // Loaded by Stryker's experimentalNativePreview checker, not by application code.
+        '@typescript/native',
+        // The lint scripts run it by path (`bun node_modules/eslint/bin/eslint.js`, faster than the node shebang) on package.json only.
+        'eslint',
     ],
-    tags: ['internal'],
-    bun:  true,
+    tags:    ['internal'],
+    bun:     true,
+    // Parse the config as an entry point, but don't execute its credential-dependent LLM setup.
+    stryker: false,
 };
 
 export default config;

@@ -1,4 +1,3 @@
-/* eslint-disable sonarjs/no-hardcoded-ip -- these tests check resolver answers, which are literal IP addresses by definition */
 import { describe, expect, test } from 'bun:test';
 import { checkResolvedAddress, validateUrl } from '../../../../src/agent/browser';
 

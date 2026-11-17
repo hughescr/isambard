@@ -1,13 +1,13 @@
 import { z } from 'zod';
 
 // Classifier verdict
+// eslint-disable-next-line @typescript-eslint/no-redeclare -- intentional const+type enum pattern
 export const ClassifierVerdictType = {
     Safe:      'safe',
     Spam:      'spam',
     Uncertain: 'uncertain',
     Unsafe:    'unsafe',
 } as const;
-// eslint-disable-next-line @typescript-eslint/no-redeclare -- intentional const+type enum pattern
 export type ClassifierVerdictType = typeof ClassifierVerdictType[keyof typeof ClassifierVerdictType];
 
 export const UNSAFE_CATEGORIES = ['phishing', 'malware', 'social_engineering', 'prompt_injection', 'scam'] as const;

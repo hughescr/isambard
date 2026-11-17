@@ -183,8 +183,8 @@ describe('runDynamoDBProbe', () => {
     });
 
     describe('ProbeEventSender / ServiceHealthRegistry assignability', () => {
-        // This file is under tests/**, which eslint-boundaries does not restrict (its `files`
-        // glob is src/**/*.ts only), so importing the type here does not create the
+        // This file is under tests/**, which the Oxlint boundaries policy does not restrict
+        // (its globs cover only src/**/*.ts and src/**/*.tsx), so importing the type here does not create the
         // storage->services production import that ProbeEventSender is deliberately declared
         // without. If ServiceHealthRegistry.sendEvent's signature ever narrows in a way that
         // no longer covers ProbeEventSender's { type: 'CONNECTION_LOST' } shape, this function

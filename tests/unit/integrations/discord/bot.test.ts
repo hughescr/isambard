@@ -2379,11 +2379,11 @@ describe('createDiscordBot', () => {
                 ledgerStore.emit({ turn: { phase: { type: 'using_tool', toolName: 'Bash' } } });
                 ledgerStore.emit({ turn: { phase: { type: 'thinking' } } });
                 ledgerStore.emit({ turn: { phase: { type: 'using_tool', toolName: 'Bash' } } });
-                expect((getCaptured().getRecentTools?.() as { toolName: string }[]).map(tool => tool.toolName)).toEqual(['Bash', 'Bash']);
+                expect((getCaptured().getRecentTools!() as { toolName: string }[]).map(tool => tool.toolName)).toEqual(['Bash', 'Bash']);
                 for(let i = 0; i < 10; i += 1) {
                     ledgerStore.emit({ turn: { phase: { type: 'using_tool', toolName: `tool-${i}` } } });
                 }
-                expect((getCaptured().getRecentTools?.() as { toolName: string }[]).map(tool => tool.toolName)).toEqual(Array.from({ length: 10 }, (_, i) => `tool-${i}`));
+                expect((getCaptured().getRecentTools!() as { toolName: string }[]).map(tool => tool.toolName)).toEqual(Array.from({ length: 10 }, (_, i) => `tool-${i}`));
             });
 
             test('removes exactly one oldest tool when the ring buffer overflows', async () => {
@@ -2399,7 +2399,7 @@ describe('createDiscordBot', () => {
                     ledgerStore.emit({ turn: { phase: { type: 'using_tool', toolName: `tool-${i}` } } });
                 }
 
-                expect((getCaptured().getRecentTools?.() as { toolName: string }[]).map(tool => tool.toolName)).toEqual(Array.from({ length: 10 }, (_, i) => `tool-${i + 1}`));
+                expect((getCaptured().getRecentTools!() as { toolName: string }[]).map(tool => tool.toolName)).toEqual(Array.from({ length: 10 }, (_, i) => `tool-${i + 1}`));
             });
 
             test('dedupes a repeated turn, records a new turn, and retains only the newest ten channels', async () => {
@@ -2417,7 +2417,7 @@ describe('createDiscordBot', () => {
                 for(let i = 0; i < 10; i += 1) {
                     ledgerStore.emit({ turn: { id: `turn-${i}`, kind: 'discord', channelId: `channel-${i}` } });
                 }
-                expect((getCaptured().getRecentChannels?.() as { channelId: string }[]).map(channel => channel.channelId)).toEqual(Array.from({ length: 10 }, (_, i) => `channel-${i}`));
+                expect((getCaptured().getRecentChannels!() as { channelId: string }[]).map(channel => channel.channelId)).toEqual(Array.from({ length: 10 }, (_, i) => `channel-${i}`));
             });
         });
 

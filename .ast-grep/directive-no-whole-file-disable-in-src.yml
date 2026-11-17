@@ -1,0 +1,29 @@
+id: directive-no-whole-file-disable-in-src
+language: typescript
+severity: error
+message: Production code allows only disable-next-line or disable-line lint exceptions, never whole-file disables.
+files:
+  - 'src/**'
+rule:
+  kind: comment
+  regex: '^(//|/\*+)\s*(eslint|oxlint)-disable(\s|\*/|$)'
+---
+id: directive-no-whole-file-disable-in-src-javascript
+language: javascript
+severity: error
+message: Production code allows only disable-next-line or disable-line lint exceptions, never whole-file disables.
+files:
+  - 'src/**'
+rule:
+  kind: comment
+  regex: '^(//|/\*+)\s*(eslint|oxlint)-disable(\s|\*/|$)'
+---
+id: directive-no-whole-file-disable-in-src-tsx
+language: tsx
+severity: error
+message: Production code allows only disable-next-line or disable-line lint exceptions, never whole-file disables.
+files:
+  - 'src/**'
+rule:
+  kind: comment
+  regex: '^(//|/\*+)\s*(eslint|oxlint)-disable(\s|\*/|$)'

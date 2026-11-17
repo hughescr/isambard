@@ -2715,7 +2715,7 @@ describe('BlueskyClient', () => {
             mockGetProfile.mockRejectedValueOnce(new Error('Profile not found'));
             const client = new BlueskyClient(CLIENT_OPTIONS);
             const post   = await client.getPost(POST_VIEW.uri);
-            expect(post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'did:plc:unknown999' });
+            expect(post.facets?.[0]?.features[0]).toEqual({ type: 'mention', handle: 'did:plc:unknown999' });
             expect(mockLogger.debug).toHaveBeenCalledWith(
                 { error: expect.any(Error) },
                 'Failed to resolve mention DID to handle, using DID as fallback'
@@ -2746,8 +2746,8 @@ describe('BlueskyClient', () => {
             // getProfile should only be called once even with two facets for the same DID
             expect(mockGetProfile).toHaveBeenCalledTimes(1);
             expect(post.facets).toHaveLength(2);
-            expect(post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'cached.bsky.social' });
-            expect(post.facets?.[1]?.features?.[0]).toEqual({ type: 'mention', handle: 'cached.bsky.social' });
+            expect(post.facets?.[0]?.features[0]).toEqual({ type: 'mention', handle: 'cached.bsky.social' });
+            expect(post.facets?.[1]?.features[0]).toEqual({ type: 'mention', handle: 'cached.bsky.social' });
         });
 
         test('deduplicates DID lookups across multiple posts in a single getFeed call', async () => {
@@ -3133,7 +3133,7 @@ describe('BlueskyClient — rate-limit retry behavior', () => {
             // getProfile must have been called twice (retry after 429)
             expect(mockGetProfile).toHaveBeenCalledTimes(2);
             // The resolved handle is used, not the raw DID
-            expect(post.facets?.[0]?.features?.[0]).toEqual({ type: 'mention', handle: 'resolved.bsky.social' });
+            expect(post.facets?.[0]?.features[0]).toEqual({ type: 'mention', handle: 'resolved.bsky.social' });
         });
     });
 

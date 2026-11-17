@@ -27,19 +27,27 @@ BASENAME=$(basename "$FILE_PATH")
 
 # Protected config files
 PROTECTED_FILES=(
-  "eslint.config.mjs"
-  "eslint-boundaries.config.mjs"
+  "oxlint.config.ts"
+  "oxlint-boundaries.config.mjs"
+  "eslint.package-json.config.mjs"
   "tsconfig.json"
   "bunfig.toml"
   "stryker.conf.mjs"
   "knip.config.ts"
+  "sgconfig.yml"
 )
+
+# Protect ast-grep rules regardless of their filename.
+if [[ "$FILE_PATH" == */.ast-grep/*.yml || "$FILE_PATH" == .ast-grep/*.yml ]]; then
+  PROTECTED_FILES+=("$BASENAME")
+fi
 
 # Check if the file is protected
 for PROTECTED in "${PROTECTED_FILES[@]}"; do
   if [[ "$BASENAME" == "$PROTECTED" ]]; then
     # Output JSON to request confirmation
-    echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": "Modifying protected config file: '"$BASENAME"'. This file controls build/lint/test infrastructure."}}'
+    REASON=$(jq -nc --arg basename "$BASENAME" '"Modifying protected config file: \($basename). This file controls build/lint/test infrastructure."')
+    echo '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", "permissionDecisionReason": '"$REASON"'}}'
     exit 0
   fi
 done

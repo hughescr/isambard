@@ -23,33 +23,39 @@ Before any PR or commit:
 - [ ] All tests pass (`bun test`)
 - [ ] Zero TypeScript errors (`bun run typecheck`)
 - [ ] Zero lint warnings (`bun run lint`)
+- [ ] No new ast-grep findings (`bun run check:ast-grep`; currently 22 pre-existing findings — 21 `no-throw-new-error`, 1 `require-comment-on-double-cast` — tracked in #191; do not add to them)
 - [ ] Mutation score = 100% (`bun mutate` — incremental over the full mutate glob, so only mutants your change affects re-execute; not `bun run mutate` or `npx stryker`. `reports/stryker-incremental.json` is sandbox-protected; use `dangerouslyDisableSandbox: true`.)
 
 ### Test Performance Anti-Patterns
 Since Stryker runs each test potentially hundreds of times, even small per-test overhead compounds dramatically. Every test should target <1ms execution. Avoid these patterns:
 
-1. **Real wall-clock delays** — Never use `Date.now()` elapsed time assertions or `setTimeout` with real timers in tests. Always use `jest.useFakeTimers()` + `jest.advanceTimersByTime()`. *(enforced by ESLint: `no-restricted-syntax` bans `setTimeout`/`setInterval` in test files)*
-2. **`setTimeout(resolve, 0)` for microtask flushing** — Use `await Promise.resolve()` instead (nanoseconds vs 1-4ms macrotask minimum). *(enforced indirectly: `setTimeout` and `new Promise(r => setTimeout(r, N))` are both banned by `no-restricted-syntax`)*
-3. **Dynamic `await import()` per test** — Import modules once at file scope with `import * as mod from '...'`, then `spyOn(mod, 'fn')` in each test. Dynamic imports trigger ESM re-evaluation (~50ms each). *(enforced by ESLint: `no-restricted-syntax` bans `AwaitExpression > ImportExpression` in test files)*
-4. **`done` callback + real `setTimeout`** — Use fake timers: `jest.advanceTimersByTime(N)` instead of waiting real milliseconds. *(enforced by ESLint: `jest/no-done-callback` plus the `setTimeout` ban)*
-5. **Real delays in mock implementations** — Mock implementations should resolve immediately (`async () => 'result'`), not `await new Promise(r => setTimeout(r, 10))`. *(not statically lint-enforced; rely on code review)*
-6. **Unawaited `.rejects`/`.resolves` assertions** — always `await` them. Left unawaited, the assertion races its own rejection chain past the end of the test: a losing race lets the test body return before a failed expectation reports, which Bun then surfaces as an anonymous `1 tests failed:` with no test name, and the still-settling promise chain can bleed mutation coverage into whichever test runs next. *(bun-types declares `.rejects`/`.resolves` matcher methods as returning `void` even though they're thenable at runtime, so `await`-ing one trips `@typescript-eslint/no-confusing-void-expression`; that rule (alongside the existing `@typescript-eslint/await-thenable: 'off'` override for the same reason) is turned off for `tests/**/*.ts` in `eslint.config.mjs` to unblock the required `await`.)*
+1. **Real wall-clock delays** — Never use `Date.now()` elapsed time assertions or `setTimeout` with real timers in tests. Always use `jest.useFakeTimers()` + `jest.advanceTimersByTime()`. *(setTimeout/setInterval enforced by ast-grep: `no-test-set-timeout`, `no-test-set-interval`; `Bun.sleep` by `no-test-bun-sleep`. `Date.now()` elapsed-time assertions are not statically enforced; rely on code review.)*
+2. **`setTimeout(resolve, 0)` for microtask flushing** — Use `await Promise.resolve()` instead (nanoseconds vs 1-4ms macrotask minimum). *(enforced by ast-grep: `no-test-set-timeout` and `no-test-promise-wrapped-set-timeout`, plus `no-test-set-immediate`, `no-test-process-next-tick` and `no-test-queue-microtask` for the other macrotask/microtask-queue shortcuts)*
+3. **Dynamic `await import()` per test** — Import modules once at file scope with `import * as mod from '...'`, then `spyOn(mod, 'fn')` in each test. Dynamic imports trigger ESM re-evaluation (~50ms each). *(enforced by ast-grep: `no-test-dynamic-await-import`)*
+4. **`done` callback + real `setTimeout`** — Use fake timers: `jest.advanceTimersByTime(N)` instead of waiting real milliseconds. *(enforced by Oxlint `jest-js/no-done-callback` plus ast-grep `no-test-set-timeout`)*
+5. **Real delays in mock implementations** — Mock implementations should resolve immediately (`async () => 'result'`), not `await new Promise(r => setTimeout(r, 10))`. *(the `setTimeout` form is caught by `no-test-set-timeout` and `no-test-promise-wrapped-set-timeout`; other delay mechanisms are not statically enforced, rely on code review)*
+6. **Unawaited `.rejects`/`.resolves` assertions** — always `await` them. Left unawaited, the assertion races its own rejection chain past the end of the test: a losing race lets the test body return before a failed expectation reports, which Bun then surfaces as an anonymous `1 tests failed:` with no test name, and the still-settling promise chain can bleed mutation coverage into whichever test runs next. *(bun-types declares `.rejects`/`.resolves` matcher methods as returning `void` even though they're thenable at runtime, so `await`-ing one trips `typescript/no-confusing-void-expression`; that rule (alongside `typescript/await-thenable`) is turned off for `tests/**/*.ts` in `oxlint.config.ts` to unblock the required `await`.)*
 
 ### Test Hygiene Enforcement
-Mechanized via ESLint (sources: `~/code/hughescr/eslint-plugin-test-hygiene`, `~/code/hughescr/eslint-plugin-module-boundaries`).
+Mechanized via Oxlint (`oxlint.config.ts`, extending the published `@hughescr/oxlint-config-default` and its `bunTest` export; JS-plugin sources: `~/code/hughescr/eslint-plugin-test-hygiene`, `~/code/hughescr/eslint-plugin-module-boundaries`) and ast-grep (`sgconfig.yml` loads Isambard's `.ast-grep/*.yml` plus the shared package's `ast-grep/` rules; run by `bun run check:ast-grep`). ESLint remains only for `package.json` (`eslint.package-json.config.mjs`).
 
 - `@hughescr/test-hygiene/require-fake-timers-cleanup` — pair every `jest.useFakeTimers()` with `jest.useRealTimers()` in cleanup
 - `@hughescr/test-hygiene/require-mock-cleanup` — pair every `jest.spyOn()` with `jest.restoreAllMocks()`/`mockRestore()` in `afterEach`
-- `@hughescr/test-hygiene/require-mock-reset` — call configured reset helpers for setup-module mocks in `afterEach`
+- `@hughescr/test-hygiene/require-mock-reset` — call configured reset helpers for setup-module mocks in `afterEach` (options in `oxlint.config.ts`)
 - `@hughescr/test-hygiene/no-mock-module-in-test-body` — `mock.module()` only in `tests/setup.ts`, never in describe/it
 - `@hughescr/module-boundaries/no-internal-in-barrel` — barrel `index.ts` must not re-export `@internal` symbols
 - `@hughescr/module-boundaries/no-cross-module-internal` — production code must not import `@internal` from another module
 - `@hughescr/module-boundaries/no-star-export-from-non-barrel` — barrel `index.ts` must not `export *` from a non-barrel file (`export *` between barrels is allowed)
-- `eslint-plugin-jest` — hook ordering, no-done-callback, no-focused-tests, expect correctness
+- `boundaries/dependencies` (`eslint-plugin-boundaries`, policy data in `oxlint-boundaries.config.mjs`) — layered import allow-list; `no-restricted-imports` carries the #40 Discord fence
+- eslint-plugin-jest rules (hook ordering, no-done-callback, no-focused-tests, expect correctness), under the `jest-js/` alias where Oxlint has a native `jest/` namesake
+- ast-grep syntax bans (each rule id is the name to use in an ignore comment): Isambard's `.ast-grep/` owns `no-foreach-async`, `no-throw-new-error`, `no-raw-console`, `no-process-env-outside-config`, `no-unwrapped-json-parse`, `no-optional-chain-non-null-assertion`, `no-as-branded-type`, `no-module-level-let-in-mcp-servers`, `require-comment-on-double-cast`, `directive-no-whole-file-disable-in-src`; the shared package owns `no-test-*`, `no-silent-catch-undefined`, the five directive/disable rules below and the `sonar-*` ports. Shared rules (and the project directive rule) use the base id in `.ts`, `<id>-javascript` in JS/JSX/`.mjs`, `<id>-tsx` in TSX; suppress with the matching variant id.
 
-**Bypass**: `// eslint-disable-next-line <rule-name> -- <specific reason>` (description after `--` required by `eslint-comments/require-description`).
+**Bypass**:
+- Oxlint rules: `// eslint-disable-next-line <rule-name> -- <specific reason>` (Oxlint honours the ESLint syntax). Leftover ESLint-plugin rules are loaded under aliases and must be suppressed by the alias: `eslint-core/…`, `unicorn-js/…`, `import-x-js/…`, `n-js/…`, `jest-js/…`. Unused disable directives are warnings, which `--deny-warnings` fails, so delete a directive once it stops being needed.
+- Directive policy (ast-grep `eslint-disable-bare`, `eslint-disable-needs-description`, `directive-block-disable-not-at-top`, `directive-no-enable`, `directive-no-inline-config`, `directive-no-whole-file-disable-in-src`): `disable-next-line`/`disable-line` anywhere, each with a rule list and ` -- <reason>`; a block `eslint-disable`/`oxlint-disable` only at the very top of a file (before any code) and never under `src/`; no `eslint-enable`/`oxlint-enable`; no inline `eslint`/`global`/`globals`/`exported`/`eslint-env` config comments. Both `/* */` and `//` forms are checked. A next-line disable under a whole-file disable is not flagged as redundant.
+- ast-grep rules: `// ast-grep-ignore: <rule-id> -- <specific reason>` directly above the offending line (for example `// ast-grep-ignore: no-test-dynamic-await-import -- query makes this a fresh in-process entrypoint evaluation.`).
 
-**Intentionally disabled**: `jest/require-hook` — conflicts with the module-level `mock.module()` setup pattern. See `eslint.config.mjs`.
+**Intentionally not enabled**: `jest/require-hook` — conflicts with the module-level `mock.module()` setup pattern. There is no `no-restricted-syntax` for syntax bans; those are ast-grep rules.
 
 ### Session Architecture Rules
 - `src/agent/session/` (the conductor, ledger, journal, envelope builders) stays mutation-measured at 100% like everything else — never add a `// Stryker disable all` region there to sidestep the gate.
@@ -74,9 +80,15 @@ See [../docs/architecture.md](../docs/architecture.md) for the subsystem map and
 ```bash
 bun run dev:sst      # Development with SST shell and hot reload
 bun run dev:docker   # Full stack with DynamoDB containers
-bun test             # Run tests
-bun run mutate       # Mutation testing
-bun run lint         # Check linting
-bun run typecheck    # TypeScript validation
+bun run test         # Run tests
+bun mutate           # Mutation testing (incremental; see Quality Gates)
+bun run lint         # Oxlint (node, type-aware, --deny-warnings) + ESLint on package.json + Stryker directive check
+bun run lint:fix     # Oxlint --fix + ESLint --fix on package.json
+bun run lint:overview # Same checks as lint, with Oxlint's grouped output for triage
+bun run check:ast-grep # ast-grep syntax bans (.ast-grep/ plus the shared package's rules, via sgconfig.yml)
+bun run typecheck    # TypeScript validation (root tsconfig.json, then src/tsconfig.json)
 bun run backfill:contact-lookup-gsi2  # Backfill GSI2 keys on existing CONTACT_LOOKUP rows
 ```
+
+- Oxlint runs under Node (`node node_modules/oxlint/bin/oxlint`), never Bun (Bun truncates large piped output; #188 tracks the return), and from the repo root: `boundaries/dependencies` resolves its globs against the working directory.
+- Type-aware rules (tsrs) use the nearest `tsconfig.json` to each file: `src/` against `src/tsconfig.json`, everything else against the root one.

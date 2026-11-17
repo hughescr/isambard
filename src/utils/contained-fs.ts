@@ -129,15 +129,16 @@ function bind(options: ContainedFsOptions | undefined, target: string): Bound {
     }
     const real: ContainedIo = { ...libc, ...FD_CALLS };
     const C = fs.constants;
-    /* eslint-disable no-bitwise -- open(2) flags are a bit set by definition */
     return {
         io:        options?.io ? options.io(real) : real,
+        // eslint-disable-next-line no-bitwise -- open(2) flags are a bit set by definition
         dirFlags:  C.O_RDONLY | C.O_DIRECTORY | C.O_NOFOLLOW | C.O_NONBLOCK | table.O_CLOEXEC,
+        // eslint-disable-next-line no-bitwise -- open(2) flags are a bit set by definition
         readFlags: C.O_RDONLY | C.O_NOFOLLOW | C.O_NONBLOCK | table.O_CLOEXEC,
+        // eslint-disable-next-line no-bitwise -- open(2) flags are a bit set by definition
         tempFlags: C.O_WRONLY | C.O_CREAT | C.O_EXCL | C.O_NOFOLLOW | table.O_CLOEXEC,
         atFdCwd:   table.AT_FDCWD,
     };
-    /* eslint-enable no-bitwise -- end of the open(2) flag block */
 }
 
 /** True for a name an `*at` call may take: non-empty, not `.`/`..`, no `/` and no NUL. */

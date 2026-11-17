@@ -137,7 +137,7 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        let items = (result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined);
+        let items = (result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(item => isDefined(item));
 
         // Sort by createdAt ascending (oldest first, newest last)
         items = items.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
@@ -209,7 +209,7 @@ export class MemoryToolBackendQuery {
             })
         );
 
-        const items = (result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined);
+        const items = (result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(item => isDefined(item));
         const nextCursor = this.encodeCursor(result.LastEvaluatedKey);
 
         return { items, nextCursor, consumedReadUnits: result.ConsumedCapacity?.CapacityUnits };
@@ -252,7 +252,7 @@ export class MemoryToolBackendQuery {
         }));
 
         for(const result of layerResults) {
-            allItems.push(...(result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined));
+            allItems.push(...(result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(item => isDefined(item)));
         }
 
         // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending
@@ -302,7 +302,7 @@ export class MemoryToolBackendQuery {
         }));
 
         for(const result of layerResults) {
-            allItems.push(...(result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(isDefined));
+            allItems.push(...(result.Items ?? []).map(item => decodeStoredMemoryToolItem(item)).filter(item => isDefined(item)));
         }
 
         // Items arrive newest-first per layer; merge, sort descending, take limit, reverse to ascending

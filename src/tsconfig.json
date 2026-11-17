@@ -1,0 +1,10 @@
+{
+  // The compiler options for everything under src/. Oxlint's type-aware rules (and Bun) use the
+  // nearest tsconfig.json to each file, so this is what src/ is linted and type-checked against;
+  // `bun typecheck` runs it as a second pass over src/ after the root tsconfig.json.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["**/*", "../sst-env.d.ts"]
+}

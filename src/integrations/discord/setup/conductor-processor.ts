@@ -26,6 +26,7 @@ import { DateTime } from 'luxon';
 import { addAttachmentInfoToContexts } from '../attachments';
 import type { MessageProcessor, ProcessResult } from '../message-coordinator';
 import type { DiscordMessageContext } from '../types';
+// eslint-disable-next-line import/no-cycle -- existing cycle, tracked in https://github.com/hughescr/isambard/issues/189
 import { processAttachments, toPlatformImages } from './coordinator-setup';
 import type { ResolvedDiscordNames } from './discord-envelope-provider';
 import {

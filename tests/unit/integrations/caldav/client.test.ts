@@ -653,7 +653,7 @@ describe('CalDAVClient.getEvents', () => {
         await drainMicrotasks();
         jest.advanceTimersByTime(50);
         await pending;
-        const loggedError = (mockLogger.warn.mock.calls[0]?.[0] as { error: CaldavTimeoutError }).error;
+        const loggedError = (mockLogger.warn.mock.calls[0][0] as { error: CaldavTimeoutError }).error;
         expect(loggedError.context).toMatchObject({ operation: 'fetchCalendars' });
     });
 
@@ -1877,7 +1877,7 @@ describe('CalDAVClient timeout', () => {
             { error: expect.any(CaldavTimeoutError), serverUrl: server.serverUrl },
             'Failed to fetch events from CalDAV server, continuing with partial results'
         );
-        const loggedError = (mockLogger.warn.mock.calls[0]?.[0] as { error: CaldavTimeoutError }).error;
+        const loggedError = (mockLogger.warn.mock.calls[0][0] as { error: CaldavTimeoutError }).error;
         expect(loggedError.context).toMatchObject({ timeoutMs: 50, operation: 'fetchCalendarObjects' });
         expect(loggedError.message).toContain('fetchCalendarObjects');
     });

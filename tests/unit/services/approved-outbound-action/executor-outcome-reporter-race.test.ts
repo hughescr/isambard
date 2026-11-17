@@ -686,7 +686,7 @@ describe('an outcome unknown for 24 h, escalated to the admin, driven against th
         await reporterAt(Date.parse(secondEpisode) + DAY_MS).reportOnce();
         expect(discord.edit.mock.calls.map(([messageId]) => messageId)).toEqual([PING.messageId, PING.messageId]);
         expect(controlsShown(discord.edit)).toEqual([false, true]);
-        const [controls] = (discord.edit.mock.calls[1]?.[1] as unknown as { components: { toJSON: () => { components: { custom_id: string }[] } }[] }).components.map(row => row.toJSON());
+        const [controls] = (discord.edit.mock.calls[1][1] as unknown as { components: { toJSON: () => { components: { custom_id: string }[] } }[] }).components.map(row => row.toJSON());
         expect(controls.components.map(button => button.custom_id)).toEqual([`approved-action-mark-sent:${ACTION_ID}:${secondEpisode}`, `approved-action-resend:${ACTION_ID}:${secondEpisode}`]);
         expect(discord.send).toHaveBeenCalledTimes(1);
     });

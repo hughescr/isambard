@@ -1,5 +1,5 @@
 // Test setup and configuration
-/* eslint-disable import-x/order -- imports are intentionally interleaved with mock.module() calls to ensure correct mock ordering */
+/* eslint-disable import-x-js/order -- imports are intentionally interleaved with mock.module() calls to ensure correct mock ordering */
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -365,7 +365,7 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
     }
 
     // Normalize path by removing trailing slashes
-    // eslint-disable-next-line sonarjs/super-linear-regex, regexp/no-super-linear-move -- test-only regex; path strings are short and well-controlled, no DoS risk
+    // eslint-disable-next-line regexp/no-super-linear-move -- test-only regex; path strings are short and well-controlled, no DoS risk
     const normalizedPath = path.replace(/\/+$/, '');
 
     // Find all direct children of this directory
@@ -381,7 +381,6 @@ const originalReaddirImpl = async (path: string, options?: { withFileTypes?: boo
 
         return relative.length > 0 && !relative.includes('/');
     });
-    // eslint-disable-next-line sonarjs/function-return-type -- callback returns string or Dirent-like object depending on withFileTypes option; matches node:fs readdir signature
     return directChildren.map(([childPath, childEntry]: [string, MockFsEntry]): string | { name: string, isDirectory: () => boolean, isFile: () => boolean, isSymbolicLink: () => boolean } => {
         const parts = childPath.split('/');
         const name = parts.at(-1) ?? '';

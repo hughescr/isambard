@@ -25,7 +25,6 @@ reports/
 *.swp
 *.swo
 *~
-.eslintcache
 
 # OS
 .DS_Store

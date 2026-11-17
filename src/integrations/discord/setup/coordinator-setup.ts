@@ -15,6 +15,7 @@ import { MessageCoordinator } from '../message-coordinator';
 import type { DiscordRateLimiter } from '../rate-limiter';
 import { sendEnvelopeResponse } from '../response-sender';
 import { createChannelId, type ChannelId, type DiscordMessageContext, type ExchangeSpeaker } from '../types';
+// eslint-disable-next-line import/no-cycle -- existing cycle, tracked in https://github.com/hughescr/isambard/issues/189
 import { createConductorProcessor, type DiscordEnvelopeDeps } from './conductor-processor';
 import {
     type PlatformImage, type ActivityLogger, type Conductor, type ContextPolicy, type ContextBuilder, type TimeHeaderProvider, generateText

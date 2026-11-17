@@ -285,6 +285,8 @@ function buildZoteroDeps(config: Config): ZoteroDeps | undefined {
     return config.zotero ? createZoteroDeps(config.zotero) : undefined;
 }
 
+const noop = (): void => undefined;
+
 async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onFailure'>) => void): Promise<App> {
     // Load configuration (required)
 
@@ -353,7 +355,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // is late-bound, like discordReconnectFn below. Until it is bound, and while the executor is
     // not started, a wake is a no-op and the executor's first poll picks the row up; approval
     // clicks only arrive after the bot has started, so neither case arises in practice.
-    let wakeApprovedActionExecutor: () => void = () => undefined;
+    let wakeApprovedActionExecutor: () => void = noop;
     const approvedActionWriter = createWakingActionWriter(approvedOutboundActionBackend, () => {
         wakeApprovedActionExecutor();
     });
@@ -361,7 +363,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // A send queued while Discord stays online (an indeterminate REST failure) gets no health
     // transition to start a drain, so the capability wakes the drainer itself. The drainer is
     // built further down (its replay closes over this capability), so the wake is late-bound.
-    let wakeOutboxDrainer: () => void = () => undefined;
+    let wakeOutboxDrainer: () => void = noop;
 
     // Discord capability facade (wraps Discord sends with outbox fallback)
     const discordCapability = new DiscordCapabilityImpl({
@@ -415,9 +417,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
     // Anthropic quota comes only from Agent SDK rate-limit events. Those events cannot observe
     // Craig's external Claude spend while Izzy is idle; the pause guard deliberately retains its
     // prior peak until another SDK event arrives rather than weakening that safety policy here.
-    const providerHeaders = (): Record<string, string> => ({
-        ...(gateway.localToken === undefined ? {} : { 'X-Utraque-Token': gateway.localToken }),
-    });
+    const providerHeaders = (): Record<string, string> => (gateway.localToken === undefined ? {} : { 'X-Utraque-Token': gateway.localToken });
     const ambience = createSessionAmbience({
         timezone: config.session.timezone,
         clock:    systemClock,
@@ -1256,7 +1256,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         stopIngress:  () => {
             bot.stopIngress();
         },
-        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- the one place this process terminates on a failed conversation open; the supervisor's injected exit
+        // eslint-disable-next-line n-js/no-process-exit, unicorn/no-process-exit -- the one place this process terminates on a failed conversation open; the supervisor's injected exit
         exit:  code => process.exit(code),
         clock: systemClock,
         logger,
@@ -1638,7 +1638,7 @@ async function createEntryApplication() {
             stack: err instanceof Error ? err.stack : undefined,
             msg:   'Fatal: application failed to start',
         });
-        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- Fatal startup error requires exit
+        // eslint-disable-next-line n-js/no-process-exit, unicorn/no-process-exit -- Fatal startup error requires exit
         process.exit(1);
     }
 
@@ -1652,7 +1652,7 @@ async function createEntryApplication() {
         deadlineMs: app.config.session.shutdownDeadlineMs,
         clock:      systemClock,
         logger,
-        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- registerSignalHandlers's own injected `exit`, the one place this process actually terminates on a signal
+        // eslint-disable-next-line n-js/no-process-exit, unicorn/no-process-exit -- registerSignalHandlers's own injected `exit`, the one place this process actually terminates on a signal
         exit:       code => process.exit(code),
     });
 
@@ -1695,7 +1695,7 @@ if(import.meta.main) {
                 await launched.stop();
             });
         },
-        // eslint-disable-next-line n/no-process-exit, unicorn/no-process-exit -- a fatal launch failure terminates the process, like createEntryApplication's startup failure
+        // eslint-disable-next-line n-js/no-process-exit, unicorn/no-process-exit -- a fatal launch failure terminates the process, like createEntryApplication's startup failure
         exit: code => process.exit(code),
     });
 }

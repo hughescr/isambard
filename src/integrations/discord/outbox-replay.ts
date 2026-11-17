@@ -117,9 +117,9 @@ async function firstUndeliveredPart(channel: TextChannel, item: OutboxItem, part
     // definitive rejection of the next part then persists this progress as a retryable outcome
     // that the next replay trusts without history, and a discard notice calls it undelivered. A
     // failure before this point (the channel fetch) leaves the outcome unknown.
-    // eslint-disable-next-line require-atomic-updates -- the drainer hands this item to one delivery at a time and reads its progress only after it settles
+    // eslint-disable-next-line eslint-core/require-atomic-updates -- the drainer hands this item to one delivery at a time and reads its progress only after it settles
     item.progress.deliveredParts = resume;
-    // eslint-disable-next-line require-atomic-updates -- as above: one delivery owns this item until it settles
+    // eslint-disable-next-line eslint-core/require-atomic-updates -- as above: one delivery owns this item until it settles
     item.progress.outcome = 'retryable';
     return resume;
 }
@@ -182,7 +182,7 @@ export function createOutboxReplayDeliverFn(deps: OutboxReplayDeps): (item: Outb
             // eslint-disable-next-line no-await-in-loop -- chunks must be sent sequentially to preserve message order
             await sendTextPart(channel, item, part, chunks[part]!, deps.notify);
             // The drainer persists this on any later failure, so a replay never resends this part.
-            // eslint-disable-next-line require-atomic-updates -- the drainer hands this item to one delivery at a time and reads its progress only after it settles
+            // eslint-disable-next-line eslint-core/require-atomic-updates -- the drainer hands this item to one delivery at a time and reads its progress only after it settles
             item.progress.deliveredParts = part + 1;
         }
         if(hasRichPayload && resume <= chunks.length) {

@@ -105,7 +105,7 @@ describe('createApprovedActionOutcomeDelivery', () => {
         expect(h.fetchChannel.mock.calls).toEqual([['admin-ch' as ChannelId]]);
         expect(h.edit).toHaveBeenCalledTimes(1);
         expect(h.edit.mock.calls[0]?.[0]).toBe('card-msg');
-        expect((h.edit.mock.calls[0]?.[1] as { components: unknown[] }).components).toEqual([]);
+        expect((h.edit.mock.calls[0][1] as { components: unknown[] }).components).toEqual([]);
         // Strict: a sent card has no description key at all.
         expect(editedEmbeds(h)).toStrictEqual([{ title: 'Sent ✓', color: 0x00_AA_00 }]);
         // An ordinary outcome on a card neither re-reads the row nor looks for an admin ping.
@@ -177,7 +177,7 @@ describe('createApprovedActionOutcomeDelivery', () => {
 
         expect(h.fetchChannel.mock.calls).toEqual([[PING.channelId as ChannelId]]);
         expect(h.edit.mock.calls[0]?.[0]).toBe(PING.messageId);
-        expect((h.edit.mock.calls[0]?.[1] as { components: unknown[] }).components).toEqual([]);
+        expect((h.edit.mock.calls[0][1] as { components: unknown[] }).components).toEqual([]);
         expect(editedEmbeds(h)).toStrictEqual([{ title: 'Sent ✓', color: 0x00_AA_00 }]);
     });
 

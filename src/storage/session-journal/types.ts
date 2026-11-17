@@ -13,7 +13,7 @@
  */
 import { z } from 'zod';
 import { type EpochSeconds } from '../repositories/types';
-// eslint-disable-next-line boundaries/dependencies -- type-only import (erased at compile time, no runtime edge): JournalEntry/SessionRole are owned solely by src/agent/session/types.ts (plan amendment A1 / P8 gap override (a)) and storage must not redeclare either
+// eslint-disable-next-line boundaries/dependencies, unicorn/prefer-export-from -- type-only import (erased at compile time, no runtime edge): JournalEntry/SessionRole are owned solely by src/agent/session/types.ts (plan amendment A1 / P8 gap override (a)) and storage must not redeclare either; an `export ... from '@/agent'` here would be a second boundary-crossing import statement needing its own disable; re-exporting the already-imported local bindings keeps the single disable above as the only crossing
 import type { EnvelopeKind, JournalEntry, SessionRole } from '@/agent';
 
 /**
@@ -92,5 +92,4 @@ export interface SessionJournalItem extends Record<string, unknown> {
     at:   string   // ISO 8601 — the wire form of JournalEntry['at']
 }
 
-// eslint-disable-next-line unicorn/prefer-export-from -- an `export ... from '@/agent'` here would be a second boundary-crossing import statement needing its own disable; re-exporting the already-imported local bindings keeps the single disable above as the only crossing
 export type { JournalEntry, SessionRole };

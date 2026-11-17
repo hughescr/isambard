@@ -1,8 +1,8 @@
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- fixture exercises the installed devDependency patch
+// eslint-disable-next-line import-x-js/no-extraneous-dependencies -- fixture exercises the installed devDependency patch
 import { CheckStatus } from '@stryker-mutator/api/check';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- fixture exercises the installed devDependency patch
+// eslint-disable-next-line import-x-js/no-extraneous-dependencies -- fixture exercises the installed devDependency patch
 import { PlanKind } from '@stryker-mutator/api/core';
-// eslint-disable-next-line import-x/no-extraneous-dependencies -- Stryker core owns this runtime dependency
+// eslint-disable-next-line import-x-js/no-extraneous-dependencies -- Stryker core owns this runtime dependency
 import { from, lastValueFrom, mergeMap, toArray } from 'rxjs';
 // eslint-disable-next-line sonarjs/no-internal-api-use -- the regression specifically verifies this patched internal executor
 import { MutationTestExecutor } from '../../node_modules/@stryker-mutator/core/dist/src/process/4-mutation-test-executor.js';

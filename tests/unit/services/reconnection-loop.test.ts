@@ -85,7 +85,7 @@ describe('createReconnectionLoop', () => {
         const failures = (registry.sendEvent as Mock<typeof registry.sendEvent>).mock.calls
             .filter(call => call[1].type === 'CONNECT_FAIL');
         expect(failures).toHaveLength(7);
-        expect((failures[6]?.[1] as { nextRetryAt?: Date }).nextRetryAt).toEqual(new Date(64_000));
+        expect((failures[6][1] as { nextRetryAt?: Date }).nextRetryAt).toEqual(new Date(64_000));
         loop.stop();
     });
 

@@ -1,7 +1,7 @@
 import { Database, type Database as DatabaseType } from 'bun:sqlite';
 import { afterEach, describe, expect, it, jest, mock } from 'bun:test';
 // @ts-expect-error Bun query specifiers create an isolated module instance for this process-global test.
-import { configureCustomSQLite as configureFreshSQLite } from '../../../src/storage/memory-vec-store/backend.ts?default-deps-setter-test';
+import { configureCustomSQLite as configureFreshSQLite } from '../../../src/storage/memory-vec-store/backend.ts?default-deps-setter-test'; // eslint-disable-line import/no-duplicates -- distinct query strings deliberately create separate Bun module instances; these imports cannot be merged
 // @ts-expect-error Bun query specifiers create an isolated module instance for this process-global test.
 import { VectorIndex as DefaultConfigureVectorIndex } from '../../../src/storage/memory-vec-store/backend.ts?open-default-configure-test';
 import { VectorIndexError, VectorIndexUnavailableError } from '@/errors';

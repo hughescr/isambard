@@ -317,7 +317,7 @@ export function createOutboxDrainer(deps: OutboxDrainerDeps): OutboxDrainer {
             }
             return result;
         } finally {
-            // eslint-disable-next-line require-atomic-updates -- single-threaded guard
+            // eslint-disable-next-line eslint-core/require-atomic-updates -- single-threaded guard
             draining = false;
             // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stop() can run between awaits
             if(drainRequested && !stopped) {

@@ -156,10 +156,13 @@ export function formatAnnotation(annotation: ZoteroItem, izzyUserId: number): Re
     };
 }
 
+function annotationSortIndex(annotation: ZoteroItem): string {
+    return stringField(annotation.data, 'annotationSortIndex') ?? '￿';
+}
+
 /** Reader order (`annotationSortIndex`); annotations without one go last. */
 export function sortAnnotations(annotations: ZoteroItem[]): ZoteroItem[] {
-    const index = (annotation: ZoteroItem) => stringField(annotation.data, 'annotationSortIndex') ?? '￿';
-    return annotations.toSorted((a, b) => index(a).localeCompare(index(b)));
+    return annotations.toSorted((a, b) => annotationSortIndex(a).localeCompare(annotationSortIndex(b)));
 }
 
 /** A stored or linked attachment; `annotations` (when read) are listed in reader order. */

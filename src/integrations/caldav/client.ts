@@ -257,7 +257,7 @@ export class CalDAVClient {
                         timeRange: { start: start.toISOString(), end: end.toISOString() },
                     }), this.#timeoutMs, 'fetchCalendarObjects');
                 } catch (error) {
-                    // eslint-disable-next-line require-atomic-updates -- this flag only transitions from false to true
+                    // eslint-disable-next-line eslint-core/require-atomic-updates -- this flag only transitions from false to true
                     stopped = true;
                     throw error;
                 }

@@ -25,7 +25,7 @@ Each platform integration lives under `src/integrations/{platform}/`. For exampl
 
 ### Module boundary rules
 
-Module boundaries are enforced by `eslint-plugin-boundaries` via `eslint-boundaries.config.mjs`'s `boundaries/dependencies` rule (`default: 'disallow'` — every permitted edge is an explicit policy). It is not a single ladder: `agent` and `email` import each other (type-only, both directions), and so do `agent` and `bsky` (runtime values, both directions); `discord` may import every other platform integration, but no other platform integration may import `discord`. See `docs/architecture.md`'s Layering section for the full allow-list and worked examples — this guide follows the same rules rather than restating a different chain.
+Module boundaries are enforced by `eslint-plugin-boundaries`, loaded into Oxlint as a JS plugin through the shared package's `defineBoundaries` add-on (`oxlint-boundaries.config.mjs` builds it, `oxlint.config.ts` extends it and merges its `settings`), which carries the `boundaries/dependencies` policy and the element list (`default: 'disallow'` — every permitted edge is an explicit policy). It is not a single ladder: `agent` and `email` import each other (type-only, both directions), and so do `agent` and `bsky` (runtime values, both directions); `discord` may import every other platform integration, but no other platform integration may import `discord`. See `docs/architecture.md`'s Layering section for the full allow-list and worked examples — this guide follows the same rules rather than restating a different chain.
 
 ```
 utils → errors → config → storage → services → agent ⇄ {email, bsky} → {discord, caldav} → app
@@ -35,7 +35,7 @@ utils → errors → config → storage → services → agent ⇄ {email, bsky}
 
 **Key rules for a new platform:**
 
-1. Add a `boundaryElements` entry for your platform in `eslint-boundaries.config.mjs`:
+1. Add a `boundaryElements` entry for your platform in `oxlint-boundaries.config.mjs`:
    ```js
    { type: 'yourplatform', pattern: 'src/integrations/yourplatform/**' }
    ```
@@ -48,11 +48,11 @@ utils → errors → config → storage → services → agent ⇄ {email, bsky}
 
 3. Your platform must **not** import `discord` — email, Bluesky and CalDAV never do (discord.js and Discord UI stay entirely inside `src/integrations/discord/` and `src/app/`, per the fence below). If `discord` needs to reference your platform (e.g., for approval flows), add your type to the `discord` allow list, not the reverse.
 
-4. Add your type to `APP_MAY_IMPORT` in `eslint-boundaries.config.mjs` so the composition root can wire it in.
+4. Add your type to `APP_MAY_IMPORT` in `oxlint-boundaries.config.mjs` so the composition root can wire it in.
 
-5. `discord.js` and `@discordjs/*` are fenced separately, by `eslint.config.mjs`'s `no-restricted-imports` (not the boundaries rule): only `src/integrations/discord/**` and `src/app/**` may import them, and your platform's integration folder must not. The one existing exemption is `src/agent/discord-mcp-server.ts` (the Discord MCP adapter the agent module hosts by convention), which carries its own scoped `eslint-disable-next-line` rather than an `ignores` entry — don't take that as precedent for a new platform's integration folder.
+5. `discord.js` and `@discordjs/*` are fenced separately, by `oxlint.config.ts`'s `no-restricted-imports` (not the boundaries rule): only `src/integrations/discord/**` and `src/app/**` may import them, and your platform's integration folder must not. The one existing exemption is `src/agent/discord-mcp-server.ts` (the Discord MCP adapter the agent module hosts by convention), which carries its own scoped `// eslint-disable-next-line no-restricted-imports -- <reason>` (Oxlint honours the ESLint directive syntax) rather than an `ignorePatterns` entry — don't take that as precedent for a new platform's integration folder.
 
-Boundary violations are caught at lint time — run `bun run lint` to verify.
+Boundary violations are caught at lint time — run `bun run lint` to verify (Oxlint runs under Node; `boundaries/dependencies` resolves its element globs against the working directory, so run it from the repo root).
 
 ### How the platform connects to the agent layer
 
@@ -279,7 +279,7 @@ export type { YourPlatformMessage, ... }   from './types.js';
 
 Export only what other modules need. Run `bun dead-code` (knip) to verify no unused exports accumulate.
 
-**`eslint-boundaries.config.mjs`** — add your platform element and allow rules (see Architecture section above).
+**`oxlint-boundaries.config.mjs`** — add your platform element and allow rules (see Architecture section above).
 
 ---
 
@@ -298,7 +298,7 @@ Export only what other modules need. Run `bun dead-code` (knip) to verify no unu
 - [ ] `ApprovedOutboundActionExecutor` maps approval-backed actions to `*-sent` and logs only from the settled-success path
 - [ ] `src/app/mcp-servers.ts` — register MCP server
 - [ ] `src/index.ts` / `src/app/*.ts` — instantiate client, register history provider
-- [ ] `eslint-boundaries.config.mjs` — add boundary element and allow rules
+- [ ] `oxlint-boundaries.config.mjs` — add boundary element and allow rules
 - [ ] All barrel exports updated; run `bun dead-code` to check for leaks
 - [ ] Tests for client, history provider, and MCP server with 100% mutation score
 - [ ] `bun run typecheck` — zero errors

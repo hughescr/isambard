@@ -12,7 +12,7 @@ import { syncAgentsAndSkills } from '@/agent/skill-agent-loader';
 
 function waitForEventLoopCheckpoint(): Promise<void> {
     return new Promise((resolve) => {
-        // eslint-disable-next-line no-restricted-syntax -- gates remain closed; this checks ordering after runnable async work without elapsed-time policy.
+        // ast-grep-ignore: no-test-set-immediate -- gates remain closed; this checks ordering after runnable async work without elapsed-time policy.
         setImmediate(resolve);
     });
 }

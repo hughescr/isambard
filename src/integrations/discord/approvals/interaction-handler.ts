@@ -85,7 +85,7 @@ export abstract class DiscordOutboundApprovalInteractionHandler<TId> {
      * Build the log object to emit when rejection persistence fails.
      * Subclasses provide platform-specific keys (e.g. `uid` vs `uuid`) and messages.
      */
-    protected abstract buildRejectionFailedLog(err: unknown, id: TId): Record<string, unknown>;
+    protected abstract buildRejectionFailedLog(error: unknown, id: TId): Record<string, unknown>;
 
     // ---------------------------------------------------------------------------
     // Shared public API

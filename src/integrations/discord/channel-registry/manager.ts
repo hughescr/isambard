@@ -68,7 +68,6 @@ export class ChannelRegistryManager {
 
         // Initialize ready promise — resolves on successful warmCache, stays pending on failure.
         // Use isReady() to distinguish "not yet hydrated" from "hydration failed".
-        // eslint-disable-next-line sonarjs/no-async-constructor -- initReadyPromise is synchronous (returns new Promise); no async work is started in the constructor
         this.ready = this.initReadyPromise();
     }
 

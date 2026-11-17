@@ -587,7 +587,7 @@ describe('loadPlugins', () => {
             const call = mockLogger.warn.mock.calls.find(([arg]) => (arg as { errors?: unknown }).errors !== undefined);
             expect(call).toBeDefined();
             // result.error.issues is an array of ZodIssue; .flatten().fieldErrors is a plain object keyed by field.
-            expect(Array.isArray((call?.[0] as { errors: unknown }).errors)).toBe(true);
+            expect(Array.isArray((call![0] as { errors: unknown }).errors)).toBe(true);
         });
 
         test('logs the underlying Error message (not String(error)) when plugins.json fails to read', async () => {

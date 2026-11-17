@@ -1,4 +1,3 @@
-/* eslint-disable sonarjs/no-hardcoded-ip -- the fetcher's DNS answers and pinned addresses are literal IP addresses by definition */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { once } from 'node:events';
 import http from 'node:http';

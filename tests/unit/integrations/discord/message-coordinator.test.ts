@@ -1,4 +1,5 @@
-/* eslint-disable no-restricted-syntax -- setTimeout calls in mock processor implementations are intentional: they simulate async processing and are controlled by jest.useFakeTimers() + jest.advanceTimersByTime() in the test body, not real wall-clock time */
+// ast-grep-ignore: no-test-set-timeout, no-test-promise-wrapped-set-timeout, no-test-queue-microtask -- setTimeout calls in mock processor implementations are intentional: they simulate async processing and are controlled by jest.useFakeTimers() + jest.advanceTimersByTime() in the test body, not real wall-clock time
+
 /* eslint-disable @typescript-eslint/dot-notation -- These contract tests exercise private state transitions through bracket access. */
 import { describe, it, expect, beforeEach, afterEach, mock, jest } from 'bun:test';
 import { logger } from '@hughescr/logger';

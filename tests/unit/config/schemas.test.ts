@@ -1583,7 +1583,6 @@ describe('emailPreviewConfigSchema', () => {
 
     test.each([
         ['an unknown mode', { mode: 'on' }],
-        // eslint-disable-next-line sonarjs/no-clear-text-protocols -- asserting that a clear-text base URL is refused
         ['an http base URL', { publicBaseUrl: 'http://mac.tailnet.ts.net' }],
         ['a base URL whose scheme only starts with https', { publicBaseUrl: 'httpsx://mac.tailnet.ts.net' }],
         ['a base URL whose scheme only ends with https', { publicBaseUrl: 'xhttps://mac.tailnet.ts.net' }],

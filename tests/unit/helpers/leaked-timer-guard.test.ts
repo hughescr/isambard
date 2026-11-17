@@ -546,7 +546,7 @@ describe('createTimerGuard', () => {
                 return { handles, guard, promiseTimers };
             }
             const tick = (handles: FakeHandle[], index = 0): void => {
-                (handles[index]?.callback as () => void)();
+                (handles[index].callback as () => void)();
             };
 
             it('reports an interval still pending when the test ends, with its kind and delay, and cancels it', () => {
