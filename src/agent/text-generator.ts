@@ -17,7 +17,9 @@ let tmpDirPromise: Promise<string> | null = null;
 
 /**
  * Lazily creates a temp directory for subprocess cwd.
- * Using an empty directory ensures no CLAUDE.md files are picked up.
+ * The empty directory keeps the subprocess out of the repo (and whatever
+ * working directory the bot was started from). Settings and CLAUDE.md
+ * isolation comes from `settingSources: []` in executePrompt, not from the cwd.
  *
  * This is a process-lifetime singleton: once created, the same directory is reused
  * for all generateText calls. In tests, only the first call executes mkdtemp.
@@ -204,6 +206,8 @@ async function executePrompt(
                 executable:      'bun',
                 cwd:             tmpDir,
                 persistSession:  false,
+                // The SDK loads every settings source when this is omitted; [] skips the user, project and local settings files (and the CLAUDE.md files they gate), so their plugins, hooks, MCP servers and instructions stay out of these one-turn calls. Managed (admin) policy settings still apply. `tools: []` alone does not keep out MCP tools from user settings.
+                settingSources:  [],
                 tools:           [],
                 thinking:        { type: 'disabled' },
                 effort:          'low',

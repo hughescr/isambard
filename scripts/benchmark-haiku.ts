@@ -108,6 +108,7 @@ for(const [label, prompt] of prompts) {
                 executable:     'bun',
                 cwd:            tmpDir,
                 persistSession: false,
+                settingSources: [], // matches production executePrompt(): no user/project/local settings
                 tools:          [],
                 thinking:       { type: 'disabled' },
                 effort:         'low',

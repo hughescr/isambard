@@ -309,6 +309,20 @@ describe('generateText', () => {
             );
         });
 
+        test('should pass settingSources: [] so no user, project or local settings are loaded', async () => {
+            await generateText('Test prompt');
+
+            const callArgs = mockQuery.mock.calls[0][0] as { options: { settingSources?: unknown } };
+            expect(callArgs.options.settingSources).toStrictEqual([]);
+        });
+
+        test('should pass settingSources: [] from generateTextWithSystemPrompt too', async () => {
+            await generateTextWithSystemPrompt('Be helpful', 'Test prompt');
+
+            const callArgs = mockQuery.mock.calls[0][0] as { options: { settingSources?: unknown } };
+            expect(callArgs.options.settingSources).toStrictEqual([]);
+        });
+
         test('should pass thinking disabled', async () => {
             await generateText('Test prompt');
 
