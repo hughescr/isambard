@@ -1,7 +1,20 @@
 import { describe, test, expect } from 'bun:test';
 import { IsambardError } from '@/errors/base';
 import { ErrorCode } from '@/errors/codes';
-import { EmailError, EmailPreviewError } from '@/errors/email';
+import { ApprovedDraftChangedError, EmailError, EmailPreviewError } from '@/errors/email';
+
+describe('ApprovedDraftChangedError', () => {
+    test('is an EmailError with its own name and code, and no context', () => {
+        const error = new ApprovedDraftChangedError('the draft no longer matches what was approved');
+        expect(error).toBeInstanceOf(EmailError);
+        expect(error).toBeInstanceOf(IsambardError);
+        expect(error.name).toBe('ApprovedDraftChangedError');
+        expect(error.code).toBe(ErrorCode.APPROVED_DRAFT_CHANGED);
+        expect(String(error.code)).toBe('APPROVED_DRAFT_CHANGED');
+        expect(error.message).toBe('the draft no longer matches what was approved');
+        expect(error.context).toBeUndefined();
+    });
+});
 
 describe('EmailPreviewError', () => {
     test('is an EmailError with its own name and code', () => {

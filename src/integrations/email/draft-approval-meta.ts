@@ -74,6 +74,31 @@ export function readDraftApprovalMeta(metaData: unknown): DraftApprovalMeta {
 }
 
 /**
+ * What an approved send needs from a draft's metaData, read strictly: the approval marker
+ * (parsed as {@link readDraftApprovalMeta} parses it), and whether a `rejectedAt` or a
+ * `supersededBy` key is present at all, whatever its value.
+ */
+export interface DraftSendMeta {
+    approval:   DraftApprovalMarker | undefined
+    rejected:   boolean
+    superseded: boolean
+}
+
+/**
+ * Read the draft's metaData for an approved send; never throws. Unlike
+ * {@link readDraftApprovalMeta}, a malformed `rejectedAt` or `supersededBy` still counts, so a
+ * contradicted or garbled draft blocks the send instead of passing as approved.
+ */
+export function readDraftSendMeta(metaData: unknown): DraftSendMeta {
+    const raw = asRecord(metaData);
+    return {
+        approval:   parsed(approvalSchema, raw.approval),
+        rejected:   Object.hasOwn(raw, 'rejectedAt'),
+        superseded: Object.hasOwn(raw, 'supersededBy'),
+    };
+}
+
+/**
  * The draft's metaData with `patch` applied: a shallow spread in which the patch wins, and a
  * key whose patch value is `undefined` is deleted. A missing or non-object metaData counts as empty.
  */

@@ -180,6 +180,17 @@ export interface DeliveryCheckInput {
     signal: AbortSignal
 }
 
+/**
+ * What a send is told about the attempt it makes: the row's id, and whether this is the row's
+ * first send — no earlier claim of it, so no earlier send of it can have reached the destination.
+ * A later send (a retry, a resend after a destination check, an admin's Resend) may follow a
+ * submit that reached the destination partly.
+ */
+export interface SendAttempt {
+    actionId:  string
+    firstSend: boolean
+}
+
 /** How the executor checks one action type's destination. */
 export interface DeliveryVerifier {
     /** Look for the action at its destination. May throw; a throw counts as undetermined. */

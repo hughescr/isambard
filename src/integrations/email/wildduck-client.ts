@@ -88,7 +88,6 @@ interface SearchCriteria {
     content?:       string
     before?:        string
     since?:         string
-    header?:        { name: string, value: string }
     keyword?:       string
 }
 
@@ -191,6 +190,15 @@ export interface WildDuckAttachment {
     content:     string
 }
 
+/**
+ * A reply threading header for an upload's `headers`: only In-Reply-To and References, which
+ * WildDuck appends after the ones it derives from a `reference` — so the two are never sent together.
+ */
+export interface WildDuckThreadingHeader {
+    key:   'In-Reply-To' | 'References'
+    value: string
+}
+
 export interface WildDuckUploadPayload {
     from:             { name?: string, address: string }
     to?:              { name?: string, address: string }[]
@@ -198,6 +206,7 @@ export interface WildDuckUploadPayload {
     subject:          string
     text:             string
     reference?:       WildDuckMessageReference
+    headers?:         WildDuckThreadingHeader[]
     attachments?:     WildDuckAttachment[]
     metaData?:        Record<string, unknown>
     flags?:           string[]
@@ -359,6 +368,16 @@ interface MessageIdPageResponse {
     results:     { messageId?: string }[]
     /** The next page's cursor, or false on the last page. */
     nextCursor?: string | false
+}
+
+/** A search with `includeHeaders`, as {@link WildDuckClient.getThreadingHeaders} reads it. */
+interface ThreadingHeadersResponse {
+    results: {
+        id:          number | string
+        mailbox:     string
+        headers?:    Record<string, unknown>
+        references?: unknown
+    }[]
 }
 
 interface FullMessageResponse {
@@ -653,6 +672,17 @@ export class WildDuckClient {
     }
 
     /**
+     * The In-Reply-To header and References of message `uid` in `mailboxPath`, as WildDuck's
+     * search lists them with `includeHeaders` (its message GET returns References but no
+     * In-Reply-To), or null when the search finds no such message there. Both are untrusted: the
+     * caller validates them. `signal` cancels the request (and the wait for a shared
+     * re-authentication).
+     */
+    async getThreadingHeaders(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<{ inReplyTo: unknown, references: unknown } | null> {
+        return this.withAuthRetry(() => this.doGetThreadingHeaders(mailboxPath, uid, signal), signal);
+    }
+
+    /**
      * Whether a message whose Message-ID header is exactly `messageId` is among the newest
      * {@link FIND_BY_MESSAGE_ID_MAX_PAGES} pages of `mailboxPath` (read and unread alike).
      * False means not found there, not necessarily absent from an older page. `signal` cancels
@@ -804,9 +834,6 @@ export class WildDuckClient {
         if(query.since) {
             searchParams.set('datestart', query.since);
         }
-        if(query.header) {
-            searchParams.set(`header.${query.header.name}`, query.header.value);
-        }
         if(query.keyword) {
             searchParams.set('keyword', query.keyword);
         }
@@ -957,6 +984,14 @@ export class WildDuckClient {
             `/users/me/mailboxes/${mailboxId}/messages/${uid}`,
             { method: 'GET', signal }
         );
+    }
+
+    private async doGetThreadingHeaders(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<{ inReplyTo: unknown, references: unknown } | null> {
+        const mailboxId = this.resolveMailboxId(mailboxPath);
+        const searchParams = new URLSearchParams({ mailbox: mailboxId, id: String(uid), includeHeaders: 'true', limit: '1' });
+        const response = await this.makeRequest<ThreadingHeadersResponse>(`/users/me/search?${searchParams.toString()}`, { method: 'GET', signal });
+        const row = response.results.find(result => result.mailbox === mailboxId && searchResultUid(result) === uid);
+        return row === undefined ? null : { inReplyTo: row.headers?.['in-reply-to'], references: row.references };
     }
 
     private async doFindMessageByMessageId(mailboxPath: string, messageId: string, signal?: AbortSignal): Promise<boolean> {

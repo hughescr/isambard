@@ -47,6 +47,18 @@ export class EmailProcessingError extends EmailError {
 }
 
 /**
+ * Thrown before an approved draft is submitted when the draft no longer matches what the admin
+ * approved (its Message-ID, Date or approval marker, it was rejected, or an amend replaced it): it is not sent,
+ * and the approved send fails for good rather than being retried.
+ */
+export class ApprovedDraftChangedError extends EmailError {
+    constructor(message: string) {
+        super(message, ErrorCode.APPROVED_DRAFT_CHANGED);
+        this.name = 'ApprovedDraftChangedError';
+    }
+}
+
+/**
  * Error thrown when the draft-preview setup (the Tailscale CLI, its status and serve config)
  * cannot publish a preview, or refuses to because publishing would be unsafe.
  */

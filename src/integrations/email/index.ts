@@ -32,15 +32,16 @@ export type { ProcessEmailCallbacks } from './email-processor';
 export { WildDuckListener } from './wildduck-listener';
 export type { WildDuckListenerConfig } from './wildduck-listener';
 export { WildDuckClient, isWildDuckAttachmentId } from './wildduck-client';
-export type { AttachmentStream, WildDuckAttachment, WildDuckAttachmentMeta, WildDuckMessage, WildDuckMessageAttachment, WildDuckSearchParams, WildDuckSearchRow, WildDuckUploadPayload } from './wildduck-client';
+export type { AttachmentStream, WildDuckAttachment, WildDuckAttachmentMeta, WildDuckMessage, WildDuckMessageAttachment, WildDuckSearchParams, WildDuckSearchRow, WildDuckThreadingHeader, WildDuckUploadPayload } from './wildduck-client';
 export { createBoundedRunner, startDraftPreview, TAILSCALE_COMMAND_TIMEOUT_MS } from './preview';
 export type { DraftPreview, PreviewServe, PreviewUrlFor, StartDraftPreviewDeps } from './preview';
-export { amendedDraftMeta, draftLockKey, hasDecisionMarker, mergeDraftMeta, newPreviewToken, previewTokenMatches, readDraftApprovalMeta } from './draft-approval-meta';
-export type { DraftApprovalCardLink, DraftApprovalMarker, DraftApprovalMeta, DraftLocks } from './draft-approval-meta';
+export { amendedDraftMeta, draftLockKey, hasDecisionMarker, mergeDraftMeta, newPreviewToken, previewTokenMatches, readDraftApprovalMeta, readDraftSendMeta } from './draft-approval-meta';
+export type { DraftApprovalCardLink, DraftApprovalMarker, DraftApprovalMeta, DraftLocks, DraftSendMeta } from './draft-approval-meta';
 export { buildDraftSummary, DRAFT_SNIPPET_MAX_CODE_POINTS, formatAttachmentSize } from './draft-summary';
 export type { DraftSummary } from './draft-summary';
 export { EmailOutboundApprovals, emailSendParamsSchema } from './outbound-approvals';
 export { checkEmailSendDelivery } from './delivery-check';
+export { submitApprovedDraft } from './approved-send';
 export type {
     EmailOutboundApprovalsDeps,
     EmailApprovalRoute,

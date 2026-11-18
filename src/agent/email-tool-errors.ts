@@ -66,6 +66,23 @@ export function classifyEmailToolError(error: unknown): EmailToolErrorCode {
     return error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'unavailable';
 }
 
+/**
+ * What to log about a failed WildDuck call: its HTTP status, else its error's name — never its
+ * message, which can carry WildDuck's response body.
+ */
+export function failureDetail(err: unknown): { status: number } | { error: string } {
+    const status = err instanceof WildDuckError ? err.context?.status : undefined;
+    if(typeof status === 'number') {
+        return { status };
+    }
+    return { error: err instanceof Error ? err.name : typeof err };
+}
+
+/** Whether a WildDuck call failed because the message does not exist. */
+export function isNotFound(err: unknown): boolean {
+    return err instanceof WildDuckError && err.context?.status === 404;
+}
+
 /** A short random reference (eight hex digits) shared by a failure's tool text and its log line. */
 export function newErrorReference(): string {
     return randomBytes(4).toString('hex');

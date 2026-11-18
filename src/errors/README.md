@@ -51,6 +51,7 @@ classDiagram
     EmailError <|-- ClassifierError
     EmailError <|-- EmailProcessingError
     EmailError <|-- EmailPreviewError
+    EmailError <|-- ApprovedDraftChangedError
     EmailError <|-- WildDuckError
     WildDuckError <|-- WildDuckAuthError
 

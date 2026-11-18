@@ -22,7 +22,7 @@ import {
 } from '@/integrations/bsky';
 import { CalDAVClient, CalendarRegistryBackend } from '@/integrations/caldav';
 import { createDiscordBot, setupEmail, setupBsky, CalendarCommandHandler, buildCalendarCommand, ContactCommandHandler, ContactApprovalHandler, buildContactApprovalEmbed, buildContactCommand, AllowlistCommandHandler, buildAllowlistCommand, registerAllCommands, DiscordHistoryProvider, DiscordCapabilityImpl, createOutboxReplayDeliverFn, createOutboxDiscardReporter, createApprovedActionOutcomeDelivery, ApprovedActionEscalationHandler, resolveChannelId, AllowlistInteractionHandler, channelListProvider as discordChannelListProvider, type DiscordBot, type EmailSetupResult, type BskySetupResult } from '@/integrations/discord';
-import { EmailHistoryProvider, EmailFolder, TAILSCALE_COMMAND_TIMEOUT_MS, WildDuckClient, checkEmailSendDelivery, createBoundedRunner, emailSendParamsSchema, startDraftPreview } from '@/integrations/email';
+import { EmailHistoryProvider, TAILSCALE_COMMAND_TIMEOUT_MS, WildDuckClient, checkEmailSendDelivery, createBoundedRunner, startDraftPreview, submitApprovedDraft } from '@/integrations/email';
 import { createJevOutboxFailureClassifier } from '@/integrations/typesafe';
 import { createZoteroDeps, type ZoteroDeps } from '@/integrations/zotero';
 import { ServiceHealthRegistryImpl, createReconnectionLoop, OutboxBackend, createOutboxDrainer, createOutboxDrainListener, ApprovedOutboundActionBackend, createApprovedOutboundActionExecutor, createApprovedActionOutcomeReporter, createApprovedActionRetryListener, createWakingActionWriter, AllowlistSagaBackend, AllowlistSagaExecutor, registerErrorBoundaries, type ReconnectionLoop, type OutboxDrainer, type ApprovedActionOutcomeReporter, type ApprovedOutboundActionExecutor } from '@/services';
@@ -787,12 +787,12 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
                 const parsed = bskyDmParamsSchema.parse(params);
                 await bskyClient.sendDirectMessage(parsed.convoId, parsed.text, signal);
             },
-            email_send: async (params, signal) => {
+            email_send: async (params, signal, attempt) => {
                 if(!emailSetup) {
                     throw new InvariantViolationError('approvedActionExecutor.email_send', 'Email not available');
                 }
-                const uid = emailSendParamsSchema.parse(params).uid;
-                await emailSetup.wildDuckClient.submitMessage(EmailFolder.Drafts, uid, signal);
+                // Re-reads the draft and submits it only if it still matches what was approved.
+                await submitApprovedDraft(emailSetup.wildDuckClient, params, attempt, signal);
             },
         },
         // #108: when a send's outcome is unknown, look for it at its destination before any resend.

@@ -1,10 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach, jest, mock } from 'bun:test';
 import { z } from 'zod';
-import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckAuthError, WildDuckError } from '@/errors';
+import { ApprovedDraftChangedError, BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckAuthError, WildDuckError } from '@/errors';
 import type { ClaimOutcome } from '@/services/approved-outbound-action/backend';
 import {
     DEFAULT_CLAIM_LEASE_MS,
     DEFAULT_SEND_TIMEOUT_MS,
+    LAST_ERROR_MAX_LENGTH,
     STALE_CLAIM_ERROR,
     classifyFailure,
     createApprovedOutboundActionExecutor,
@@ -19,6 +20,7 @@ import type {
     ClaimedApprovedOutboundAction,
     DeliveryCheck,
     DeliveryCheckInput,
+    SendAttempt,
     UnverifiedApprovedOutboundAction
 } from '@/services/approved-outbound-action/types';
 import type { ServiceHealthRegistry } from '@/services/health-registry';
@@ -99,7 +101,7 @@ describe('createApprovedOutboundActionExecutor', () => {
     let checks: Record<ApprovedOutboundActionType, CheckMock>;
     let backend: ExecutorBackend;
     let registry: ServiceHealthRegistry;
-    let executors: Record<ApprovedOutboundActionType, ReturnType<typeof mock<(params: Record<string, unknown>, signal: AbortSignal) => Promise<void>>>>;
+    let executors: Record<ApprovedOutboundActionType, ReturnType<typeof mock<(params: Record<string, unknown>, signal: AbortSignal, attempt: SendAttempt) => Promise<void>>>>;
     let logger: ApprovedOutboundActionExecutorLogger;
     let activityLog: ReturnType<typeof mock<(entry: { type: string, summary: string }) => Promise<void>>>;
     let onOutcomeRecorded: ReturnType<typeof mock<() => void>>;
@@ -187,6 +189,73 @@ describe('createApprovedOutboundActionExecutor', () => {
             expect(claim.mock.invocationCallOrder[0]).toBeLessThan(executors.bsky_reply.mock.invocationCallOrder[0]);
             expect(executors.bsky_reply.mock.invocationCallOrder[0]).toBeLessThan(settleClaim.mock.invocationCallOrder[0]);
             expect(logger.info).toHaveBeenCalledWith({ actionId: BSKY_ID, type: 'bsky_reply' }, 'Approved outbound action executed successfully');
+        });
+
+        test('tells a send its action id, and that it is the first send of a row never claimed before', async () => {
+            listed = [EMAIL];
+
+            await build().executeOnce();
+
+            expect(executors.email_send.mock.calls[0]?.[2]).toEqual({ actionId: EMAIL_ID, firstSend: true });
+        });
+
+        test('tells a send of a row claimed before, such as one a check found not delivered, that it is not the first', async () => {
+            listed = [unverifiedOf(EMAIL)];
+            checks.email_send.mockImplementation(async () => ({ verdict: 'not-delivered' }));
+            jest.setSystemTime(new Date(CHECK_DUE_AT));
+
+            await build().executeOnce();
+
+            expect(executors.email_send.mock.calls.map(call => call[2])).toEqual([{ actionId: EMAIL_ID, firstSend: false }]);
+        });
+
+        test('tells a retry of an approved row that was claimed before that it is not the first send', async () => {
+            listed = [{ ...EMAIL, firstClaimedAt: CLAIMED_AT }];
+
+            await build().executeOnce();
+
+            expect(executors.email_send.mock.calls[0]?.[2]).toEqual({ actionId: EMAIL_ID, firstSend: false });
+        });
+
+        test('settles a send its own pre-send check refused as a permanent failure, with the check\'s reason', async () => {
+            listed = [EMAIL];
+            const reason = 'the draft no longer matches what was approved (its Date differs), so it was not sent';
+            executors.email_send.mockImplementation(async () => {
+                throw new ApprovedDraftChangedError(reason);
+            });
+
+            expect(await build().executeOnce()).toEqual({ executed: 0, failed: 1, unverified: 0 });
+
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(EMAIL), { state: 'failed', lastError: reason, failureKind: 'permanent' }]]);
+        });
+
+        test.each([
+            ['a 500-character failure message whole', 'x'.repeat(500), 'x'.repeat(500)],
+            ['a 501-character failure message cut to 500', 'x'.repeat(501), `${'x'.repeat(499)}…`],
+        ])('records %s as a definite failure\'s lastError', async (_label, message, lastError) => {
+            listed = [EMAIL];
+            executors.email_send.mockImplementation(async () => {
+                throw new ApprovedDraftChangedError(message);
+            });
+
+            await build().executeOnce();
+
+            expect(LAST_ERROR_MAX_LENGTH).toBe(500);
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(EMAIL), { state: 'failed', lastError, failureKind: 'permanent' }]]);
+        });
+
+        test.each([
+            ['a 500-character failure message whole', 'x'.repeat(500), 'x'.repeat(500)],
+            ['a 501-character failure message cut to 500', 'x'.repeat(501), `${'x'.repeat(499)}…`],
+        ])('records %s as an unknown outcome\'s lastError', async (_label, message, lastError) => {
+            listed = [EMAIL];
+            executors.email_send.mockImplementation(async () => {
+                throw new WildDuckError(message, undefined, { status: 502, kind: 'http' });
+            });
+
+            await build().executeOnce();
+
+            expect(settleClaim.mock.calls).toEqual([[claimedOf(EMAIL), { state: 'unverified', lastError }]]);
         });
 
         test.each([
@@ -1507,6 +1576,7 @@ describe('classifyFailure', () => {
 
     const cases: [string, unknown, 'transient' | 'permanent' | 'ambiguous'][] = [
         ['a ZodError (unreadable params)', zodError, 'permanent'],
+        ['an ApprovedDraftChangedError (the draft no longer matches what was approved)', new ApprovedDraftChangedError('the draft no longer matches what was approved (its Message-ID differs), so it was not sent'), 'permanent'],
         ['a BskyValidationError', new BskyValidationError('too long'), 'permanent'],
         ['a BskyError with status 400', new BskyError('bad', undefined, { status: 400 }), 'permanent'],
         ['a BskyError with status 499', new BskyError('bad', undefined, { status: 499 }), 'permanent'],

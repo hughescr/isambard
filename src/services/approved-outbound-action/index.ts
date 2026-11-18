@@ -7,7 +7,8 @@ export type {
     DeliveryCheck,
     DeliveryCheckInput,
     DeliveryVerifier,
-    FailureKind
+    FailureKind,
+    SendAttempt
 } from './types';
 export { isUnverified } from './types';
 export { ApprovedOutboundActionBackend } from './backend';

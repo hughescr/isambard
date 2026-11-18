@@ -33,7 +33,8 @@ export type {
     DeliveryCheck,
     DeliveryCheckInput,
     DeliveryVerifier,
-    FailureKind
+    FailureKind,
+    SendAttempt
 } from './approved-outbound-action';
 export {
     ApprovedOutboundActionBackend,

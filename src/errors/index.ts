@@ -46,6 +46,7 @@ export type { PathSecurityReason } from './utils';
 export { BrowserError, BrowserNavigateTimeoutError } from './browser';
 
 export {
+    ApprovedDraftChangedError,
     EmailError,
     ClassifierError,
     EmailProcessingError,

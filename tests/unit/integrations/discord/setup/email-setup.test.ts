@@ -266,7 +266,7 @@ describe('setupEmail — isSendableChannel type guard', () => {
         const response = await getToolHandler(result, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
 
         expect(updateMessageMetadata).toHaveBeenCalledWith('Drafts', 42, { supersededBy: 55 });
-        expect((response.content[0] as { text: string }).text).toBe('Message saved to Drafts, pending admin approval (draft UID: 55). Cc: 0 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 0 removed.');
+        expect((response.content[0] as { text: string }).text).toBe('Message saved to Drafts, pending admin approval (draft UID: 55). Cc: 0 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 0 removed, 0 added.');
     });
 
     it('posts approval cards directly with the injected retry sleep when there is no Discord capability', async () => {

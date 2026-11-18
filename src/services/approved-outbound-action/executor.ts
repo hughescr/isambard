@@ -1,3 +1,4 @@
+import { truncate } from 'lodash-es';
 import { ZodError } from 'zod';
 import type { ServiceHealthRegistry } from '../health-registry';
 import type { ServiceLogger, ServiceName } from '../types';
@@ -14,9 +15,10 @@ import {
     type ClaimedApprovedOutboundAction,
     type DeliveryVerifier,
     type FailureKind,
+    type SendAttempt,
     type UnverifiedApprovedOutboundAction
 } from './types';
-import { BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckError } from '@/errors';
+import { ApprovedDraftChangedError, BskyAuthError, BskyError, BskyRateLimitError, BskyValidationError, InvariantViolationError, WildDuckError } from '@/errors';
 import type { ActivityLogEntry, ActivityLogger } from '@/storage';
 
 /** Logger interface for the approved-outbound-action executor. Alias for {@link ServiceLogger}. */
@@ -57,13 +59,21 @@ export function sendTimedOutError(timeoutMs: number): string {
     return `No response within ${timeoutMs / 1000}s, so it may or may not have been delivered.`;
 }
 
+/**
+ * The longest lastError a failed send records (500 characters, a longer message cut to fit with
+ * an ellipsis): it is stored in the row and shown to the admin and Izzy, so no send's error
+ * message — a gateway's whole error page, say — can swell the row past DynamoDB's item size.
+ */
+export const LAST_ERROR_MAX_LENGTH = 500;
+
 /** The lastError recorded for a claim abandoned between claim and settle. */
 export const STALE_CLAIM_ERROR = 'The send was interrupted before its outcome was recorded, so it may or may not have been delivered.';
 
 interface ApprovedOutboundActionExecutorDeps {
     backend:           Pick<ApprovedOutboundActionBackend, 'listOpen' | 'claim' | 'settleClaim' | 'resolveUnverified' | 'listAll'>
     registry:          ServiceHealthRegistry
-    executors:         Record<ApprovedOutboundActionType, (params: Record<string, unknown>, signal: AbortSignal) => Promise<void>>
+    /** Each action type's send; `attempt` names the row and says whether it was ever claimed before this send. */
+    executors:         Record<ApprovedOutboundActionType, (params: Record<string, unknown>, signal: AbortSignal, attempt: SendAttempt) => Promise<void>>
     /** How each action type's destination is checked when a send's outcome is unknown (#108). */
     verifiers:         Record<ApprovedOutboundActionType, DeliveryVerifier>
     logger:            ServiceLogger
@@ -137,8 +147,9 @@ function numericStatus(err: BskyError | WildDuckError): number | undefined {
  * Label a send failure (#108).
  *
  * `permanent` — retrying the same stored action cannot succeed: its params do not parse
- * (ZodError), Bluesky rejected the content (BskyValidationError), or Bluesky answered with any
- * other 4xx status.
+ * (ZodError), Bluesky rejected the content (BskyValidationError), Bluesky answered with any
+ * other 4xx status, or the send's own pre-send check found the approved email draft no longer
+ * matching what was approved (ApprovedDraftChangedError), so nothing was submitted.
  *
  * `transient` — the request was refused or never made, so it is retried when the service
  * reconnects: a missing client (InvariantViolationError), a Bluesky auth or rate-limit refusal,
@@ -152,7 +163,7 @@ function numericStatus(err: BskyError | WildDuckError): number | undefined {
  * before deciding whether to resend.
  */
 export function classifyFailure(err: unknown): SendFailureClass {
-    if(err instanceof ZodError || err instanceof BskyValidationError) {
+    if(err instanceof ZodError || err instanceof BskyValidationError || err instanceof ApprovedDraftChangedError) {
         return 'permanent';
     }
     if(err instanceof InvariantViolationError || err instanceof BskyAuthError || err instanceof BskyRateLimitError) {
@@ -250,11 +261,14 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
         }
     }
 
-    /** Send a claimed row, bounded by the send timeout, and say what its claim should record. */
-    async function send(claimed: ClaimedApprovedOutboundAction): Promise<Omit<PendingSettle, 'claimed'>> {
+    /**
+     * Send a claimed row, bounded by the send timeout, and say what its claim should record.
+     * `firstSend`: the row had never been claimed before this claim.
+     */
+    async function send(claimed: ClaimedApprovedOutboundAction, firstSend: boolean): Promise<Omit<PendingSettle, 'claimed'>> {
         const controller = new AbortController();
         // Starting the send on a microtask turns an executor's synchronous throw into a rejection.
-        const sending = Promise.resolve().then(async () => executors[claimed.type](claimed.params, controller.signal));
+        const sending = Promise.resolve().then(async () => executors[claimed.type](claimed.params, controller.signal, { actionId: claimed.id, firstSend }));
         // Attach the rejection handler immediately: settling the timeout outcome may take a database round trip.
         const lateSend: Promise<LateSendOutcome> = sending
             .then((): LateSendOutcome => ({ lateOutcome: 'sent' }))
@@ -265,10 +279,11 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
             }
         } catch (err: unknown) {
             const failureClass = classifyFailure(err);
+            const lastError = truncate(errorMessage(err), { length: LAST_ERROR_MAX_LENGTH, omission: '…' });
             return {
                 outcome: failureClass === 'ambiguous'
-                    ? { state: 'unverified', lastError: errorMessage(err) }
-                    : { state: 'failed', lastError: errorMessage(err), failureKind: failureClass }
+                    ? { state: 'unverified', lastError }
+                    : { state: 'failed', lastError, failureKind: failureClass }
             };
         }
         return { outcome: { state: 'unverified', lastError: sendTimedOutError(sendTimeoutMs) }, lateSend };
@@ -373,8 +388,9 @@ export function createApprovedOutboundActionExecutor(deps: ApprovedOutboundActio
                     logger.info({ actionId: action.id, type: action.type }, 'Skipping approved outbound action — already claimed elsewhere');
                     continue;
                 }
+                // The listed row has no firstClaimedAt only if no claim of it ever landed (the claim records it).
                 // eslint-disable-next-line no-await-in-loop -- later sends in this service wait for this one's durable outcome.
-                await record({ claimed, ...await send(claimed) }, result);
+                await record({ claimed, ...await send(claimed, action.firstClaimedAt === undefined) }, result);
             }
 
             return result;

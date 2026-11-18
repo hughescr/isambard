@@ -1,7 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach, jest } from 'bun:test';
 import { stalledResponse } from '../../../helpers/stalled-response';
 import { mockLogger } from '../../../setup';
-import { FIND_BY_MESSAGE_ID_MAX_PAGES, WildDuckClient, WildDuckError, WildDuckAuthError, isWildDuckAttachmentId } from '@/integrations/email/wildduck-client';
+import { FIND_BY_MESSAGE_ID_MAX_PAGES, WildDuckClient, WildDuckError, WildDuckAuthError, isWildDuckAttachmentId, type WildDuckSearchParams } from '@/integrations/email/wildduck-client';
 
 // ---------------------------------------------------------------------------
 // Mock global fetch
@@ -683,15 +683,15 @@ describe('WildDuckClient', () => {
             await expect(client.search({})).rejects.toThrow(WildDuckAuthError);
         });
 
-        test('includes header search param in URL', async () => {
+        test('sends no header.* search param, which WildDuck\'s search would ignore', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
-            await client.search({ query: { header: { name: 'X-Custom', value: 'test-value' } } });
+            await client.search({ query: { header: { name: 'X-Custom', value: 'test-value' } } as unknown as WildDuckSearchParams['query'] });
 
             const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(searchUrl).toContain('header.X-Custom=test-value');
+            expect(searchUrl).not.toContain('header.');
         });
 
         test('handles multiple results with mixed mailboxes', async () => {
@@ -1590,6 +1590,78 @@ describe('WildDuckClient', () => {
 
             expect(await client.uploadReplacingDraft(DRAFT_PAYLOAD, 42)).toEqual({ id: 57, previousDeleted: true });
             expect(mockFetch).toHaveBeenCalledTimes(3);
+        });
+
+        test('posts reply threading headers as WildDuck\'s headers list', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, message: { id: 58, mailbox: 'mbx-drafts', size: 1 }, previousDeleted: true }));
+            const headers = [{ key: 'In-Reply-To' as const, value: '<p@example.com>' }, { key: 'References' as const, value: '<r@example.com> <p@example.com>' }];
+
+            await client.uploadReplacingDraft({ ...DRAFT_PAYLOAD, headers }, 42);
+
+            const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(JSON.parse(options.body as string)).toEqual({ ...DRAFT_PAYLOAD, headers, replacePrevious: { mailbox: 'mbx-drafts', id: 42 } });
+        });
+    });
+
+    describe('getThreadingHeaders()', () => {
+        const SEARCH_URL = 'https://wildduck-api.example.com/users/me/search?mailbox=mbx-drafts&id=42&includeHeaders=true&limit=1';
+
+        test('searches the mailbox for that one uid with its headers, and returns its In-Reply-To and References', async () => {
+            const client = await makeInitializedClient();
+            const controller = new AbortController();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ id: 42, mailbox: 'mbx-drafts', headers: { 'in-reply-to': '<p@example.com>', subject: 'x' }, references: ['<p@example.com>'] }] }));
+
+            expect(await client.getThreadingHeaders('Drafts', 42, controller.signal)).toEqual({ inReplyTo: '<p@example.com>', references: ['<p@example.com>'] });
+
+            const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+            expect(url).toBe(SEARCH_URL);
+            expect(options.method).toBe('GET');
+            expect(options.signal?.aborted).toBe(false);
+            controller.abort();
+            expect(options.signal?.aborted).toBe(true);
+        });
+
+        test('takes a uid WildDuck lists as a string', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ id: '42', mailbox: 'mbx-drafts', headers: { 'in-reply-to': '<p@example.com>' }, references: [] }] }));
+
+            expect(await client.getThreadingHeaders('Drafts', 42)).toEqual({ inReplyTo: '<p@example.com>', references: [] });
+        });
+
+        test('passes a message without headers or References through as unknown values', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ id: 42, mailbox: 'mbx-drafts' }] }));
+
+            expect(await client.getThreadingHeaders('Drafts', 42)).toEqual({ inReplyTo: undefined, references: undefined });
+        });
+
+        test.each([
+            ['no row', []],
+            ['only another uid', [{ id: 43, mailbox: 'mbx-drafts', headers: { 'in-reply-to': '<x@example.com>' } }]],
+            ['only a row from another mailbox', [{ id: 42, mailbox: 'mbx-sent', headers: { 'in-reply-to': '<x@example.com>' } }]],
+        ])('is null when the search finds %s', async (_label, results) => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results }));
+
+            expect(await client.getThreadingHeaders('Drafts', 42)).toBeNull();
+        });
+
+        test('re-authenticates once on a 401 and retries', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'Token expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ results: [{ id: 42, mailbox: 'mbx-drafts', headers: { 'in-reply-to': '<p@example.com>' }, references: [] }] }));
+
+            expect(await client.getThreadingHeaders('Drafts', 42)).toEqual({ inReplyTo: '<p@example.com>', references: [] });
+            expect(mockFetch).toHaveBeenCalledTimes(3);
+        });
+
+        test('throws WildDuckError for an unknown mailbox, before any request', async () => {
+            const client = await makeInitializedClient();
+
+            await expect(client.getThreadingHeaders('NoSuchFolder', 42)).rejects.toThrow(WildDuckError);
+            expect(mockFetch).not.toHaveBeenCalled();
         });
     });
 

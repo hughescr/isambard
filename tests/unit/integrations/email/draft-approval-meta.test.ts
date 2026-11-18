@@ -6,7 +6,8 @@ import {
     mergeDraftMeta,
     newPreviewToken,
     previewTokenMatches,
-    readDraftApprovalMeta
+    readDraftApprovalMeta,
+    readDraftSendMeta
 } from '@/integrations/email/draft-approval-meta';
 
 describe('readDraftApprovalMeta', () => {
@@ -85,6 +86,56 @@ describe('mergeDraftMeta', () => {
         const existing = { a: 1, b: 2 };
         mergeDraftMeta(existing, { b: undefined });
         expect(existing).toEqual({ a: 1, b: 2 });
+    });
+});
+
+describe('readDraftSendMeta', () => {
+    const APPROVAL = { actionId: 'act-1', at: '2026-09-27T00:00:00.000Z' };
+
+    test('reads a well-formed approval marker, with no rejection and no amend', () => {
+        expect(readDraftSendMeta({ approval: APPROVAL, approvalCard: { channelId: 'ch', messageId: 'msg', edits: 0 }, previewToken: 'tok' })).toStrictEqual({
+            approval:   APPROVAL,
+            rejected:   false,
+            superseded: false,
+        });
+    });
+
+    test.each([
+        ['a timestamp', '2026-09-27T01:00:00.000Z'],
+        ['null', null],
+        ['an empty string', ''],
+        ['undefined', undefined],
+        ['a number', 5],
+    ])('counts a rejectedAt key holding %s as a rejection', (_label, rejectedAt) => {
+        expect(readDraftSendMeta({ approval: APPROVAL, rejectedAt })).toStrictEqual({ approval: APPROVAL, rejected: true, superseded: false });
+    });
+
+    test.each([
+        ['a uid', 55],
+        ['null', null],
+        ['undefined', undefined],
+        ['a string', 'x'],
+        ['a fraction', 1.5],
+    ])('counts a supersededBy key holding %s as an amend', (_label, supersededBy) => {
+        expect(readDraftSendMeta({ approval: APPROVAL, supersededBy })).toStrictEqual({ approval: APPROVAL, rejected: false, superseded: true });
+    });
+
+    test.each([
+        ['an empty action id', { actionId: '', at: 'x' }],
+        ['no timestamp', { actionId: 'act-1' }],
+        ['a numeric action id', { actionId: 1, at: 'x' }],
+        ['null', null],
+    ])('reads no approval marker from one with %s', (_label, approval) => {
+        expect(readDraftSendMeta({ approval })).toStrictEqual({ approval: undefined, rejected: false, superseded: false });
+    });
+
+    test.each([
+        ['undefined', undefined],
+        ['null', null],
+        ['a string', 'metaData'],
+        ['an array', [1, 2]],
+    ])('reads nothing from %s', (_label, metaData) => {
+        expect(readDraftSendMeta(metaData)).toStrictEqual({ approval: undefined, rejected: false, superseded: false });
     });
 });
 

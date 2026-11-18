@@ -2,8 +2,10 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn, jest } from
 import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { buildAdminRejectedSubsection } from '../../../src/agent/context-builder';
-import { buildAttachments, createEmailMCPServer, type EmailApprovalCardPort, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
+import { buildAttachments, MAX_ATTACHMENT_BYTES, type ContainedFileReader } from '../../../src/agent/email-attachments';
+import { createEmailMCPServer, type EmailApprovalCardPort, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
 import { EMAIL_TOOL_ERROR_SENTENCES, type EmailToolErrorCode } from '../../../src/agent/email-tool-errors';
+import { PathSecurityError } from '../../../src/errors';
 import { ApprovalCardEditGate } from '../../../src/integrations/discord/approvals/card-edit-gate';
 import { EmailOutboundApprovals } from '../../../src/integrations/email/outbound-approvals';
 import { WildDuckAuthError, WildDuckError, type AttachmentStream, type WildDuckClient, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckSearchPage, type WildDuckSearchPageRequest, type WildDuckSearchRow, type WildDuckUploadPayload } from '../../../src/integrations/email/wildduck-client';
@@ -55,6 +57,27 @@ function cardPort(present: ReturnType<typeof mock>, overrides: Partial<EmailAppr
         markSuperseded: mock(async () => true),
         ...overrides,
     };
+}
+
+/** Izzy's working directory in these tests: the only place attachments are read from. */
+const ATTACHMENT_ROOT = '/work/izzy';
+
+/**
+ * A contained attachment reader over an in-memory tree: each path relative to the root and its
+ * content (a function for any path); a missing one is refused as not found, like the real reader.
+ */
+function attachmentFiles(files: Partial<Record<string, string>> | ((relPath: string) => string)): ReturnType<typeof mock<ContainedFileReader>> {
+    return mock<ContainedFileReader>(async (_root, relPath, maxBytes) => {
+        const content = typeof files === 'function' ? files(relPath) : files[relPath];
+        if(content === undefined) {
+            throw new PathSecurityError(`File not found: ${relPath}`, relPath, 'not_found');
+        }
+        const bytes = Buffer.from(content);
+        if(bytes.length > maxBytes) {
+            throw new PathSecurityError(`File is larger than the ${maxBytes}-byte limit: ${relPath}`, relPath, 'too_large');
+        }
+        return { bytes, size: bytes.length };
+    });
 }
 
 async function drainMicrotasks(ticks = 10): Promise<void> {
@@ -168,39 +191,16 @@ describe('createEmailMCPServer', () => {
         return { controller, clear, spy };
     };
 
-    test('attachment read failures preserve the missing path in message and context', async () => {
-        mockFsPromises.readFile.mockImplementation(async () => {
-            throw new Error('ENOENT');
-        });
-        try {
-            await buildAttachments(['/tmp/missing-003.txt']);
-            throw new Error('Expected attachment read to fail');
-        } catch (error) {
-            expect(error).toMatchObject({
-                message: 'Attachment file not found: /tmp/missing-003.txt',
-            });
-            // toEqual (not toMatchObject) on context: it must contain exactly {filePath},
-            // never leak the raw settled-read result as an extra field.
-            expect((error as { context?: unknown }).context).toEqual({ filePath: '/tmp/missing-003.txt' });
-        }
+    test('a missing attachment file is named as given in a plain refusal', async () => {
+        const read = attachmentFiles({});
+        const result = await buildAttachments({ root: ATTACHMENT_ROOT, read }, ['missing-003.txt']);
+        expect(result).toEqual({ problem: 'the attachment "missing-003.txt" was not found' });
     });
 
     test('attachment failure reports the specific file that failed, not always the first path', async () => {
-        mockFsPromises.readFile.mockImplementation(async (filePath: string) => {
-            if(filePath === '/tmp/ok-001.txt') {
-                return Buffer.from('ok') as unknown as string;
-            }
-            throw new Error('ENOENT');
-        });
-        try {
-            await buildAttachments(['/tmp/ok-001.txt', '/tmp/missing-002.txt']);
-            throw new Error('Expected attachment read to fail');
-        } catch (error) {
-            expect(error).toMatchObject({
-                message: 'Attachment file not found: /tmp/missing-002.txt',
-            });
-            expect((error as { context?: unknown }).context).toEqual({ filePath: '/tmp/missing-002.txt' });
-        }
+        const read = attachmentFiles({ 'ok-001.txt': 'ok' });
+        const result = await buildAttachments({ root: ATTACHMENT_ROOT, read }, ['ok-001.txt', '/work/izzy/missing-002.txt']);
+        expect(result).toEqual({ problem: 'the attachment "/work/izzy/missing-002.txt" was not found' });
     });
 
     describe('createEmailMCPServer function', () => {
@@ -218,12 +218,6 @@ describe('createEmailMCPServer', () => {
                     if(!((schema as { description?: string }).description?.length)) {
                         undocumented.push(`${name}.${parameter}`);
                     }
-                }
-            }
-            const header = registered.searchEmail.inputSchema.shape.header as { unwrap: () => { shape: Record<string, { description?: string }> } };
-            for(const [field, schema] of Object.entries(header.unwrap().shape)) {
-                if(!schema.description?.length) {
-                    undocumented.push(`searchEmail.header.${field}`);
                 }
             }
             expect(undocumented).toEqual([]);
@@ -1830,6 +1824,11 @@ describe('createEmailMCPServer', () => {
             expect((registered.inputSchema.shape.correspondent as { description?: string }).description).toBe('Match this text in the From, To or Cc header');
         });
 
+        test('offers only filters WildDuck\'s search applies: no header filter, which it would silently ignore', () => {
+            const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.searchEmail;
+            expect(Object.keys(registered.inputSchema.shape)).toEqual(['correspondent', 'content', 'before', 'since', 'mailbox', 'next']);
+        });
+
         test.each(['Quarantine', 'Review', 'Junk', 'Trash', 'INBOX', 'all', 'all-regular'])('refuses %s as a mailbox to search', async (mailbox) => {
             const schema = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.searchEmail.inputSchema;
             const parsed = await schema.safeParseAsync({ mailbox });
@@ -1857,7 +1856,7 @@ describe('createEmailMCPServer', () => {
 
         test('passes every filter to each mailbox\'s search', async () => {
             const searchPage = pagesByMailbox({});
-            const filters = { correspondent: 'alice@example.com', content: 'MiXeD', before: '2025-01-15T00:00:00.000Z', since: '2025-01-01T00:00:00.000Z', header: { name: 'X-Custom', value: 'test' } };
+            const filters = { correspondent: 'alice@example.com', content: 'MiXeD', before: '2025-01-15T00:00:00.000Z', since: '2025-01-01T00:00:00.000Z' };
 
             await searchHandler(searchPage)({ ...filters, mailbox: 'Drafts' });
 
@@ -1947,13 +1946,11 @@ describe('createEmailMCPServer', () => {
             ['content', { content: 'other' }],
             ['before', { before: '2025-02-01T00:00:00.000Z' }],
             ['since', { since: '2024-02-01T00:00:00.000Z' }],
-            ['header name', { header: { name: 'X-Other', value: 'v' } }],
-            ['header value', { header: { name: 'X-Custom', value: 'other' } }],
             ['mailbox', { mailbox: 'Archive' }],
         ])('refuses a next from a search with a different %s, before any WildDuck call', async (_field, changed) => {
             const searchPage = pagesByMailbox({ CleanInbox: [{ results: searchRows(1, 20), nextCursor: 'cursor-a' }] });
             const handler = searchHandler(searchPage);
-            const filters = { correspondent: 'alice@example.com', content: 'invoice', before: '2025-01-15T00:00:00.000Z', since: '2025-01-01T00:00:00.000Z', header: { name: 'X-Custom', value: 'v' }, mailbox: 'CleanInbox' };
+            const filters = { correspondent: 'alice@example.com', content: 'invoice', before: '2025-01-15T00:00:00.000Z', since: '2025-01-01T00:00:00.000Z', mailbox: 'CleanInbox' };
             const next = offeredNext(await handler(filters));
             searchPage.mockClear();
 
@@ -2058,11 +2055,8 @@ describe('createEmailMCPServer', () => {
 
         test('encodes attachment bytes in input order before uploading the draft', async () => {
             mockAllowlist.isAllowed = mock(() => true);
-            mockFsPromises.readFile.mockImplementation(async (filePath) => {
-                // The shared filesystem mock is typed for text reads; this call intentionally returns bytes.
-                return Buffer.from(filePath.endsWith('first.txt') ? 'first bytes' : 'second bytes') as unknown as string;
-            });
-            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist });
+            const read = attachmentFiles({ 'first.txt': 'first bytes', 'out/second.bin': 'second bytes' });
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: read });
             const handler = getToolHandler(server, 'sendEmail');
 
             const result = await handler({
@@ -2070,7 +2064,7 @@ describe('createEmailMCPServer', () => {
                 subject:       'Files',
                 body:          'See attached',
                 senderProfile: 'formal',
-                attachments:   ['/tmp/first.txt', '/tmp/second.bin'],
+                attachments:   ['first.txt', '/work/izzy/out/second.bin'],
             });
 
             expect(result.isError).toBeUndefined();
@@ -2079,6 +2073,56 @@ describe('createEmailMCPServer', () => {
                 { filename: 'first.txt', contentType: 'text/plain', content: Buffer.from('first bytes').toString('base64') },
                 { filename: 'second.bin', contentType: 'application/octet-stream', content: Buffer.from('second bytes').toString('base64') },
             ]);
+            // Read under the root only, through the contained reader, within the 25 MiB budget.
+            expect(read.mock.calls).toEqual([[ATTACHMENT_ROOT, 'first.txt', MAX_ATTACHMENT_BYTES], [ATTACHMENT_ROOT, 'out/second.bin', MAX_ATTACHMENT_BYTES]]);
+        });
+
+        test.each([
+            ['a key outside the working directory', '/Users/craig/.ssh/id_ed25519', 'the attachment "/Users/craig/.ssh/id_ed25519" is outside your working directory'],
+            ['a parent-directory escape', '../.env', 'the attachment "../.env" is outside your working directory'],
+            ['a dotfile inside it', '.env', 'the attachment ".env" is a hidden file or in a hidden folder (a name starting with ".")'],
+            ['a file in a dot-directory', '.git/config', 'the attachment ".git/config" is a hidden file or in a hidden folder (a name starting with ".")'],
+        ])('refuses %s, reading and uploading nothing', async (_label, given, problem) => {
+            mockAllowlist.isAllowed = mock(() => true);
+            const read = attachmentFiles(() => 'secret');
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: read });
+
+            const result = await getToolHandler(server, 'sendEmail')({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', attachments: ['ok.txt', given] });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: `Nothing was saved or sent: ${problem}.` }], isError: true });
+            expect(read).not.toHaveBeenCalled();
+            expect(mockUploadMessage).not.toHaveBeenCalled();
+            expect(mockSubmitMessage).not.toHaveBeenCalled();
+        });
+
+        test('refuses a symlink escape the contained reader refuses, uploading nothing', async () => {
+            mockAllowlist.isAllowed = mock(() => true);
+            const read = mock<ContainedFileReader>(async (_root, relPath) => {
+                throw new PathSecurityError(`Path component "link" of ${relPath} is not a real directory`, relPath, 'not_directory');
+            });
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: read });
+
+            const result = await getToolHandler(server, 'sendEmail')({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', attachments: ['link/id_ed25519'] });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Nothing was saved or sent: the attachment "link/id_ed25519" is in a folder that is missing, is a symbolic link or is not a folder.' }], isError: true });
+            expect(mockUploadMessage).not.toHaveBeenCalled();
+        });
+
+        test('reads attachments from the working directory at server creation through the contained reader by default', async () => {
+            mockAllowlist.isAllowed = mock(() => true);
+            const contained = spyOn(utils, 'openContainedForRead').mockImplementation(async () => ({ bytes: Buffer.from('x'), size: 1 }));
+            const cwd = spyOn(process, 'cwd').mockReturnValue('/at/creation');
+            try {
+                const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist });
+                cwd.mockReturnValue('/later');
+
+                await getToolHandler(server, 'sendEmail')({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', attachments: ['/at/creation/a.txt'] });
+
+                expect(contained.mock.calls).toEqual([['/at/creation', 'a.txt', MAX_ATTACHMENT_BYTES]]);
+            } finally {
+                contained.mockRestore();
+                cwd.mockRestore();
+            }
         });
 
         test('assigns standard MIME types to supported attachment extensions', async () => {
@@ -2092,8 +2136,7 @@ describe('createEmailMCPServer', () => {
                 svg:  'image/svg+xml', mp4:  'video/mp4', mp3:  'audio/mpeg', wav:  'audio/wav',
             };
             mockAllowlist.isAllowed = mock(() => true);
-            mockFsPromises.readFile.mockImplementation(async () => Buffer.from('file') as unknown as string);
-            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist });
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: attachmentFiles(() => 'file') });
             const handler = getToolHandler(server, 'sendEmail');
 
             const result = await handler({
@@ -2101,7 +2144,7 @@ describe('createEmailMCPServer', () => {
                 subject:       'Files',
                 body:          'Attached',
                 senderProfile: 'formal',
-                attachments:   Object.keys(expected).map(ext => `/tmp/file.${ext}`),
+                attachments:   Object.keys(expected).map(ext => `tmp/file.${ext}`),
             });
 
             expect(result.isError).toBeUndefined();
@@ -2436,14 +2479,11 @@ describe('createEmailMCPServer', () => {
 
         test('shows a missing attachment file as Isambard\'s own text, uploading nothing', async () => {
             mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
-            mockFsPromises.readFile.mockImplementation(async () => {
-                throw new Error('ENOENT');
-            });
-            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist });
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: attachmentFiles({}) });
 
-            const result = await getToolHandler(server, 'sendEmail')({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', attachments: ['/tmp/missing.pdf'] });
+            const result = await getToolHandler(server, 'sendEmail')({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', attachments: ['/work/izzy/tmp/missing.pdf'] });
 
-            expect(result).toEqual({ content: [{ type: 'text', text: 'Error: Attachment file not found: /tmp/missing.pdf' }], isError: true });
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Nothing was saved or sent: the attachment "/work/izzy/tmp/missing.pdf" was not found.' }], isError: true });
             expect(mockUploadMessage).not.toHaveBeenCalled();
         });
 
@@ -2833,16 +2873,27 @@ describe('createEmailMCPServer', () => {
         test('reply upload and approval preserve subject and attachment details', async () => {
             mockAllowlist.isAllowed = mock(() => false);
             const requestApproval = mock(async (_uid: number, _previousUid?: number) => 'posted');
-            mockFsPromises.readFile.mockImplementation(async () => Buffer.from('reply file') as unknown as string);
-            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, approvalCards: cardPort(requestApproval) });
+            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, approvalCards: cardPort(requestApproval), attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: attachmentFiles({ 'tmp/reply.txt': 'reply file' }) });
             await getToolHandler(server, 'replyToEmail')({
-                message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal', attachments: ['/tmp/reply.txt'],
+                message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal', attachments: ['tmp/reply.txt'],
             });
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect(payload.subject).toBe('Re: Re: Hello');
             expect(payload.attachments).toEqual([{ filename: 'reply.txt', contentType: 'text/plain', content: Buffer.from('reply file').toString('base64') }]);
             expect(requestApproval.mock.calls).toEqual([[88, undefined]]);
             expect(mockAllowlist.isAllowed).toHaveBeenCalledWith('email', 'alice@example.com');
+        });
+
+        test('refuses an attachment outside the working directory, uploading nothing', async () => {
+            const read = attachmentFiles(() => 'secret');
+            const server = createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: read });
+
+            const result = await getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', attachments: ['/etc/passwd'] });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Nothing was saved or sent: the attachment "/etc/passwd" is outside your working directory.' }], isError: true });
+            expect(read).not.toHaveBeenCalled();
+            expect(mockUploadMessage).not.toHaveBeenCalled();
+            expect(mockSubmitMessage).not.toHaveBeenCalled();
         });
 
         test('reply with missing sender and subject retains empty fallbacks', async () => {
@@ -3474,8 +3525,9 @@ describe('createEmailMCPServer', () => {
         /** The pending-approval result for the amended Drafts:55. */
         const PENDING = 'Message saved to Drafts, pending admin approval (draft UID: 55).';
         /** What an amend of a draft with no Cc and no attachments says it carried. */
-        const NOTHING_CARRIED = ' Cc: 0 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 0 removed.';
+        const NOTHING_CARRIED = ' Cc: 0 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 0 removed, 0 added.';
         const THREAD_KEPT = ' Its References header matches the original draft\'s, so it stays in the same conversation.';
+        const THREAD_KEPT_VIA_HEADERS = ' Its References header matches the original draft\'s, so it stays in the same conversation. It was threaded from the original draft\'s own reply headers, so sending it will not mark the message it replies to as answered.';
         const THREAD_LOST = ' Warning: the amended draft is no longer threaded as a reply to the original conversation; the recipient will see it as a new message. To keep the thread, delete this draft and reply to the original message again with replyToEmail.';
         const THREAD_UNVERIFIED = ' Warning: could not confirm whether the amended draft is still threaded as a reply; check the draft before it is approved.';
         const OLD_UID_LEFT = ' Warning: the previous version Drafts:42 could not be removed; delete it with deleteDraft.';
@@ -4019,12 +4071,24 @@ describe('createEmailMCPServer', () => {
             let original: Record<string, unknown>;
             /** What reading the amended Drafts:55 back returns ({@link AS_UPLOADED}: what the upload sent). */
             let stored: unknown;
+            /** What reading the message a reply reference points at (outside Drafts) returns. */
+            let referenced: unknown;
             let mockOpenStream: ReturnType<typeof mock<(mailbox: string, uid: number, id: string, signal: AbortSignal) => Promise<AttachmentStream | null>>>;
+            /** The old draft's own In-Reply-To and References, as WildDuck's search lists them; null when it finds none. */
+            let mockThreadingHeaders: ReturnType<typeof mock<(mailbox: string, uid: number, signal?: AbortSignal) => Promise<{ inReplyTo: unknown, references: unknown } | null>>>;
+            /** The working-directory files an amend's addAttachments read. */
+            let localFiles: ReturnType<typeof attachmentFiles>;
 
             beforeEach(() => {
                 original = { ...originalDraft };
                 stored = AS_UPLOADED;
-                mockGetMessageAmend.mockImplementation(async (_folder: string, uid: number) => {
+                referenced = { id: 7, subject: 'The message replied to' };
+                mockThreadingHeaders = mock(async () => null);
+                mockWildDuckAmend.getThreadingHeaders = mockThreadingHeaders;
+                mockGetMessageAmend.mockImplementation(async (folder: string, uid: number) => {
+                    if(folder !== 'Drafts') {
+                        return referenced;
+                    }
                     if(uid === 42) {
                         return original;
                     }
@@ -4036,10 +4100,11 @@ describe('createEmailMCPServer', () => {
                 });
                 mockOpenStream = mock(async (_mailbox: string, _uid: number, id: string) => streamOf([Buffer.from(`bytes of ${id}`)]));
                 mockWildDuckAmend.openAttachmentStream = mockOpenStream;
+                localFiles = attachmentFiles({});
             });
 
             const amend = async (args: Record<string, unknown> = {}, approvalCards = cardPort(mockSendApprovalRequest)): Promise<CallToolResult> => getToolHandler(
-                createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards }),
+                createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: localFiles }),
                 'amendAndResubmitDraft'
             )({ message: 'Drafts:42', ...args });
             const refused = (text: string): CallToolResult => ({ content: [{ type: 'text', text }], isError: true });
@@ -4056,7 +4121,7 @@ describe('createEmailMCPServer', () => {
                     const result = await amend();
 
                     expect(uploaded().cc).toEqual([{ address: 'cc1@example.com' }, { name: 'Bo', address: 'cc2@example.com' }]);
-                    expect(getText(result)).toBe(`${PENDING} Cc: 2 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 0 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 2 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 0 removed, 0 added.`);
                 });
 
                 test('names one kept Cc address in the singular', async () => {
@@ -4064,7 +4129,7 @@ describe('createEmailMCPServer', () => {
 
                     const result = await amend();
 
-                    expect(getText(result)).toBe(`${PENDING} Cc: 1 address (kept from the original draft). Attachments: 0 kept from the original draft, 0 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 1 address (kept from the original draft). Attachments: 0 kept from the original draft, 0 removed, 0 added.`);
                 });
 
                 test('uploads an empty Cc for a draft that has none', async () => {
@@ -4083,14 +4148,14 @@ describe('createEmailMCPServer', () => {
                     const result = await amend({ cc: ['new@example.com', { name: 'Al', email_address: 'al@example.com' }] });
 
                     expect(uploaded().cc).toEqual([{ address: 'new@example.com' }, { name: 'Al', address: 'al@example.com' }]);
-                    expect(getText(result)).toBe(`${PENDING} Cc: 2 addresses (as given in this amend). Attachments: 0 kept from the original draft, 0 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 2 addresses (as given in this amend). Attachments: 0 kept from the original draft, 0 removed, 0 added.`);
                 });
 
                 test('accepts a single Cc address', async () => {
                     const result = await amend({ cc: 'one@example.com' });
 
                     expect(uploaded().cc).toEqual([{ address: 'one@example.com' }]);
-                    expect(getText(result)).toBe(`${PENDING} Cc: 1 address (as given in this amend). Attachments: 0 kept from the original draft, 0 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 1 address (as given in this amend). Attachments: 0 kept from the original draft, 0 removed, 0 added.`);
                 });
 
                 test('an explicit empty Cc removes every Cc address', async () => {
@@ -4099,7 +4164,7 @@ describe('createEmailMCPServer', () => {
                     const result = await amend({ cc: [] });
 
                     expect(uploaded().cc).toEqual([]);
-                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (as given in this amend). Attachments: 0 kept from the original draft, 0 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (as given in this amend). Attachments: 0 kept from the original draft, 0 removed, 0 added.`);
                 });
             });
 
@@ -4114,7 +4179,7 @@ describe('createEmailMCPServer', () => {
                         { filename: 'report.pdf', contentType: 'application/pdf', content: base64('bytes of ATT00001') },
                         { filename: 'photo.png', contentType: 'image/png', content: base64('bytes of ATT00002') },
                     ]);
-                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 2 kept from the original draft, 0 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 2 kept from the original draft, 0 removed, 0 added.`);
                 });
 
                 test('joins an attachment\'s chunks', async () => {
@@ -4315,7 +4380,7 @@ describe('createEmailMCPServer', () => {
 
                     expect(mockOpenStream).not.toHaveBeenCalled();
                     expect(uploaded().attachments).toEqual([]);
-                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 2 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 2 removed, 0 added.`);
                 });
 
                 test('removeAttachments by filename drops only the attachments named', async () => {
@@ -4325,7 +4390,7 @@ describe('createEmailMCPServer', () => {
 
                     expect(mockOpenStream.mock.calls.map(call => call.slice(0, 3))).toEqual([['Drafts', 42, 'ATT00001']]);
                     expect(uploaded().attachments).toEqual([{ filename: 'report.pdf', contentType: 'application/pdf', content: base64('bytes of ATT00001') }]);
-                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 1 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 1 removed, 0 added.`);
                 });
 
                 test('removing a filename drops every attachment with that name', async () => {
@@ -4334,7 +4399,7 @@ describe('createEmailMCPServer', () => {
                     const result = await amend({ removeAttachments: ['report.pdf'] });
 
                     expect(mockOpenStream.mock.calls.map(call => call.slice(0, 3))).toEqual([['Drafts', 42, 'ATT00002']]);
-                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 2 removed.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 2 removed, 0 added.`);
                 });
 
                 test('refuses filenames the draft does not have, changing nothing', async () => {
@@ -4754,8 +4819,148 @@ describe('createEmailMCPServer', () => {
                 });
             });
 
+            describe('adding files (addAttachments)', () => {
+                test('uploads the added files from the working directory after the kept attachments, and counts them', async () => {
+                    original = { ...originalDraft, attachments: [REPORT, PHOTO] };
+                    localFiles = attachmentFiles({ 'docs/new.pdf': 'new pdf', 'notes.txt': 'notes' });
+
+                    const result = await amend({ removeAttachments: ['photo.png'], addAttachments: ['docs/new.pdf', '/work/izzy/notes.txt'] });
+
+                    expect(uploaded().attachments).toEqual([
+                        { filename: 'report.pdf', contentType: 'application/pdf', content: base64('bytes of ATT00001') },
+                        { filename: 'new.pdf', contentType: 'application/pdf', content: base64('new pdf') },
+                        { filename: 'notes.txt', contentType: 'text/plain', content: base64('notes') },
+                    ]);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 1 removed, 2 added.`);
+                });
+
+                test('caps the added files at what the kept attachments left of the 25 MiB budget', async () => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    localFiles = attachmentFiles({ 'new.txt': 'new' });
+
+                    await amend({ addAttachments: ['new.txt'] });
+
+                    expect(localFiles.mock.calls).toEqual([[ATTACHMENT_ROOT, 'new.txt', CAP - Buffer.byteLength('bytes of ATT00001')]]);
+                });
+
+                test('refuses added files that do not fit in what the kept attachments left, changing nothing', async () => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    localFiles = attachmentFiles(() => 'x'.repeat(30));
+                    const keptBytes = Buffer.byteLength('bytes of ATT00001');
+                    localFiles.mockImplementation(async (_root, relPath, maxBytes) => {
+                        expect(maxBytes).toBe(CAP - keptBytes);
+                        throw new PathSecurityError(`File is larger than the ${maxBytes}-byte limit: ${relPath}`, relPath, 'too_large');
+                    });
+
+                    const result = await amend({ addAttachments: ['big.bin'] });
+
+                    expect(result).toEqual(refused('Could not amend draft Drafts:42: the attachments come to more than the 25.0 MB one email can carry. Nothing was changed.'));
+                    expectNothingChanged();
+                });
+
+                test.each([
+                    ['outside the working directory', '/Users/craig/.ssh/id_ed25519', 'the attachment "/Users/craig/.ssh/id_ed25519" is outside your working directory'],
+                    ['a dotfile', '.env', 'the attachment ".env" is a hidden file or in a hidden folder (a name starting with ".")'],
+                    ['an unusable name', String.raw`a\b.txt`, String.raw`the attachment "a\\b.txt" has a file name that can't be sent (it contains a backslash)`],
+                ])('refuses an added path %s before fetching or reading anything, changing nothing', async (_label, given, problem) => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    localFiles = attachmentFiles(() => 'x');
+
+                    const result = await amend({ addAttachments: [given] });
+
+                    expect(result).toEqual(refused(`Could not amend draft Drafts:42: ${problem}. Nothing was changed.`));
+                    expect(mockOpenStream).not.toHaveBeenCalled();
+                    expect(localFiles).not.toHaveBeenCalled();
+                    expectNothingChanged();
+                });
+
+                test('refuses an added file the contained reader refuses, changing nothing', async () => {
+                    const result = await amend({ addAttachments: ['missing.pdf'] });
+
+                    expect(result).toEqual(refused('Could not amend draft Drafts:42: the attachment "missing.pdf" was not found. Nothing was changed.'));
+                    expectNothingChanged();
+                });
+
+                test.each([
+                    ['the name of a kept attachment', ['docs/report.pdf']],
+                    ['the name of another added file', ['a/new.txt', 'b/new.txt']],
+                ])('refuses an added file with %s, fetching and reading nothing', async (_label, addAttachments) => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    localFiles = attachmentFiles(() => 'x');
+
+                    const result = await amend({ addAttachments });
+
+                    const name = addAttachments.at(-1)!.split('/').at(-1)!;
+                    expect(result).toEqual(refused(`Could not amend draft Drafts:42: the added attachment ${JSON.stringify(name)} has the same name as another attachment of the draft. Nothing was changed.`));
+                    expect(mockOpenStream).not.toHaveBeenCalled();
+                    expect(localFiles).not.toHaveBeenCalled();
+                    expectNothingChanged();
+                });
+
+                test('adds a file with the name of an attachment it removes', async () => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    localFiles = attachmentFiles({ 'report.pdf': 'v2' });
+
+                    const result = await amend({ removeAttachments: ['report.pdf'], addAttachments: ['report.pdf'] });
+
+                    expect(uploaded().attachments).toEqual([{ filename: 'report.pdf', contentType: 'application/pdf', content: base64('v2') }]);
+                    expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 0 kept from the original draft, 1 removed, 1 added.`);
+                });
+
+                const many = (count: number, prefix: string): WildDuckMessageAttachment[] => Array.from({ length: count }, (_value, index) => ({ id: `ATT${index}`, filename: `${prefix}${index}.txt`, contentType: 'text/plain', sizeKb: 1, size: 1 }));
+
+                test('carries 50 attachments, kept and added together', async () => {
+                    original = { ...originalDraft, attachments: many(48, 'k') };
+                    mockOpenStream.mockImplementation(async () => streamOf([Buffer.from('x')]));
+                    localFiles = attachmentFiles(() => 'y');
+
+                    const result = await amend({ addAttachments: ['a1.txt', 'a2.txt'] });
+
+                    expect(result.isError).toBeUndefined();
+                    expect(uploaded().attachments).toHaveLength(50);
+                });
+
+                test('refuses 51 attachments, kept and added together, fetching and reading nothing', async () => {
+                    original = { ...originalDraft, attachments: many(49, 'k') };
+                    localFiles = attachmentFiles(() => 'y');
+
+                    const result = await amend({ addAttachments: ['a1.txt', 'a2.txt'] });
+
+                    expect(result).toEqual(refused('Could not amend draft Drafts:42: that would be 51 attachments, more than the 50 one email can carry. Nothing was changed.'));
+                    expect(mockOpenStream).not.toHaveBeenCalled();
+                    expect(localFiles).not.toHaveBeenCalled();
+                    expectNothingChanged();
+                });
+
+                test('checks the stored attachment count against the kept and added ones together', async () => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    localFiles = attachmentFiles({ 'new.txt': 'n' });
+                    stored = { id: 55, draft: true, cc: [], attachments: [{}], references: [] };
+
+                    const result = await amend({ addAttachments: ['new.txt'] });
+
+                    expect(getText(result)).toBe(`${PENDING} Warning: the amended draft stores 0 Cc addresses and 1 attachment, but 0 and 2 were intended; check it before it is approved.`);
+                });
+
+                test('says what it added when the stored draft could not be read back', async () => {
+                    localFiles = attachmentFiles({ 'new.txt': 'n' });
+                    stored = null;
+
+                    const result = await amend({ addAttachments: ['new.txt'] });
+
+                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed, 1 added) but could not be confirmed on the stored draft.`);
+                });
+
+                test('accepts an array of paths only', async () => {
+                    const schema = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.amendAndResubmitDraft.inputSchema;
+                    const results = await Promise.all([{ addAttachments: ['a.txt'] }, { addAttachments: [] }, { addAttachments: 'a.txt' }, { addAttachments: [1] }]
+                        .map(args => schema.safeParseAsync({ message: 'Drafts:42', ...args })));
+                    expect(results.map(result => result.success)).toEqual([true, true, false, false]);
+                });
+            });
+
             describe('what the stored new version carries', () => {
-                const CARRIED = ' Cc: 1 address (kept from the original draft). Attachments: 2 kept from the original draft, 0 removed.';
+                const CARRIED = ' Cc: 1 address (kept from the original draft). Attachments: 2 kept from the original draft, 0 removed, 0 added.';
 
                 beforeEach(() => {
                     original = { ...originalDraft, cc: [{ address: 'cc@example.com' }], attachments: [REPORT, PHOTO] };
@@ -4782,7 +4987,7 @@ describe('createEmailMCPServer', () => {
                     expect(getText(result)).toBe(`${PENDING}${warning}`);
                 });
 
-                const UNCONFIRMED = ' Cc and attachments were sent to WildDuck (1 Cc, 2 attachments kept, 0 removed) but could not be confirmed on the stored draft.';
+                const UNCONFIRMED = ' Cc and attachments were sent to WildDuck (1 Cc, 2 attachments kept, 0 removed, 0 added) but could not be confirmed on the stored draft.';
 
                 test.each([
                     ['is not found', null],
@@ -4809,7 +5014,7 @@ describe('createEmailMCPServer', () => {
 
                     const result = await amend({ removeAttachments: [] });
 
-                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (1 Cc, 1 attachment kept, 0 removed) but could not be confirmed on the stored draft.`);
+                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (1 Cc, 1 attachment kept, 0 removed, 0 added) but could not be confirmed on the stored draft.`);
                     expect(mockLogger.warn.mock.calls).toEqual([[{ newUid: 55, status: 502, msg: 'Could not read back the amended draft' }]]);
                 });
 
@@ -4824,7 +5029,7 @@ describe('createEmailMCPServer', () => {
 
                     test('gives up on a read-back that takes 10 s, still reporting the new draft', async () => {
                         original = { ...originalDraft, references: REFERENCES, reference: REPLY_REFERENCE };
-                        mockGetMessageAmend.mockImplementation(async (_folder: string, uid: number, signal?: AbortSignal) => (uid === 42
+                        mockGetMessageAmend.mockImplementation(async (folder: string, uid: number, signal?: AbortSignal) => (folder !== 'Drafts' || uid === 42
                             ? original
                             : new Promise((_resolve, reject) => {
                                 signal?.addEventListener('abort', () => {
@@ -4844,7 +5049,7 @@ describe('createEmailMCPServer', () => {
                         const result = await amending;
 
                         expect(result.isError).toBeUndefined();
-                        expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed) but could not be confirmed on the stored draft.${THREAD_UNVERIFIED}`);
+                        expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed, 0 added) but could not be confirmed on the stored draft.${THREAD_UNVERIFIED}`);
                         expect(mockLogger.warn).toHaveBeenCalledWith({ newUid: 55, error: 'TimeoutError', msg: 'Could not read back the amended draft' });
                     });
 
@@ -4857,15 +5062,202 @@ describe('createEmailMCPServer', () => {
             });
 
             describe('reply threading', () => {
-                test('re-passes a reply draft\'s stored reference and confirms the threading from the stored new draft', async () => {
+                test('re-passes a reply draft\'s stored reference once the message it points at is found, and confirms the threading from the stored new draft', async () => {
                     original = { ...originalDraft, references: REFERENCES, reference: { ...REPLY_REFERENCE, extra: 'dropped' } };
                     stored = { id: 55, references: [...REFERENCES] };
 
                     const result = await amend();
 
                     expect(uploaded().reference).toEqual(REPLY_REFERENCE);
-                    expect(mockGetMessageAmend.mock.calls).toEqual([['Drafts', 42, expect.any(AbortSignal)], ['Drafts', 55, expect.any(AbortSignal)]]);
+                    expect(uploaded()).not.toHaveProperty('headers');
+                    // The referenced message is looked up by the folder its WildDuck mailbox id belongs to, under the amend's budget.
+                    expect(mockGetMessageAmend.mock.calls).toEqual([['Drafts', 42, expect.any(AbortSignal)], ['CleanInbox', 7, expect.any(AbortSignal)], ['Drafts', 55, expect.any(AbortSignal)]]);
+                    expect(mockThreadingHeaders).not.toHaveBeenCalled();
                     expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_KEPT}`);
+                });
+
+                test('looks a reference into Archive up in Archive', async () => {
+                    original = { ...originalDraft, references: REFERENCES, reference: { ...REPLY_REFERENCE, mailbox: MAILBOX_IDS.Archive, id: 9 } };
+
+                    await amend();
+
+                    expect(mockGetMessageAmend.mock.calls[1]).toEqual(['Archive', 9, expect.any(AbortSignal)]);
+                });
+
+                describe('when the message replied to cannot be used (#200)', () => {
+                    const PARENT = '<parent@example.com>';
+                    const OWN_HEADERS = { inReplyTo: PARENT, references: REFERENCES };
+                    const AS_HEADERS = [{ key: 'In-Reply-To' as const, value: PARENT }, { key: 'References' as const, value: REFERENCES.join(' ') }];
+
+                    beforeEach(() => {
+                        mockThreadingHeaders.mockImplementation(async () => OWN_HEADERS);
+                        stored = { id: 55, references: REFERENCES };
+                    });
+
+                    test('threads the new version from the old draft\'s own In-Reply-To and References once the referenced message has moved, passing no reference', async () => {
+                        original = { ...originalDraft, references: REFERENCES, reference: REPLY_REFERENCE };
+                        referenced = null;
+
+                        const result = await amend();
+
+                        expect(uploaded().headers).toEqual(AS_HEADERS);
+                        expect(uploaded()).not.toHaveProperty('reference');
+                        expect(mockThreadingHeaders.mock.calls).toEqual([['Drafts', 42, expect.any(AbortSignal)]]);
+                        expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_KEPT_VIA_HEADERS}`);
+                    });
+
+                    test.each([
+                        ['a reference into a mailbox replyToEmail cannot reply from', { reference: { ...REPLY_REFERENCE, mailbox: MAILBOX_IDS.Quarantine } }, {}],
+                        ['a reference that does not parse', { reference: { ...REPLY_REFERENCE, action: 'forward' } }, {}],
+                        ['no reference, only References', { reference: undefined }, {}],
+                        ['an amend that empties the subject', { reference: REPLY_REFERENCE }, { subject: '' }],
+                    ])('threads from the old draft\'s own headers for %s, without looking the reference up', async (_label, fields, args) => {
+                        original = { ...originalDraft, references: REFERENCES, ...fields };
+
+                        const result = await amend(args);
+
+                        expect(uploaded().headers).toEqual(AS_HEADERS);
+                        expect(uploaded()).not.toHaveProperty('reference');
+                        expect(mockGetMessageAmend.mock.calls.map(([folder]) => folder)).toEqual(['Drafts', 'Drafts']);
+                        expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_KEPT_VIA_HEADERS}`);
+                    });
+
+                    test('keeps an empty subject empty: without a reference WildDuck derives none', async () => {
+                        original = { ...originalDraft, references: REFERENCES, reference: REPLY_REFERENCE };
+
+                        await amend({ subject: '' });
+
+                        expect(uploaded().subject).toBe('');
+                        expect(uploaded().headers).toEqual(AS_HEADERS);
+                    });
+
+                    test('accepts every character of the Message-ID grammar: each special in the local part, letters, digits, dots and hyphens in the domain, and a one-character domain', async () => {
+                        const special = '!#$%&\'*+/=?^`{|}~-_';
+                        const ids = [
+                            `<x${special}.y${special}.z@Ex4mple-b.0rg>`,
+                            '<a@a.B>',
+                            '<b@0Z9>',
+                            '<c@b>',
+                        ];
+                        original = { ...originalDraft, references: ids, reference: undefined };
+                        mockThreadingHeaders.mockImplementation(async () => ({ inReplyTo: ids[0], references: ids }));
+                        stored = { id: 55, references: ids };
+
+                        await amend();
+
+                        expect(uploaded().headers).toEqual([{ key: 'In-Reply-To', value: ids[0] }, { key: 'References', value: ids.join(' ') }]);
+                    });
+
+                    test.each([
+                        ['a space inside it', '<par ent@example.com>'],
+                        ['an angle bracket inside it', '<par<ent@example.com>'],
+                        ['two at signs', '<parent@ex@ample.com>'],
+                        ['a domain starting with a hyphen', '<parent@-example.com>'],
+                        ['a domain ending with a hyphen', '<parent@example->'],
+                        ['a local part starting with a dot', '<.parent@example.com>'],
+                        ['a local part ending with a dot', '<parent.@example.com>'],
+                        ['a control character', '<par\u0000ent@example.com>'],
+                    ])('passes no threading headers for an In-Reply-To with %s', async (_label, inReplyTo) => {
+                        original = { ...originalDraft, references: REFERENCES, reference: undefined };
+                        mockThreadingHeaders.mockImplementation(async () => ({ inReplyTo, references: REFERENCES }));
+
+                        await amend();
+
+                        expect(uploaded()).not.toHaveProperty('headers');
+                    });
+
+                    test('accepts a 320-character Message-ID and 50 References', async () => {
+                        const long = `<${'a'.repeat(306)}@example.com>`;
+                        const fifty = [...Array.from({ length: 49 }, (_value, index) => `<r${index}@example.com>`), long];
+                        expect(long).toHaveLength(320);
+                        original = { ...originalDraft, references: fifty, reference: undefined };
+                        mockThreadingHeaders.mockImplementation(async () => ({ inReplyTo: long, references: fifty }));
+                        stored = { id: 55, references: fifty };
+
+                        await amend();
+
+                        expect(uploaded().headers).toEqual([{ key: 'In-Reply-To', value: long }, { key: 'References', value: fifty.join(' ') }]);
+                    });
+
+                    test.each([
+                        ['no In-Reply-To', { inReplyTo: undefined }],
+                        ['an In-Reply-To that is not text', { inReplyTo: 5 }],
+                        ['two In-Reply-To headers', { inReplyTo: [PARENT, PARENT] }],
+                        ['an In-Reply-To without angle brackets', { inReplyTo: 'parent@example.com' }],
+                        ['an In-Reply-To with a second id', { inReplyTo: `${PARENT} <other@example.com>` }],
+                        ['an In-Reply-To with surrounding space', { inReplyTo: ` ${PARENT}` }],
+                        ['an In-Reply-To with a line break and another header', { inReplyTo: `${PARENT}\r\nBcc: spy@example.com` }],
+                        ['an In-Reply-To with a comment', { inReplyTo: `${PARENT} (comment)` }],
+                        ['an In-Reply-To with no domain', { inReplyTo: '<parent@>' }],
+                        ['an In-Reply-To with no local part', { inReplyTo: '<@example.com>' }],
+                        ['an In-Reply-To with two dots in its domain', { inReplyTo: '<parent@example..com>' }],
+                        ['an In-Reply-To with two dots in its local part', { inReplyTo: '<par..ent@example.com>' }],
+                        ['an In-Reply-To with a domain ending in a dot', { inReplyTo: '<parent@example.>' }],
+                        ['a 321-character In-Reply-To', { inReplyTo: `<${'a'.repeat(307)}@example.com>` }],
+                        ['References that are not a list', { references: REFERENCES.join(' ') }],
+                        ['no References', { references: [] }],
+                        ['51 References', { references: Array.from({ length: 51 }, (_value, index) => `<r${index}@example.com>`) }],
+                        ['a malformed Reference', { references: [PARENT, 'root@example.com'] }],
+                        ['a Reference with a line break', { references: [PARENT, '<root@example.com>\r\nX-Evil: 1'] }],
+                        ['a Reference that is not text', { references: [PARENT, 7] }],
+                        ['a repeated Reference', { references: [PARENT, PARENT] }],
+                    ])('passes no threading headers when the old draft has %s, and warns that the threading is lost', async (_label, fields) => {
+                        original = { ...originalDraft, references: REFERENCES, reference: REPLY_REFERENCE };
+                        referenced = null;
+                        mockThreadingHeaders.mockImplementation(async () => ({ ...OWN_HEADERS, ...fields }));
+
+                        const result = await amend();
+
+                        expect(uploaded()).not.toHaveProperty('headers');
+                        expect(uploaded()).not.toHaveProperty('reference');
+                        expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_LOST}`);
+                    });
+
+                    test('warns that the threading is lost when WildDuck finds no such old draft to read its headers from', async () => {
+                        original = { ...originalDraft, references: REFERENCES, reference: REPLY_REFERENCE };
+                        referenced = null;
+                        mockThreadingHeaders.mockImplementation(async () => null);
+
+                        const result = await amend();
+
+                        expect(uploaded()).not.toHaveProperty('headers');
+                        expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_LOST}`);
+                    });
+
+                    test('judges the threading from the stored new draft: different References are lost, unreadable ones unconfirmed', async () => {
+                        original = { ...originalDraft, references: REFERENCES, reference: undefined };
+                        stored = { id: 55, references: ['<other@example.com>'] };
+                        expect(getText(await amend())).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_LOST}`);
+
+                        stored = { id: 55 };
+                        expect(getText(await amend())).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_UNVERIFIED}`);
+                    });
+
+                    test.each([
+                        ['the referenced message', 'referenced'],
+                        ['the old draft\'s headers', 'headers'],
+                    ])('changes nothing when reading %s fails before the upload', async (_label, which) => {
+                        original = { ...originalDraft, references: REFERENCES, reference: REPLY_REFERENCE };
+                        referenced = null;
+                        const failure = new WildDuckError('WildDuck API error: 503: secret body', undefined, { status: 503 });
+                        if(which === 'referenced') {
+                            mockGetMessageAmend.mockImplementation(async (folder: string) => {
+                                if(folder !== 'Drafts') {
+                                    throw failure;
+                                }
+                                return original;
+                            });
+                        } else {
+                            mockThreadingHeaders.mockImplementation(async () => {
+                                throw failure;
+                            });
+                        }
+
+                        const result = await amend();
+
+                        expect(result).toEqual({ content: [{ type: 'text', text: failureText('amendAndResubmitDraft', 'unavailable') }], isError: true });
+                        expectNothingChanged();
+                    });
                 });
 
                 test('re-passes a reply-all reference to a message in Archive', async () => {
@@ -4982,7 +5374,7 @@ describe('createEmailMCPServer', () => {
 
                     const result = await amend();
 
-                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed) but could not be confirmed on the stored draft.${THREAD_UNVERIFIED}`);
+                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed, 0 added) but could not be confirmed on the stored draft.${THREAD_UNVERIFIED}`);
                 });
 
                 test('says the threading could not be confirmed, and logs why, when the new draft cannot be read back', async () => {
@@ -4996,7 +5388,7 @@ describe('createEmailMCPServer', () => {
 
                     const result = await amend();
 
-                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed) but could not be confirmed on the stored draft.${THREAD_UNVERIFIED}`);
+                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed, 0 added) but could not be confirmed on the stored draft.${THREAD_UNVERIFIED}`);
                     expect(mockLogger.warn).toHaveBeenCalledWith({ newUid: 55, error: 'Error', msg: 'Could not read back the amended draft' });
                 });
 
@@ -5006,7 +5398,7 @@ describe('createEmailMCPServer', () => {
 
                     const result = await amend();
 
-                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed) but could not be confirmed on the stored draft.${THREAD_LOST}`);
+                    expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed, 0 added) but could not be confirmed on the stored draft.${THREAD_LOST}`);
                 });
 
                 test('counts a single Reference as a reply, and warns that the threading is lost when no reference could be passed', async () => {
@@ -5065,7 +5457,7 @@ describe('createEmailMCPServer', () => {
                 const result = await amend({}, cardPort(mock(async () => presentation), { markSuperseded: mock(async () => false) }));
 
                 expect(result.isError).toBe(isError);
-                expect(getText(result)).toBe(`${lead} Cc: 1 address (kept from the original draft). Attachments: 1 kept from the original draft, 0 removed.${THREAD_LOST}${OLD_UID_LEFT}`);
+                expect(getText(result)).toBe(`${lead} Cc: 1 address (kept from the original draft). Attachments: 1 kept from the original draft, 0 removed, 0 added.${THREAD_LOST}${OLD_UID_LEFT}`);
             });
 
             test('schema takes Cc in the To shapes plus an empty array, and removeAttachments as "all" or filenames', async () => {
@@ -5082,13 +5474,21 @@ describe('createEmailMCPServer', () => {
                 expect(invalid.map(result => result.success)).toEqual([false, false, false]);
             });
 
-            test('the tool description says what an amend carries and that it cannot add files', () => {
+            test('the tool description says what an amend carries and adds, and how it keeps a reply threaded', () => {
                 const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.amendAndResubmitDraft;
 
-                expect(registered.description).toContain('keeps the draft\'s Cc addresses and attachments (at most 50 attachments, 25 MB in all)');
-                expect(registered.description).toContain('the result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended or could not be confirmed.');
-                expect(registered.description).toContain('The amended draft stays in the reply thread only when the original was a reply to a message still in the inbox or archive and the subject is not empty; the result says whether that was confirmed.');
-                expect(registered.description).toContain('An amend cannot attach new files: delete the draft and create a new one instead.');
+                expect(registered.description).toBe('Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. The new version keeps the draft\'s Cc addresses and attachments unless you override them (cc, removeAttachments), and adds the files you name in addAttachments; kept and added together it carries at most 50 attachments, 25.0 MB in all. The result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended or could not be confirmed. An amended reply stays in its conversation: it is threaded from the message it replies to while that is still in the inbox or archive and the subject is not empty, and otherwise from the original draft\'s own In-Reply-To and References headers; the result says whether that was confirmed. A pending draft\'s approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.');
+                expect(registered.description).not.toContain('cannot attach');
+            });
+
+            test('says which files the email tools attach, and what an added file may not be called', () => {
+                const tools = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools;
+                const fieldText = (toolName: string, field: string): string | undefined => (tools[toolName].inputSchema.shape[field] as { description?: string }).description;
+                const rules = 'paths relative to your working directory, or absolute paths inside it. Only a regular file inside it can be attached: a path that leaves it or passes through a symbolic link, a hidden file or one in a hidden folder (any name starting with "."), and a file name with a control character, "=?", a backslash, or leading or trailing whitespace are refused.';
+
+                expect(fieldText('sendEmail', 'attachments')).toBe(`Files to attach: ${rules} At most 50 files, 25.0 MB in all; a file that is refused means nothing is saved or sent.`);
+                expect(fieldText('replyToEmail', 'attachments')).toBe(`Files to attach: ${rules} At most 50 files, 25.0 MB in all; a file that is refused means nothing is saved or sent.`);
+                expect(fieldText('amendAndResubmitDraft', 'addAttachments')).toBe(`Files to attach to the new version, read as sendEmail reads its attachments: ${rules} An added file whose name is the same as a kept attachment's or another added file's refuses the amend and changes nothing.`);
             });
 
             test('says that subject, body and To are kept only when omitted', () => {
@@ -5134,6 +5534,19 @@ describe('createEmailMCPServer', () => {
                 });
             });
 
+            test('reads the files it adds while holding the key, after the fresh read and before the upload', async () => {
+                const read = attachmentFiles({ 'new.txt': 'new' });
+                read.mockImplementationOnce(async () => {
+                    events.push('read file');
+                    return { bytes: Buffer.from('new'), size: 3 };
+                });
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present), attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: read });
+
+                await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42', addAttachments: ['new.txt'] });
+
+                expect(events).toEqual(['acquire email-draft:42', 'read', 'read file', 'upload', 'read', 'release email-draft:42', 'present']);
+            });
+
             test('reads, uploads and releases email-draft:<uid> before presenting the new draft', async () => {
                 const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present) });
 
@@ -5162,8 +5575,9 @@ describe('createEmailMCPServer', () => {
 
                 const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
 
-                expect(events).toEqual(['acquire email-draft:42', 'read 42', 'attachment ATT00001', 'upload', 'delete', 'read 55', 'release email-draft:42', 'present']);
-                expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 0 removed.${THREAD_KEPT}`);
+                // The replied-to message (uid 3) is looked up while the key is held, before the upload.
+                expect(events).toEqual(['acquire email-draft:42', 'read 42', 'attachment ATT00001', 'read 3', 'upload', 'delete', 'read 55', 'release email-draft:42', 'present']);
+                expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 0 removed, 0 added.${THREAD_KEPT}`);
             });
 
             test('releases the key when an attachment cannot be fetched, uploading and presenting nothing', async () => {
@@ -5309,7 +5723,7 @@ describe('createEmailMCPServer', () => {
                 const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
 
                 expect(result.isError).toBeUndefined();
-                expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed) but could not be confirmed on the stored draft.`);
+                expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed, 0 added) but could not be confirmed on the stored draft.`);
                 expect(events).toEqual(['acquire email-draft:42', 'read 42', 'upload', 'read 55', 'release email-draft:42', 'present']);
             });
 
@@ -5842,7 +6256,7 @@ describe('createEmailMCPServer', () => {
             test('ties every WildDuck call under the key to one 120 s budget, stood down once the locked section ends', async () => {
                 const { controller, clear, spy } = controlDeadline(120_000);
 
-                expect(getText(await amend())).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 0 removed.`);
+                expect(getText(await amend())).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 0 removed, 0 added.`);
 
                 expect(spy.mock.calls.map(([ms]) => ms)).toEqual([120_000, 60_000, 10_000]);
                 expect(clear).toHaveBeenCalledTimes(1);
@@ -5856,6 +6270,27 @@ describe('createEmailMCPServer', () => {
                 expect(signals.map(signal => signal.aborted)).toEqual([false, false, false, false, false]);
                 controller.abort();
                 expect(signals.map(signal => signal.aborted)).toEqual([true, true, true, true, true]);
+            });
+
+            test('ties the replied-to message\'s lookup and the old draft\'s header read to the same budget, before the upload', async () => {
+                const { controller } = controlDeadline(120_000);
+                const reply = { ...original, references: ['<p@example.com>'], reference: { action: 'reply', mailbox: 'a'.repeat(24), id: 7 } };
+                client.getMailboxId.mockImplementation((folder: string) => (folder === 'CleanInbox' ? 'a'.repeat(24) : undefined));
+                client.getMessage.mockImplementation(async (folder: string, uid: number) => {
+                    if(folder !== 'Drafts') {
+                        return null;
+                    }
+                    return uid === 42 ? reply : { id: 55, cc: [], attachments: [ATTACHMENT], references: ['<p@example.com>'] };
+                });
+                client.getThreadingHeaders = mock(async (_folder: string, _uid: number, _signal?: AbortSignal) => ({ inReplyTo: '<p@example.com>', references: ['<p@example.com>'] }));
+
+                await amend();
+
+                const signals = [client.getMessage.mock.calls[1]?.[2] as AbortSignal, client.getThreadingHeaders.mock.calls[0]?.[2] as AbortSignal];
+                expect(client.getMessage.mock.calls[1]?.slice(0, 2)).toEqual(['CleanInbox', 7]);
+                expect(signals.map(signal => signal.aborted)).toEqual([false, false]);
+                controller.abort();
+                expect(signals.map(signal => signal.aborted)).toEqual([true, true]);
             });
 
             test('an upload still unanswered at exactly 120 s, not a millisecond earlier, fails as a timeout and releases the key', async () => {
@@ -5891,7 +6326,7 @@ describe('createEmailMCPServer', () => {
                 const result = await amending;
 
                 expect(result.isError).toBeUndefined();
-                expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 1 attachment kept, 0 removed) but could not be confirmed on the stored draft. Warning: the previous version Drafts:42 could not be removed; delete it with deleteDraft.`);
+                expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 1 attachment kept, 0 removed, 0 added) but could not be confirmed on the stored draft. Warning: the previous version Drafts:42 could not be removed; delete it with deleteDraft.`);
                 expect(markSuperseded).toHaveBeenCalledWith(42, 55);
                 expect(client.deleteMessage).toHaveBeenCalledTimes(1);
                 expect(events).toEqual(['acquire email-draft:42', 'release email-draft:42']);
@@ -6109,37 +6544,6 @@ describe('createEmailMCPServer', () => {
     });
 
     describe('mutation regression contracts', () => {
-        test('buildAttachments never exceeds two active reads and eventually returns every attachment', async () => {
-            const gate = Promise.withResolvers<void>();
-            let active = 0;
-            let maxActive = 0;
-            mockFsPromises.readFile.mockImplementation(async (filePath: string) => {
-                active += 1;
-                maxActive = Math.max(maxActive, active);
-                try {
-                    await gate.promise;
-                    return Buffer.from(filePath) as unknown as string;
-                } finally {
-                    active -= 1;
-                }
-            });
-            const pending = buildAttachments(['/tmp/a0.txt', '/tmp/a1.txt', '/tmp/a2.txt']);
-            try {
-                await drainMicrotasks();
-                // Exactly 2 (not 1, not 3): proves the concurrency limit is 2, not merely "at most 2".
-                expect(maxActive).toBe(2);
-                gate.resolve();
-                expect(await pending).toEqual([
-                    { filename: 'a0.txt', contentType: 'text/plain', content: Buffer.from('/tmp/a0.txt').toString('base64') },
-                    { filename: 'a1.txt', contentType: 'text/plain', content: Buffer.from('/tmp/a1.txt').toString('base64') },
-                    { filename: 'a2.txt', contentType: 'text/plain', content: Buffer.from('/tmp/a2.txt').toString('base64') },
-                ]);
-            } finally {
-                gate.resolve();
-                await pending.catch(() => undefined);
-            }
-        });
-
         test('attachment downloads never exceed two active requests and eventually return every attachment', async () => {
             const gate = Promise.withResolvers<void>();
             let active = 0;
@@ -6272,14 +6676,13 @@ describe('createEmailMCPServer', () => {
         });
 
         test('one send attachment is uploaded with its exact name, type, and content', async () => {
-            mockFsPromises.readFile.mockResolvedValue(Buffer.from('file') as unknown as string);
             const client = {
                 ...mockWildDuck,
                 getUserAddresses: mock(() => Promise.resolve([{ address: 'me@example.com', tags: ['formal'] }])),
                 uploadMessage:    mock(() => Promise.resolve(10)),
                 getMessage:       mock(() => Promise.resolve(null)),
             } as unknown as WildDuckClient;
-            await getToolHandler(createEmailMCPServer({ wildDuckClient: client }), 'sendEmail')({ to: 'a@example.com', subject: 'A', body: 'A', senderProfile: 'formal', attachments: ['/tmp/one.txt'] });
+            await getToolHandler(createEmailMCPServer({ wildDuckClient: client, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: attachmentFiles({ 'tmp/one.txt': 'file' }) }), 'sendEmail')({ to: 'a@example.com', subject: 'A', body: 'A', senderProfile: 'formal', attachments: ['tmp/one.txt'] });
             expect(client.uploadMessage).toHaveBeenCalledWith('Drafts', expect.objectContaining({
                 attachments: [{
                     filename:    'one.txt',
@@ -6300,7 +6703,6 @@ describe('createEmailMCPServer', () => {
         });
 
         test('an allowlisted reply identifies its recipient and includes one attachment', async () => {
-            mockFsPromises.readFile.mockResolvedValue(Buffer.from('file') as unknown as string);
             const uploadMessage = mock(() => Promise.resolve(44));
             const client = {
                 ...mockWildDuck,
@@ -6311,7 +6713,7 @@ describe('createEmailMCPServer', () => {
                 submitMessage:    mock(() => Promise.resolve()),
             } as unknown as WildDuckClient;
             const allowlist = { isAllowed: mock(() => true) } as unknown as PersonAllowlist;
-            const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: client, allowlist }), 'replyToEmail')({ message: 'CleanInbox:2', body: 'reply', mode: 'reply', senderProfile: 'formal', attachments: ['/tmp/one.txt'] });
+            const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: client, allowlist, attachmentRoot: ATTACHMENT_ROOT, readAttachmentFile: attachmentFiles({ 'tmp/one.txt': 'file' }) }), 'replyToEmail')({ message: 'CleanInbox:2', body: 'reply', mode: 'reply', senderProfile: 'formal', attachments: ['/work/izzy/tmp/one.txt'] });
             expect(getText(result)).toBe('Reply sent to sender@example.com.');
             expect(uploadMessage).toHaveBeenCalledWith('Drafts', expect.objectContaining({
                 attachments: [{
