@@ -306,7 +306,10 @@ export function buildSessionQueryOptions(params: BuildSessionQueryOptionsParams)
     return {
         model:           mainModel,
         fallbackModel,
-        systemPrompt,
+        // `snapshot: false` must stay off: by default the SDK records the system prompt and every tool's
+        // model-facing definition in the transcript and replays the recorded ones on resume until the next
+        // compaction, so a resumed (or requestReopen'd) session would keep a stale prompt and stale tools.
+        systemPrompt:    { type: 'custom' as const, prompt: systemPrompt, snapshot: false },
         // Persisted session title only — NOT the messaging identity; see SESSION_PEER_NAMES.
         title:           SESSION_PEER_NAMES[role],
         tools:           EXPLICIT_TOOLS,

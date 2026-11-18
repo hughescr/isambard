@@ -49,6 +49,19 @@ async function flush(): Promise<void> {
     }
 }
 
+/**
+ * The system prompt text a fake query was opened with. Sessions pass it in the SDK's custom-object form
+ * with the prompt snapshot off (so a resumed session sees the live prompt), which this asserts on the way.
+ */
+function systemPromptOf(instance: FakeQuery | undefined): string {
+    const systemPrompt = instance?.receivedParams?.options.systemPrompt;
+    expect(systemPrompt).toEqual({ type: 'custom', prompt: expect.any(String), snapshot: false });
+    if(typeof systemPrompt === 'object' && 'prompt' in systemPrompt && typeof systemPrompt.prompt === 'string') {
+        return systemPrompt.prompt;
+    }
+    return '';
+}
+
 function deferred<T>(): { promise: Promise<T>, resolve: (value: T) => void, reject: (error: unknown) => void } {
     let resolveDeferred!: (value: T) => void;
     let rejectDeferred!: (error: unknown) => void;
@@ -267,7 +280,7 @@ describe('createConversationConductor', () => {
         await openPromise;
 
         expect(h.identityGet).toHaveBeenCalledTimes(1);
-        expect(h.instances[0].receivedParams?.options.systemPrompt).toContain('I am Izzy');
+        expect(systemPromptOf(h.instances[0])).toContain('I am Izzy');
         expect(h.instances[0].receivedParams?.options.model).toBe('sonnet');
     });
 
@@ -288,9 +301,9 @@ describe('createConversationConductor', () => {
         await flush();
 
         expect(h.instances).toHaveLength(2);
-        expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('I am Izzy, revised');
+        expect(systemPromptOf(h.instances[1])).toContain('I am Izzy, revised');
         // The dead session keeps the prompt it was born with — the SDK fixes it at query() time.
-        expect(h.instances[0].receivedParams?.options.systemPrompt).not.toContain('revised');
+        expect(systemPromptOf(h.instances[0])).not.toContain('revised');
         expect(h.journal.byKind('session_reopen_requested').at(-1)).toMatchObject({ reason: 'an identity change' });
     });
 
@@ -375,7 +388,7 @@ describe('createConversationConductor', () => {
         await flush();
         await flush();
 
-        expect(h.instances.at(-1)?.receivedParams?.options.systemPrompt).toContain('identity two');
+        expect(systemPromptOf(h.instances.at(-1))).toContain('identity two');
     });
 
     it('a load superseded mid-flight is discarded — its stale text never reaches a prompt', async () => {
@@ -1424,7 +1437,7 @@ describe('createPerchConductor', () => {
         await flush();
 
         expect(h.instances).toHaveLength(2);
-        expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('I am Izzy, revised');
+        expect(systemPromptOf(h.instances[1])).toContain('I am Izzy, revised');
     });
 
     it('reopens immediately when no slot is open', async () => {
@@ -1467,8 +1480,7 @@ describe('createPerchConductor', () => {
         await flush();
 
         expect(h.instances).toHaveLength(2);
-        const systemPrompt = h.instances[1].receivedParams?.options.systemPrompt;
-        expect(typeof systemPrompt === 'string' && systemPrompt.endsWith(revised)).toBe(true);
+        expect(systemPromptOf(h.instances[1]).endsWith(revised)).toBe(true);
     });
 
     it('an identity change that renders the same prompt reopens nothing (perch)', async () => {
@@ -1517,7 +1529,7 @@ describe('createPerchConductor', () => {
         h.instances[0].fail(new Error('worker crashed'));
         await flush();
 
-        expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('I am Izzy');
+        expect(systemPromptOf(h.instances[1])).toContain('I am Izzy');
     });
 
     it('a load superseded mid-flight is discarded — its stale text never reaches a perch prompt', async () => {
@@ -1588,7 +1600,7 @@ describe('createPerchConductor', () => {
         await flush();
 
         expect(h.instances).toHaveLength(2);
-        expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('identity two');
+        expect(systemPromptOf(h.instances[1])).toContain('identity two');
 
         // The pending flag must have been cleared by that reopen: a later slot with no new
         // identity change must not fire a redundant second reopen.
@@ -1667,8 +1679,8 @@ describe('createPerchConductor', () => {
         h.instances[0].emit(frames.init('sess-1'));
         await openPromise;
 
-        expect(h.instances[0].receivedParams?.options.systemPrompt).toContain('I am Izzy');
-        expect(h.instances[0].receivedParams?.options.systemPrompt).toContain('This session: perch');
+        expect(systemPromptOf(h.instances[0])).toContain('I am Izzy');
+        expect(systemPromptOf(h.instances[0])).toContain('This session: perch');
         expect(h.instances[0].receivedParams?.options.model).toBe('sonnet');
     });
 
@@ -2607,7 +2619,7 @@ describe('session lifecycle await boundaries', () => {
             second.resolve('identity two');
             await waitUntil(() => h.instances.length === 2, `${role} identity reopen`);
 
-            expect(h.instances[1].receivedParams?.options.systemPrompt).toContain('identity two');
+            expect(systemPromptOf(h.instances[1])).toContain('identity two');
         } finally {
             first.resolve('identity one');
             second.resolve('identity two');

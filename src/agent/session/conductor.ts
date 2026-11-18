@@ -443,7 +443,9 @@ export interface Conductor {
     /**
      * Asks for a controlled close-and-resume of the live session.
      *
-     * This is the only way to change an SDK `systemPrompt`, which is fixed at `query()` time: the
+     * This is the only way to change an SDK `systemPrompt`, which is fixed at `query()` time (it is
+     * passed with the SDK's prompt snapshot off, see `buildSessionQueryOptions`, so the resumed session
+     * runs the rebuilt prompt and current tool definitions, not the ones recorded in its transcript): the
      * host rebuilds the prompt (today, because the identity behind it changed) and calls this, and
      * the conductor closes the current handle and reopens it with `resume` and freshly built
      * options. The reopen runs at the next idle point — no turn running, and no turn-end

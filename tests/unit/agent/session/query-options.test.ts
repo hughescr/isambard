@@ -253,6 +253,13 @@ describe('buildSessionQueryOptions', () => {
         mockLogger.error.mockClear();
     });
 
+    // A resumed session must see the live tool definitions and system prompt: with the SDK's prompt
+    // snapshot on (its default) it replays the recorded ones until the next compaction. It must stay off.
+    test('passes the system prompt as a custom prompt with the SDK prompt snapshot off', () => {
+        const opts = buildSessionQueryOptions(baseParams({ systemPrompt: 'You are Izzy, revised.' }));
+        expect(opts.systemPrompt).toEqual({ type: 'custom', prompt: 'You are Izzy, revised.', snapshot: false });
+    });
+
     test('perTaskStopAffordance is true', () => {
         const opts = buildSessionQueryOptions(baseParams());
         expect(opts.perTaskStopAffordance).toBe(true);
