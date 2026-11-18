@@ -489,6 +489,16 @@ describe('renderMarkdownBody', () => {
             const source = 'example.com, a@example.com, ftp://f.example/x, //cdn.example/x and www.example.com';
             expect(render(source)).toEqual({ text: source, html: `${P}${source}</p>` });
         });
+
+        // A bare ftp: or // URL that linkify still recognised would reach the walk as a link whose
+        // label (percent-decoded or IDN for display) differs from its href (encoded), so the walk would
+        // add the href in brackets; text with the same characters as the source is the only proof it was not.
+        test.each([
+            ['an ftp: URL', 'ftp://f.example/a%20b'],
+            ['a scheme-relative URL', '//cdn.example/é'],
+        ])('%s with an encoded or non-ASCII path is not auto-linked, so nothing is added after it', (_label, source) => {
+            expect(render(source)).toEqual({ text: source, html: `${P}${source}</p>` });
+        });
     });
 
     describe('images', () => {
