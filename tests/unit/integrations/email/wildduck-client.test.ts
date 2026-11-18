@@ -3850,7 +3850,7 @@ describe('WildDuckClient', () => {
 
             const result = await client.openAttachmentStream('Drafts', 42, 'ATT00001');
 
-            expect(result).toEqual({ body, contentLength: 1234 });
+            expect(result).toStrictEqual({ status: 200, body, contentLength: 1234 });
             expect(result?.body).toBe(body);
             const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
             expect(url).toBe('https://wildduck-api.example.com/users/me/mailboxes/mbx-drafts/messages/42/attachments/ATT00001');
@@ -3868,7 +3868,7 @@ describe('WildDuckClient', () => {
             const { response, body } = streamResponse(headers);
             mockFetch.mockResolvedValueOnce(response);
 
-            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ body });
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ status: 200, body });
         });
 
         test('reports a zero length', async () => {
@@ -3876,7 +3876,24 @@ describe('WildDuckClient', () => {
             const { response, body } = streamResponse({ 'content-length': '0' });
             mockFetch.mockResolvedValueOnce(response);
 
-            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ body, contentLength: 0 });
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ status: 200, body, contentLength: 0 });
+        });
+
+        test.each([201, 204, 206, 299])('returns a %i response unread with its status, for the caller to judge', async (status) => {
+            const client = await makeInitializedClient();
+            const { response, body, cancel } = streamResponse({ 'content-length': '3' }, status);
+            mockFetch.mockResolvedValueOnce(response);
+
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ status, body, contentLength: 3 });
+            expect(cancel).not.toHaveBeenCalled();
+        });
+
+        test('returns a body-less response as a null body with its status', async () => {
+            const client = await makeInitializedClient();
+            const { response } = streamResponse({}, 204);
+            mockFetch.mockResolvedValueOnce({ ...response, headers: response.headers, body: null });
+
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ status: 204, body: null });
         });
 
         test('returns null for a 404 and releases the response body', async () => {
@@ -3929,29 +3946,109 @@ describe('WildDuckClient', () => {
             expect(second.cancelled()).toBe(true);
         });
 
-        test('returns null for a 404 with no body', async () => {
+        test('returns null for a 404 with no body, logging nothing', async () => {
             const client = await makeInitializedClient();
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({}, 404));
+            mockLogger.debug.mockClear();
+            mockFetch.mockResolvedValueOnce({ ...makeJsonResponse({}, 404), body: null });
 
             expect(await client.openAttachmentStream('Drafts', 42, 'ATT00009')).toBeNull();
+            expect(mockLogger.debug).not.toHaveBeenCalled();
         });
 
-        test('throws a WildDuckError carrying the status and body for other failures', async () => {
+        test('throws a WildDuckError carrying only the status for other failures, cancelling the body unread', async () => {
             const client = await makeInitializedClient();
-            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('boom', 500));
+            const { response, cancel } = streamResponse({}, 500);
+            const text = mock(async () => 'secret body');
+            mockFetch.mockResolvedValueOnce({ ...response, headers: response.headers, text });
 
             const err = await client.openAttachmentStream('Drafts', 42, 'ATT00001').catch((error: unknown) => error);
 
             expect(err).toBeInstanceOf(WildDuckError);
-            expect((err as WildDuckError).message).toBe('WildDuck API error: 500 Error: boom');
+            expect((err as WildDuckError).message).toBe('WildDuck API error: 500 Error');
             expect((err as WildDuckError).context).toEqual({ status: 500 });
+            expect(cancel).toHaveBeenCalledTimes(1);
+            expect(text).not.toHaveBeenCalled();
         });
 
-        test('omits an empty error body from the message', async () => {
+        test('never reads an error body into the message, even one with no stream', async () => {
             const client = await makeInitializedClient();
-            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('', 502));
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('secret body', 502));
 
             await expect(client.openAttachmentStream('Drafts', 42, 'ATT00001')).rejects.toThrow(/^WildDuck API error: 502 Error$/u);
+        });
+
+        test('does not throw for an error status until the response body has been released', async () => {
+            const client = await makeInitializedClient();
+            const { response, cancel } = streamResponse({}, 500);
+            const released = Promise.withResolvers<undefined>();
+            cancel.mockImplementation(async () => released.promise);
+            mockFetch.mockResolvedValueOnce(response);
+
+            const pending = client.openAttachmentStream('Drafts', 42, 'ATT00001').catch((error: unknown) => error);
+            await drainMicrotasks();
+            expect(cancel).toHaveBeenCalledTimes(1);
+            expect(Bun.peek.status(pending)).toBe('pending');
+            released.resolve(undefined);
+            expect(await pending).toBeInstanceOf(WildDuckError);
+        });
+
+        test.each([
+            [404, (result: unknown) => {
+                expect(result).toBeNull();
+            }],
+            [500, (result: unknown) => {
+                expect(result).toBeInstanceOf(WildDuckError);
+                expect((result as WildDuckError).message).toBe('WildDuck API error: 500 Error');
+            }],
+        ])('logs a failing cancel of a %i body without changing the outcome', async (status, check) => {
+            const client = await makeInitializedClient();
+            mockLogger.debug.mockClear();
+            const { response, cancel } = streamResponse({}, status);
+            cancel.mockImplementation(async () => {
+                throw new TypeError('cancel failed');
+            });
+            mockFetch.mockResolvedValueOnce(response);
+
+            check(await client.openAttachmentStream('Drafts', 42, 'ATT00001').catch((error: unknown) => error));
+            expect(mockLogger.debug.mock.calls).toEqual([[{ status, msg: 'WildDuck: could not cancel an unread attachment response body' }]]);
+        });
+
+        test('logs a failing cancel of a 401 body on each attempt and still throws the WildDuckAuthError', async () => {
+            const client = await makeInitializedClient();
+            mockLogger.debug.mockClear();
+            const failing = (): Response => {
+                const { response, cancel } = streamResponse({}, 401);
+                cancel.mockImplementation(async () => {
+                    throw new TypeError('cancel failed');
+                });
+                return response;
+            };
+            mockFetch.mockResolvedValueOnce(failing());
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(failing());
+
+            await expect(client.openAttachmentStream('Drafts', 42, 'ATT00001')).rejects.toBeInstanceOf(WildDuckAuthError);
+            expect(mockLogger.debug.mock.calls).toEqual([
+                [{ status: 401, msg: 'WildDuck: could not cancel an unread attachment response body' }],
+                [{ status: 401, msg: 'WildDuck: could not cancel an unread attachment response body' }],
+            ]);
+        });
+
+        test('does not throw for a 401 until the response body has been released', async () => {
+            const client = await makeInitializedClient();
+            const { response, cancel } = streamResponse({}, 401);
+            const released = Promise.withResolvers<undefined>();
+            cancel.mockImplementationOnce(async () => released.promise);
+            mockFetch.mockResolvedValueOnce(response);
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({}, 401));
+
+            const pending = client.openAttachmentStream('Drafts', 42, 'ATT00001').catch((error: unknown) => error);
+            await drainMicrotasks();
+            expect(cancel).toHaveBeenCalledTimes(1);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            released.resolve(undefined);
+            expect(await pending).toBeInstanceOf(WildDuckAuthError);
         });
 
         test('re-authenticates once on a 401 and retries with the new token', async () => {
@@ -3961,7 +4058,7 @@ describe('WildDuckClient', () => {
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
             mockFetch.mockResolvedValueOnce(response);
 
-            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ body });
+            expect(await client.openAttachmentStream('Drafts', 42, 'ATT00001')).toStrictEqual({ status: 200, body });
             const [_url, options] = mockFetch.mock.calls[2] as [string, RequestInit];
             expect(options.headers).toEqual({ 'X-Access-Token': 'refreshed-token' });
         });

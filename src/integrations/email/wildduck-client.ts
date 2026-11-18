@@ -213,10 +213,27 @@ export interface WildDuckMessage {
     reference?:   unknown
 }
 
-/** An attachment's bytes as WildDuck streams them, with their length when WildDuck gave one. */
+/**
+ * An attachment's bytes as WildDuck streams them, with the response's HTTP status (any 2xx: the
+ * caller decides whether a partial or empty response will do) and their length when WildDuck gave
+ * one.
+ */
 export interface AttachmentStream {
+    status:         number
     body:           ReadableStream<Uint8Array> | null
     contentLength?: number
+}
+
+/**
+ * Cancels a response body that will not be read and waits for it to be released. A cancel that
+ * fails is only logged, so it cannot replace the result or error the caller goes on to report.
+ */
+async function releaseUnreadBody(response: Response): Promise<void> {
+    try {
+        await response.body?.cancel();
+    } catch{
+        logger.debug({ status: response.status, msg: 'WildDuck: could not cancel an unread attachment response body' });
+    }
 }
 
 export interface WildDuckMessageSummary {
@@ -547,10 +564,11 @@ export class WildDuckClient {
 
     /**
      * Open an attachment's decoded bytes as a stream, unread and unbuffered, for the draft preview
-     * (#158) and an amend's carried attachments. Null when WildDuck has no such attachment (404).
-     * The 30 s request deadline covers only the wait for the response headers; after that only
-     * `signal` aborts the body. An id WildDuck could not have issued throws a WildDuckError before
-     * any request.
+     * (#158) and an amend's carried attachments, with the 2xx status WildDuck answered with. Null
+     * when WildDuck has no such attachment (404); any other non-2xx throws a WildDuckError carrying
+     * only the status, its body released unread. The 30 s request deadline covers only the wait for
+     * the response headers; after that only `signal` aborts the body. An id WildDuck could not have
+     * issued throws a WildDuckError before any request.
      */
     async openAttachmentStream(mailboxPath: string, uid: number, attachmentId: string, signal?: AbortSignal): Promise<AttachmentStream | null> {
         assertAttachmentId(attachmentId);
@@ -1022,24 +1040,24 @@ export class WildDuckClient {
         }
 
         if(response.status === 404) {
-            await response.body?.cancel();
+            await releaseUnreadBody(response);
             return null;
         }
         if(response.status === 401) {
-            discardBody(response);
+            await releaseUnreadBody(response);
             throw new WildDuckAuthError('WildDuck authentication failed (401)');
         }
         if(!response.ok) {
-            const body = await response.text();
-            const bodySuffix = body ? `: ${body}` : '';
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`, undefined, { status: response.status });
+            // The error body is never read: it is released unread, so it is neither buffered nor echoed
+            await releaseUnreadBody(response);
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}`, undefined, { status: response.status });
         }
 
         // A decoded (content-encoded) body's length differs from the header's, so it is only passed through for an identity body.
         const length = response.headers.get('content-length');
         return length !== null && /^\d+$/u.test(length) && response.headers.get('content-encoding') === null
-            ? { body: response.body, contentLength: Number(length) }
-            : { body: response.body };
+            ? { status: response.status, body: response.body, contentLength: Number(length) }
+            : { status: response.status, body: response.body };
     }
 
     private async makeRequestBuffer(path: string, options: RequestInit): Promise<Buffer> {

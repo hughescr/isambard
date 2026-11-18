@@ -3946,7 +3946,8 @@ describe('createEmailMCPServer', () => {
             const AS_UPLOADED = Symbol('as uploaded');
             /** A WildDuck attachment stream that yields `chunks`, then ends; `contentLength` when WildDuck declared one. */
             const streamOf = (chunks: unknown[], contentLength?: number): AttachmentStream => ({
-                body: new ReadableStream<Uint8Array>({
+                status: 200,
+                body:   new ReadableStream<Uint8Array>({
                     start(controller) {
                         for(const chunk of chunks) {
                             controller.enqueue(chunk as Uint8Array);
@@ -3958,7 +3959,8 @@ describe('createEmailMCPServer', () => {
             });
             /** A stream that yields `chunks` and then stalls until `signal` aborts, as a fetch body does. */
             const stallingStream = (signal: AbortSignal, chunks: unknown[] = []): AttachmentStream => ({
-                body: new ReadableStream<Uint8Array>({
+                status: 200,
+                body:   new ReadableStream<Uint8Array>({
                     start(controller) {
                         for(const chunk of chunks) {
                             controller.enqueue(chunk as Uint8Array);
@@ -4072,18 +4074,165 @@ describe('createEmailMCPServer', () => {
                     expect(getText(result)).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 2 kept from the original draft, 0 removed.`);
                 });
 
-                test('joins an attachment\'s chunks, and carries one with no body as empty', async () => {
-                    original = { ...originalDraft, attachments: [REPORT, PHOTO] };
-                    mockOpenStream.mockImplementation(async (_mailbox: string, _uid: number, id: string) => (
-                        id === 'ATT00001' ? streamOf([Buffer.from('first '), Buffer.from('second')]) : { body: null }
-                    ));
+                test('joins an attachment\'s chunks', async () => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    mockOpenStream.mockImplementation(async () => streamOf([Buffer.from('first '), Buffer.from('second')]));
 
                     await amend();
 
-                    expect(uploaded().attachments).toEqual([
-                        { filename: 'report.pdf', contentType: 'application/pdf', content: base64('first second') },
-                        { filename: 'photo.png', contentType: 'image/png', content: '' },
-                    ]);
+                    expect(uploaded().attachments).toEqual([{ filename: 'report.pdf', contentType: 'application/pdf', content: base64('first second') }]);
+                });
+
+                test.each([
+                    ['no body and no declared length', undefined],
+                    ['no body but a declared length', 5],
+                ])('refuses an attachment WildDuck answered with a 200 with %s, uploading nothing', async (_label, contentLength) => {
+                    original = { ...originalDraft, attachments: [REPORT, PHOTO] };
+                    mockOpenStream.mockImplementation(async (_mailbox: string, _uid: number, id: string) => (
+                        id === 'ATT00001' ? streamOf([Buffer.from('ok')]) : { status: 200, body: null, ...(contentLength === undefined ? {} : { contentLength }) }
+                    ));
+
+                    const result = await amend();
+
+                    expect(result).toEqual(refused('Could not amend draft Drafts:42: these attachments could not be fetched from WildDuck: "photo.png". Nothing was changed and the draft is as it was; try again, or leave them out with removeAttachments.'));
+                    expectNothingChanged();
+                    expect(mockLogger.warn.mock.calls).toEqual([[{ uid: 42, attachmentId: 'ATT00002', msg: 'An attachment to carry into the amended draft came back from WildDuck without a body' }]]);
+                });
+
+                test.each([
+                    ['a 200 declared as zero length with no body', (): AttachmentStream => ({ status: 200, body: null, contentLength: 0 })],
+                    ['a 200 with an empty body and no declared length', (): AttachmentStream => streamOf([])],
+                    ['a 200 with an empty body declared as zero length', (): AttachmentStream => streamOf([], 0)],
+                ])('carries a genuinely empty attachment: %s', async (_label, open) => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    mockOpenStream.mockImplementation(async () => open());
+
+                    const result = await amend();
+
+                    expect(result.isError).toBeUndefined();
+                    expect(uploaded().attachments).toEqual([{ filename: 'report.pdf', contentType: 'application/pdf', content: '' }]);
+                    expect(mockLogger.warn).not.toHaveBeenCalled();
+                });
+
+                test.each([199, 201, 204, 206])('refuses an attachment WildDuck answered with a %i, cancelling its body unread and uploading nothing', async (status) => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    let pulled = false;
+                    let cancelled = false;
+                    mockOpenStream.mockImplementation(async () => ({
+                        status,
+                        contentLength: 5,
+                        body:          new ReadableStream<Uint8Array>({
+                            pull(controller) {
+                                pulled = true;
+                                controller.enqueue(Buffer.from('12345'));
+                            },
+                            cancel() {
+                                cancelled = true;
+                            },
+                        }, { highWaterMark: 0 }),
+                    }));
+
+                    const result = await amend();
+
+                    expect(result).toEqual(refused('Could not amend draft Drafts:42: these attachments could not be fetched from WildDuck: "report.pdf". Nothing was changed and the draft is as it was; try again, or leave them out with removeAttachments.'));
+                    expectNothingChanged();
+                    expect(mockLogger.warn.mock.calls).toEqual([[{ uid: 42, attachmentId: 'ATT00001', status, msg: 'Could not fetch an attachment to carry into the amended draft' }]]);
+                    expect(pulled).toBe(false);
+                    expect(cancelled).toBe(true);
+                });
+
+                test('refuses a 204 that has no body at all', async () => {
+                    original = { ...originalDraft, attachments: [REPORT] };
+                    mockOpenStream.mockImplementation(async () => ({ status: 204, body: null, contentLength: 0 }));
+
+                    const result = await amend();
+
+                    expect(getText(result)).toBe('Could not amend draft Drafts:42: these attachments could not be fetched from WildDuck: "report.pdf". Nothing was changed and the draft is as it was; try again, or leave them out with removeAttachments.');
+                    expectNothingChanged();
+                    expect(mockLogger.warn.mock.calls).toEqual([[{ uid: 42, attachmentId: 'ATT00001', status: 204, msg: 'Could not fetch an attachment to carry into the amended draft' }]]);
+                });
+
+                describe('the body\'s reader', () => {
+                    /** A body whose reader is recorded: each read yields the next of `reads` (a chunk, or `{ fail }` to reject with), then the end. */
+                    const recordedBody = (reads: (Uint8Array | { fail: unknown })[], cancel: () => Promise<void> = async () => undefined): { stream: AttachmentStream, calls: string[] } => {
+                        const calls: string[] = [];
+                        const pending = [...reads];
+                        const reader = {
+                            read: async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+                                calls.push('read');
+                                const next = pending.shift();
+                                if(next === undefined) {
+                                    return { done: true, value: undefined };
+                                }
+                                if('fail' in next) {
+                                    throw next.fail;
+                                }
+                                return { done: false, value: next };
+                            },
+                            cancel: async (): Promise<void> => {
+                                calls.push('cancel');
+                                await cancel();
+                            },
+                            releaseLock: (): void => {
+                                calls.push('releaseLock');
+                            },
+                        };
+                        // A stand-in exposing only getReader, which is all an amend's read uses of a body.
+                        const body = { getReader: () => reader } as unknown as ReadableStream<Uint8Array>;
+                        return { stream: { status: 200, body }, calls };
+                    };
+                    const FETCH_FAILED = 'Could not amend draft Drafts:42: these attachments could not be fetched from WildDuck: "report.pdf". Nothing was changed and the draft is as it was; try again, or leave them out with removeAttachments.';
+
+                    test('releases the reader once the body is read to its end, cancelling nothing', async () => {
+                        original = { ...originalDraft, attachments: [REPORT] };
+                        const { stream, calls } = recordedBody([Buffer.from('ab')]);
+                        mockOpenStream.mockImplementation(async () => stream);
+
+                        await amend();
+
+                        expect(uploaded().attachments).toEqual([{ filename: 'report.pdf', contentType: 'application/pdf', content: base64('ab') }]);
+                        expect(calls).toEqual(['read', 'read', 'releaseLock']);
+                    });
+
+                    test('cancels and releases the reader when a read fails, as an aborted fetch\'s does, and refuses', async () => {
+                        original = { ...originalDraft, attachments: [REPORT] };
+                        const { stream, calls } = recordedBody([Buffer.from('ab'), { fail: new TypeError('connection reset') }]);
+                        mockOpenStream.mockImplementation(async () => stream);
+
+                        const result = await amend();
+
+                        expect(getText(result)).toBe(FETCH_FAILED);
+                        expectNothingChanged();
+                        expect(calls).toEqual(['read', 'read', 'cancel', 'releaseLock']);
+                        expect(mockLogger.warn.mock.calls).toEqual([[{ uid: 42, attachmentId: 'ATT00001', error: 'TypeError', msg: 'Could not fetch an attachment to carry into the amended draft' }]]);
+                    });
+
+                    test('cancels and releases the reader once the bytes read overrun the budget', async () => {
+                        original = { ...originalDraft, attachments: [REPORT] };
+                        const { stream, calls } = recordedBody([{ length: CAP + 1 } as Uint8Array, Buffer.from('never read')]);
+                        mockOpenStream.mockImplementation(async () => stream);
+
+                        const result = await amend();
+
+                        expect(result).toEqual(refused('Could not amend draft Drafts:42: the attachments it would keep come to more than the 25.0 MB an amend can carry. Nothing was changed; leave some out with removeAttachments, or delete the draft and create a new one.'));
+                        expect(calls).toEqual(['read', 'cancel', 'releaseLock']);
+                        expect(mockLogger.warn).not.toHaveBeenCalled();
+                    });
+
+                    test('still releases the reader when its cancel fails, logging the failure, and refuses', async () => {
+                        original = { ...originalDraft, attachments: [REPORT] };
+                        const { stream, calls } = recordedBody([{ fail: new TypeError('connection reset') }], async () => {
+                            throw new RangeError('cancel failed');
+                        });
+                        mockOpenStream.mockImplementation(async () => stream);
+
+                        const result = await amend();
+
+                        expect(getText(result)).toBe(FETCH_FAILED);
+                        expectNothingChanged();
+                        expect(calls).toEqual(['read', 'cancel', 'releaseLock']);
+                        expect(mockLogger.warn.mock.calls).toEqual([[{ uid: 42, attachmentId: 'ATT00001', error: 'RangeError', msg: 'Could not fetch an attachment to carry into the amended draft' }]]);
+                    });
                 });
 
                 test('carries a body of exactly the length WildDuck declared for it', async () => {
@@ -4190,6 +4339,43 @@ describe('createEmailMCPServer', () => {
                         const result = await amend({ removeAttachments: names('u', 11) });
 
                         expect(result).toEqual(refusedNaming(`${names('u', 10).map(name => `"${name}"`).join(', ')} and 1 more`, names('k', 10).map(name => `"${name}"`).join(', ')));
+                    });
+
+                    describe('bounding the work', () => {
+                        afterEach(() => {
+                            jest.restoreAllMocks();
+                        });
+
+                        test('formats only the first ten names, counting the rest unformatted', async () => {
+                            original = { ...originalDraft, attachments: [REPORT] };
+                            const segment = spyOn(Intl.Segmenter.prototype, 'segment');
+                            const unknown = Array.from({ length: 1000 }, (_value, index) => `u${index}`);
+
+                            const result = await amend({ removeAttachments: unknown });
+
+                            expect(result).toEqual(refusedNaming(`${unknown.slice(0, 10).map(name => `"${name}"`).join(', ')} and 990 more`, '"report.pdf"'));
+                            expect(segment.mock.calls.map(([text]) => text)).toEqual([...unknown.slice(0, 10), 'report.pdf']);
+                        });
+
+                        test('segments at most the first 1024 code units of a name', async () => {
+                            original = { ...originalDraft, attachments: [REPORT] };
+                            const segment = spyOn(Intl.Segmenter.prototype, 'segment');
+
+                            await amend({ removeAttachments: ['n'.repeat(100_000)] });
+
+                            expect(segment.mock.calls.map(([text]) => text.length)).toEqual([1024, 10]);
+                        });
+                    });
+
+                    test.each([
+                        ['keeps a name of exactly 1024 code units whole', `${'\u{0}'.repeat(1020)}abcd`, '"abcd"'],
+                        ['cuts a longer name at 1024 code units, before its unsafe characters are stripped, and marks the cut', `${'\u{0}'.repeat(1020)}abcde`, '"abcd…"'],
+                    ])('%s', async (_label, name, shown) => {
+                        original = { ...originalDraft, attachments: [REPORT] };
+
+                        const result = await amend({ removeAttachments: [name] });
+
+                        expect(result).toEqual(refusedNaming(shown, '"report.pdf"'));
                     });
                 });
 
@@ -4426,7 +4612,8 @@ describe('createEmailMCPServer', () => {
                                     return stallingStream(signal);
                                 }
                                 return {
-                                    body: new ReadableStream<Uint8Array>({
+                                    status: 200,
+                                    body:   new ReadableStream<Uint8Array>({
                                         pull(controller) {
                                             pulls += 1;
                                             controller.enqueue(chunk(pulls === 1 ? CAP : 1) as Uint8Array);
@@ -4451,7 +4638,8 @@ describe('createEmailMCPServer', () => {
                         test('waits for an overrun body\'s cancel, so one that fails is caught and logged, and still refuses', async () => {
                             original = { ...originalDraft, attachments: [REPORT] };
                             mockOpenStream.mockImplementation(async () => ({
-                                body: new ReadableStream<Uint8Array>({
+                                status: 200,
+                                body:   new ReadableStream<Uint8Array>({
                                     pull(controller) {
                                         controller.enqueue(chunk(CAP + 1) as Uint8Array);
                                     },
@@ -4712,17 +4900,27 @@ describe('createEmailMCPServer', () => {
                     expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_LOST}`);
                 });
 
+                test('warns that the threading is lost when the original had no References and the stored new draft has none either', async () => {
+                    original = { ...originalDraft, references: [], reference: REPLY_REFERENCE };
+                    stored = { id: 55, references: [] };
+
+                    const result = await amend();
+
+                    expect(uploaded().reference).toEqual(REPLY_REFERENCE);
+                    expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_LOST}`);
+                });
+
                 test.each([
-                    ['no References', []],
-                    ['References', ['<new@example.com>']],
-                ])('warns that the threading is lost when the original had none to match and the stored new draft has %s', async (_label, references) => {
+                    ['one Reference', ['<new@example.com>']],
+                    ['several References', ['<parent@example.com>', '<new@example.com>']],
+                ])('says the threading could not be confirmed when the original had no References to match and the stored new draft has %s', async (_label, references) => {
                     original = { ...originalDraft, references: [], reference: REPLY_REFERENCE };
                     stored = { id: 55, references };
 
                     const result = await amend();
 
                     expect(uploaded().reference).toEqual(REPLY_REFERENCE);
-                    expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_LOST}`);
+                    expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_UNVERIFIED}`);
                 });
 
                 test.each([
@@ -4847,8 +5045,19 @@ describe('createEmailMCPServer', () => {
                 const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.amendAndResubmitDraft;
 
                 expect(registered.description).toContain('keeps the draft\'s Cc addresses and attachments (at most 50 attachments, 25 MB in all)');
-                expect(registered.description).toContain('the result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended, if the reply threading was lost, or if either could not be confirmed.');
+                expect(registered.description).toContain('the result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended or could not be confirmed.');
+                expect(registered.description).toContain('The amended draft stays in the reply thread only when the original was a reply to a message still in the inbox or archive and the subject is not empty; the result says whether that was confirmed.');
                 expect(registered.description).toContain('An amend cannot attach new files: delete the draft and create a new one instead.');
+            });
+
+            test('says that subject, body and To are kept only when omitted', () => {
+                const shape = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.amendAndResubmitDraft.inputSchema.shape;
+
+                expect(['subject', 'body', 'to'].map(field => (shape[field] as { description?: string }).description)).toEqual([
+                    'New subject line (omit to keep the original)',
+                    'New plain text body (omit to keep the original)',
+                    'New To address(es) (omit to keep the original)',
+                ]);
             });
         });
 
@@ -4902,7 +5111,7 @@ describe('createEmailMCPServer', () => {
                 });
                 mockWildDuckAmend.openAttachmentStream = mock(async (_mailbox: string, _uid: number, id: string) => {
                     events.push(`attachment ${id}`);
-                    return { body: new Blob(['x']).stream() };
+                    return { status: 200, body: new Blob(['x']).stream() };
                 });
                 mockUploadMessageAmend.mockImplementation(async () => {
                     events.push('upload');
@@ -5034,7 +5243,7 @@ describe('createEmailMCPServer', () => {
                         controller.enqueue({ length: (25 * 1024 * 1024) + 1 });
                         controller.close();
                     } });
-                    return { contentLength: (25 * 1024 * 1024) + 1, body };
+                    return { status: 200, contentLength: (25 * 1024 * 1024) + 1, body };
                 });
                 const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, draftLocks, approvalCards: cardPort(present) });
 

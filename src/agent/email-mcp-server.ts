@@ -11,10 +11,10 @@ import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthG
 import { EmailFolder } from '@/config';
 import { EmailProcessingError, WildDuckError } from '@/errors';
 // eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, isWildDuckAttachmentId, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type AttachmentStream, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckUploadPayload } from '@/integrations/email';
+import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, isWildDuckAttachmentId, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckUploadPayload } from '@/integrations/email';
 import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
-import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner, createDeadline } from '@/utils';
+import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner, createDeadline, discardBody } from '@/utils';
 /** Mailboxes accessible directly by the agent without admin review. */
 const ACCESSIBLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive]);
 
@@ -142,21 +142,29 @@ const LISTED_NAME_MAX_CHARACTERS = 80;
 /** Control characters, and the bidi marks, embeddings, overrides and isolates that can make a name read as another. */
 const UNSAFE_NAME_CHARACTERS = /[\p{Cc}\u{61C}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2066}-\u{2069}]/gu;
 
+/** The most UTF-16 code units of one filename that are stripped and segmented, so the work per name is bounded however long it is. */
+const LISTED_NAME_SCAN_MAX_CODE_UNITS = 1024;
+
 const graphemes = new Intl.Segmenter();
 
-/** A filename from WildDuck or the tool arguments, made safe for tool text: unsafe characters stripped, then cut to {@link LISTED_NAME_MAX_CHARACTERS}. */
+/**
+ * A filename from WildDuck or the tool arguments, made safe for tool text: cut to its first
+ * {@link LISTED_NAME_SCAN_MAX_CODE_UNITS} code units, unsafe characters stripped, then cut to
+ * {@link LISTED_NAME_MAX_CHARACTERS}; a name cut either way ends with an ellipsis.
+ */
 function displayName(name: string): string {
-    const characters = Array.from(graphemes.segment(name.replaceAll(UNSAFE_NAME_CHARACTERS, '')), ({ segment }) => segment);
-    return characters.length > LISTED_NAME_MAX_CHARACTERS
+    const scanned = name.slice(0, LISTED_NAME_SCAN_MAX_CODE_UNITS);
+    const characters = Array.from(graphemes.segment(scanned.replaceAll(UNSAFE_NAME_CHARACTERS, '')), ({ segment }) => segment);
+    return characters.length > LISTED_NAME_MAX_CHARACTERS || scanned.length < name.length
         ? `${characters.slice(0, LISTED_NAME_MAX_CHARACTERS).join('')}…`
         : characters.join('');
 }
 
-/** Filenames for tool text, each made safe and quoted, comma-separated: the first {@link LISTED_NAMES_MAX}, then how many more. */
+/** Filenames for tool text, comma-separated: the first {@link LISTED_NAMES_MAX}, each made safe and quoted, then how many more (counted, not formatted). */
 function quotedNames(names: Iterable<string>): string {
-    const quoted = Array.from(names, name => JSON.stringify(displayName(name)));
-    const listed = quoted.slice(0, LISTED_NAMES_MAX).join(', ');
-    return quoted.length > LISTED_NAMES_MAX ? `${listed} and ${quoted.length - LISTED_NAMES_MAX} more` : listed;
+    const all = [...names];
+    const listed = all.slice(0, LISTED_NAMES_MAX).map(name => JSON.stringify(displayName(name))).join(', ');
+    return all.length > LISTED_NAMES_MAX ? `${listed} and ${all.length - LISTED_NAMES_MAX} more` : listed;
 }
 
 /** `count` and its noun, singular for one. */
@@ -184,30 +192,36 @@ interface AttachmentBudget {
 
 /**
  * Reads an attachment's bytes, counting each chunk against the amend's shared budget. Once the
- * budget is overrun it stops reading, cancels this body and aborts every other fetch, and returns
- * undefined.
+ * budget is overrun it stops reading and aborts every other fetch, and returns undefined. Any exit
+ * before the body's end (an overrun, or a read that rejects, as an aborted fetch's does) cancels
+ * the body, and the reader is released on every path; a cancel that fails rejects, for the caller
+ * to log, and the result is a failed fetch either way.
  */
-async function readWithinBudget(stream: AttachmentStream, budget: AttachmentBudget): Promise<Buffer | undefined> {
-    const chunks: Uint8Array[] = [];
-    let overrun = false;
-    const reader = stream.body?.getReader();
-    if(reader !== undefined) {
+async function readWithinBudget(body: ReadableStream<Uint8Array>, budget: AttachmentBudget): Promise<Buffer | undefined> {
+    const reader = body.getReader();
+    let complete = false;
+    try {
+        const chunks: Uint8Array[] = [];
         // eslint-disable-next-line no-await-in-loop -- a body's chunks arrive one after another
         for(let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
             budget.remaining -= chunk.value.length;
             if(budget.remaining < 0) {
-                overrun = true;
-                break;
+                budget.overrun.abort();
+                return undefined;
             }
             chunks.push(chunk.value);
         }
-        if(overrun) {
-            budget.overrun.abort();
-            await reader.cancel();
-            return undefined;
+        complete = true;
+        return Buffer.concat(chunks);
+    } finally {
+        try {
+            if(!complete) {
+                await reader.cancel();
+            }
+        } finally {
+            reader.releaseLock();
         }
     }
-    return Buffer.concat(chunks);
 }
 
 const CARRY_FETCH_FAILED = 'Could not fetch an attachment to carry into the amended draft';
@@ -247,10 +261,11 @@ interface ThreadingPlan {
 
 /**
  * Whether the amended draft kept the original's reply threading: '' for a draft that was not a
- * reply; the threading-lost warning when no reference could be re-passed for a reply, or when the
- * stored new draft's References are empty or differ from the original's; a note when they match;
- * and otherwise — the new draft not read back, or either References unreadable — a warning that it
- * could not be confirmed.
+ * reply; the threading-lost warning when no reference could be re-passed for a reply, when the
+ * stored new draft's References are empty, or when both References lists are non-empty and
+ * differ; a note when they match; and otherwise — the new draft not read back, either References
+ * unreadable, or an original with empty References (nothing to compare the stored ones with) — a
+ * warning that it could not be confirmed.
  */
 function threadingNote(plan: ThreadingPlan, stored: StoredDraft | undefined): string {
     if(plan.reference === undefined) {
@@ -262,8 +277,13 @@ function threadingNote(plan: ThreadingPlan, stored: StoredDraft | undefined): st
     if(plan.expected === undefined || stored?.references === undefined) {
         return THREAD_UNVERIFIED_WARNING;
     }
-    const kept = plan.expected.length > 0 && JSON.stringify(stored.references) === JSON.stringify(plan.expected);
-    return kept ? THREAD_KEPT_NOTE : THREAD_LOST_WARNING;
+    if(stored.references.length === 0) {
+        return THREAD_LOST_WARNING;
+    }
+    if(plan.expected.length === 0) {
+        return THREAD_UNVERIFIED_WARNING;
+    }
+    return JSON.stringify(stored.references) === JSON.stringify(plan.expected) ? THREAD_KEPT_NOTE : THREAD_LOST_WARNING;
 }
 
 /** An amend's refusal or failure as an error tool result. */
@@ -690,9 +710,11 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
     /**
      * Fetches one kept attachment's bytes through WildDuck's attachment stream, counted against
-     * the amend's shared budget; undefined when it failed (logged by status or error name, never by
-     * WildDuck's error text), when its body was not the length WildDuck declared, when the budget
-     * ran out, or when another fetch had already aborted them all.
+     * the amend's shared budget. Only a 200 with a body is an attachment; a 200 with no body is one
+     * only when WildDuck declared its length as zero. Undefined when it failed (logged by status or
+     * error name, never by WildDuck's error text), when WildDuck answered with any other 2xx (its
+     * body cancelled unread) or a 200 with no body, when its body was not the length WildDuck
+     * declared, when the budget ran out, or when another fetch had already aborted them all.
      */
     async function fetchCarried(uid: number, attachment: WildDuckMessageAttachment, budget: AttachmentBudget, signal: AbortSignal): Promise<Buffer | undefined> {
         if(signal.aborted) {
@@ -704,7 +726,19 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 logger.warn({ uid, attachmentId: attachment.id, status: 404, msg: CARRY_FETCH_FAILED });
                 return undefined;
             }
-            const bytes = await readWithinBudget(stream, budget);
+            if(stream.status !== 200) {
+                discardBody(stream);
+                logger.warn({ uid, attachmentId: attachment.id, status: stream.status, msg: CARRY_FETCH_FAILED });
+                return undefined;
+            }
+            if(stream.body === null) {
+                if(stream.contentLength === 0) {
+                    return Buffer.alloc(0);
+                }
+                logger.warn({ uid, attachmentId: attachment.id, msg: 'An attachment to carry into the amended draft came back from WildDuck without a body' });
+                return undefined;
+            }
+            const bytes = await readWithinBudget(stream.body, budget);
             if(bytes !== undefined && stream.contentLength !== undefined && bytes.length !== stream.contentLength) {
                 logger.warn({ uid, attachmentId: attachment.id, declared: stream.contentLength, read: bytes.length, msg: 'An attachment to carry into the amended draft was not the length WildDuck declared' });
                 return undefined;
@@ -1233,12 +1267,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
             tool(
                 'amendAndResubmitDraft',
-                'Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. The new version keeps the draft\'s Cc addresses and attachments (at most 50 attachments, 25 MB in all) unless you override them (cc, removeAttachments), and stays threaded as a reply when the draft was one and its subject is not empty; the result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended, if the reply threading was lost, or if either could not be confirmed. An amend cannot attach new files: delete the draft and create a new one instead. A pending draft\'s approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.',
+                'Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. The new version keeps the draft\'s Cc addresses and attachments (at most 50 attachments, 25 MB in all) unless you override them (cc, removeAttachments); the result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended or could not be confirmed. The amended draft stays in the reply thread only when the original was a reply to a message still in the inbox or archive and the subject is not empty; the result says whether that was confirmed. An amend cannot attach new files: delete the draft and create a new one instead. A pending draft\'s approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.',
                 {
                     message:           draftsMailboxMessageRefSchema.describe('The pending or rejected draft to amend, in Drafts:UID format'),
-                    subject:           z.string().optional().describe('New subject line (leave blank to keep original)'),
-                    body:              z.string().optional().describe('New plain text body (leave blank to keep original)'),
-                    to:                z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (leave blank to keep original)'),
+                    subject:           z.string().optional().describe('New subject line (omit to keep the original)'),
+                    body:              z.string().optional().describe('New plain text body (omit to keep the original)'),
+                    to:                z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (omit to keep the original)'),
                     cc:                z.union([emailAddressSchema, z.array(emailAddressSchema)]).optional().describe('New Cc address(es), replacing the draft\'s Cc: plain address string or {name, email_address} object, or array of either. Omit to keep the draft\'s Cc; pass an empty array to remove every Cc address.'),
                     removeAttachments: z.union([z.literal('all'), z.array(z.string())]).optional().describe('Attachments to drop from the draft: "all", or an array of filenames (each drops every attachment with exactly that name). Omit to keep every attachment. A filename the draft does not have refuses the amend and changes nothing.'),
                     senderProfile:     emailSenderProfileSchema.optional().describe('Sender profile for the From address: formal or informal'),

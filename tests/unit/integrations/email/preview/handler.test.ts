@@ -34,7 +34,7 @@ interface Harness {
 
 function harness(draft: WildDuckMessage | null = stored(), overrides: Partial<DraftPreviewHandlerDeps> = {}): Harness {
     const getMessage = mock(async (_folder: string, _uid: number, _signal?: AbortSignal): Promise<WildDuckMessage | null> => draft);
-    const openStream = mock(async (_folder: string, _uid: number, _id: string, _signal?: AbortSignal): Promise<AttachmentStream | null> => ({ body: new Response('PDFBYTES').body, contentLength: 8 }));
+    const openStream = mock(async (_folder: string, _uid: number, _id: string, _signal?: AbortSignal): Promise<AttachmentStream | null> => ({ status: 200, body: new Response('PDFBYTES').body, contentLength: 8 }));
     const handle = createDraftPreviewHandler({
         wildDuckClient: { getMessage, openAttachmentStream: openStream },
         ttlMs:          TTL_MS,
@@ -365,7 +365,7 @@ describe('createDraftPreviewHandler', () => {
 
         test('omits the length when WildDuck gave none', async () => {
             const h = harness();
-            h.openStream.mockImplementation(async () => ({ body: new Response('xyz').body }));
+            h.openStream.mockImplementation(async () => ({ status: 200, body: new Response('xyz').body }));
 
             const response = await h.handle(get(`/d/42/${TOKEN}/a/ATT00001`));
 

@@ -47,9 +47,9 @@ export function deadlineFactory(inject: ((ms: number) => AbortSignal) | undefine
  * deadline stands down: once the deadline is cleared nothing else would ever abort a body that
  * then stalls. Best effort: it never throws and never waits, so it cannot mask the error the
  * caller is already reporting.
- * @param response The response whose body is abandoned; undefined (no response yet) is a no-op
+ * @param response The response (or anything carrying a response's body) whose body is abandoned; undefined (no response yet) is a no-op
  */
-export function discardBody(response: Response | undefined): void {
+export function discardBody(response: { readonly body: ReadableStream<Uint8Array> | null } | undefined): void {
     const body = response?.body;
     if(body !== undefined && body !== null) {
         void cancelQuietly(body);
