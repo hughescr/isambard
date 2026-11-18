@@ -142,8 +142,8 @@ describe('parseJson / loadMeta / serializeMeta', () => {
         ['unparseable text', '{bad'],
         ['a JSON array', '[]'],
         ['null', 'null'],
-        ['a wrong schema', JSON.stringify({ schema: 2, sliceCount: 14, slices: {} })],
-        ['a wrong slice count', JSON.stringify({ schema: 1, sliceCount: 13, slices: {} })],
+        ['a wrong schema', JSON.stringify({ schema: 2, sliceCount: 14, slices: { '2': stamp(FP, NOW_ISO) } })],
+        ['a wrong slice count', JSON.stringify({ schema: 1, sliceCount: 13, slices: { '2': stamp(FP, NOW_ISO) } })],
     ])('%s reads as an empty meta', (_name, raw) => {
         expect(loadMeta(raw)).toEqual(emptyMeta());
     });
