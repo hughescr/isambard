@@ -313,7 +313,7 @@ describe('WildDuckClient', () => {
             return client;
         }
 
-        test('calls GET /users/me/search with correct URL', async () => {
+        test('calls GET /users/me/search, matching a correspondent in From or in To/Cc', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
@@ -321,18 +321,19 @@ describe('WildDuckClient', () => {
             await client.search({ query: { correspondent: 'alice@example.com' } });
 
             const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(searchUrl).toBe('https://wildduck-api.example.com/users/me/search?q=alice%40example.com');
+            expect(searchUrl).toBe('https://wildduck-api.example.com/users/me/search?or.from=alice%40example.com&or.to=alice%40example.com');
         });
 
-        test('includes correspondent in query params as "q"', async () => {
+        test('never sends a correspondent as WildDuck\'s q query language, which ignores every other filter', async () => {
             const client = await makeSearchInitializedClient();
 
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
-            await client.search({ query: { correspondent: 'alice@example.com' } });
+            await client.search({ query: { correspondent: 'in:Quarantine' }, mailbox: 'CleanInbox' });
 
             const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(searchUrl).toContain('q=alice%40example.com');
+            expect(new URL(searchUrl).searchParams.has('q')).toBe(false);
+            expect(new URL(searchUrl).searchParams.get('mailbox')).toBe('mbx-clean');
         });
 
         test('includes content in query params as "query"', async () => {
@@ -379,39 +380,15 @@ describe('WildDuckClient', () => {
             expect(searchUrl).toContain('mailbox=mbx-clean');
         });
 
-        test('skips unknown mailbox names when mapping', async () => {
+        test('refuses an unknown mailbox name before any request, rather than searching every mailbox', async () => {
             const client = await makeSearchInitializedClient();
-
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
 
             // 'AllMail' is not in our mailbox map
-            await client.search({ mailbox: 'AllMail' });
+            const failure = client.search({ mailbox: 'AllMail' });
 
-            const [searchUrl] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(searchUrl).not.toContain('mailbox=');
-        });
-
-        test('logs a warning for unknown mailbox name skipped', async () => {
-            const client = await makeSearchInitializedClient();
-
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
-
-            await client.search({ mailbox: 'UnknownBox' });
-
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({
-                folderName: 'UnknownBox',
-                msg:        'WildDuck search: unknown mailbox name skipped',
-            }));
-        });
-
-        test('does not log a warning for known mailbox names', async () => {
-            const client = await makeSearchInitializedClient();
-
-            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
-
-            await client.search({ mailbox: 'CleanInbox' });
-
-            expect(mockLogger.warn).not.toHaveBeenCalled();
+            await expect(failure).rejects.toThrow(WildDuckError);
+            await expect(failure).rejects.toMatchObject({ context: { kind: 'invalid_request' } });
+            expect(mockFetch).not.toHaveBeenCalled();
         });
 
         test('includes searchable=true when searchable option is set', async () => {
@@ -747,6 +724,136 @@ describe('WildDuckClient', () => {
             expect(results).toHaveLength(2);
             expect(results[0]?.message).toBe('CleanInbox:1');
             expect(results[1]?.message).toBe('Archive:2');
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // searchPage()
+    // -----------------------------------------------------------------------
+    describe('searchPage()', () => {
+        const THREAD_ID = '0123456789abcdefABCDEF01';
+        const row = (id: number, mailbox: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+            id, mailbox, from: { address: 'alice@example.com' }, to: [{ address: 'me@example.com' }], subject: `Subject ${id}`, date: '2025-01-01T10:00:00.000Z', ...extra,
+        });
+        const lastUrl = (): URL => new URL((mockFetch.mock.calls.at(-1) as [string, RequestInit])[0]);
+
+        test('asks WildDuck for one page of the given size, after the given cursor, with the same filters', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.searchPage({ query: { content: 'invoice' }, mailbox: 'Archive', limit: 20, next: 'cursor-1' });
+
+            expect(lastUrl().toString()).toBe('https://wildduck-api.example.com/users/me/search?query=invoice&mailbox=mbx-archive&limit=20&next=cursor-1');
+            expect((mockFetch.mock.calls.at(-1) as [string, RequestInit])[1].method).toBe('GET');
+        });
+
+        test('sends no cursor, thread or order unless asked', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.searchPage({ mailbox: 'CleanInbox', limit: 5 });
+
+            expect(lastUrl().search).toBe('?mailbox=mbx-clean&limit=5');
+        });
+
+        test('returns each row with its uid, mailbox id and intro, and WildDuck\'s next cursor', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, nextCursor: 'cursor-2', results: [row(7, 'mbx-clean', { intro: 'Hello there' })] }));
+
+            const page = await client.searchPage({ mailbox: 'CleanInbox', limit: 1 });
+
+            expect(page).toEqual({
+                results: [{
+                    message:   'CleanInbox:7', uid:       7, mailboxId: 'mbx-clean', intro:     'Hello there',
+                    from:      { address: 'alice@example.com' }, to:        [{ address: 'me@example.com' }], subject:   'Subject 7', date:      '2025-01-01T10:00:00.000Z',
+                }],
+                nextCursor: 'cursor-2',
+            });
+        });
+
+        test('reads a row without an intro as an empty one', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [row(7, 'mbx-clean')] }));
+
+            const page = await client.searchPage({ mailbox: 'CleanInbox', limit: 1 });
+
+            expect(page.results[0]?.intro).toBe('');
+        });
+
+        test.each([
+            ['false, as on WildDuck\'s last page', false],
+            ['empty', ''],
+            ['absent', undefined],
+        ])('has no next cursor when WildDuck\'s is %s', async (_label, nextCursor) => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, nextCursor, results: [] }));
+
+            const page = await client.searchPage({ mailbox: 'CleanInbox', limit: 1 });
+
+            expect(page).toEqual({ results: [] });
+            expect(Object.hasOwn(page, 'nextCursor')).toBe(false);
+        });
+
+        test('refuses a page with a row from another mailbox than the one searched', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [row(1, 'mbx-clean'), row(2, 'mbx-quarantine')] }));
+
+            const failure = client.searchPage({ mailbox: 'CleanInbox', limit: 2 });
+
+            await expect(failure).rejects.toThrow(WildDuckError);
+            await expect(failure).rejects.toMatchObject({ message: 'WildDuck search returned a message from outside the mailbox searched', context: { kind: 'bad_response' } });
+        });
+
+        test('returns rows from every mailbox when no mailbox was given', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [row(1, 'mbx-clean'), row(2, 'mbx-quarantine')] }));
+
+            const page = await client.searchPage({ limit: 2 });
+
+            expect(page.results.map(result => result.mailboxId)).toEqual(['mbx-clean', 'mbx-quarantine']);
+        });
+
+        test('searches one thread, oldest first', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [] }));
+
+            await client.searchPage({ thread: THREAD_ID, order: 'asc', limit: 50 });
+
+            expect(lastUrl().search).toBe(`?limit=50&thread=${THREAD_ID}&order=asc`);
+        });
+
+        test.each([
+            ['too short', '0123456789abcdef'],
+            ['followed by anything', `${THREAD_ID}0`],
+            ['not hexadecimal', '0123456789abcdefghijklmn'],
+            ['preceded by anything', `x${THREAD_ID}`],
+        ])('refuses a thread id that is %s before any request', async (_label, thread) => {
+            const client = await makeInitializedClient();
+
+            const failure = client.searchPage({ thread, limit: 50 });
+
+            await expect(failure).rejects.toMatchObject({ message: 'WildDuck: not a valid thread id', context: { kind: 'invalid_request' } });
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        test('refuses an unknown mailbox before any request', async () => {
+            const client = await makeInitializedClient();
+
+            const failure = client.searchPage({ mailbox: 'AllMail', limit: 5 });
+
+            await expect(failure).rejects.toMatchObject({ context: { kind: 'invalid_request' } });
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        test('retries once after re-authenticating on a 401', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'new-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true, results: [row(3, 'mbx-clean')] }));
+
+            const page = await client.searchPage({ mailbox: 'CleanInbox', limit: 1 });
+
+            expect(page.results.map(result => result.uid)).toEqual([3]);
         });
     });
 
@@ -2793,6 +2900,51 @@ describe('WildDuckClient', () => {
     });
 
     describe('getFullMessage() — HTML body', () => {
+        /** A message GET answering with these body parts. */
+        const bodyResponse = (parts: { text?: string, html?: string[] }): Response => makeJsonResponse({ success: true, id: 42, date: '2025-01-15T10:00:00.000Z', ...parts });
+
+        test('builds the body from the HTML part when there is one, so its links reach Izzy even when the text part omits them', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(bodyResponse({
+                text: 'New papers\nPaper A\nPaper B',
+                html: ['<p>New papers</p><ul><li><a href="https://philpapers.org/rec/A">Paper A</a></li><li><a href="https://philpapers.org/rec/B">Paper B</a></li></ul>'],
+            }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.bodyText).toBe('New papers\n\n * Paper A [https://philpapers.org/rec/A]\n * Paper B [https://philpapers.org/rec/B]');
+        });
+
+        test('joins every HTML part WildDuck returns, one per line, without throwing', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(bodyResponse({ html: ['<p>First part</p>', '<p>Second part</p>'] }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.bodyText).toBe('First part\n\nSecond part');
+        });
+
+        test('uses the text part when the HTML yields nothing', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(bodyResponse({ text: 'Plain words', html: ['<div style="display:none">hidden</div><img src="https://t.example/p.gif">'] }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.bodyText).toBe('Plain words');
+        });
+
+        test('says where the body was cut, after the cut', async () => {
+            const client = new WildDuckClient({ ...CLIENT_OPTIONS, maxBodySizeBytes: 5 });
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
+            await client.init();
+            mockFetch.mockResolvedValueOnce(bodyResponse({ html: ['<p>abcdefgh</p>'] }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.bodyText).toBe('abcde\n[body truncated: showing the first 5 of 8 bytes]');
+        });
+
         test('keeps a long unbroken HTML text line intact instead of applying display wrapping', async () => {
             const client = await makeInitializedClient();
             const body = 'a long plain-text sentence that contains ordinary spaces and exceeds the default display wrapping width by a useful margin';
@@ -2800,7 +2952,7 @@ describe('WildDuckClient', () => {
                 success: true,
                 id:      42,
                 date:    '2025-01-15T10:00:00.000Z',
-                html:    `<p>${body}</p>`,
+                html:    [`<p>${body}</p>`],
             }));
 
             const result = await client.getFullMessage('CleanInbox', 42);
@@ -3684,18 +3836,16 @@ describe('WildDuckClient', () => {
             const htmlOnly = {
                 ...FULL_MESSAGE_RESPONSE,
                 text: undefined,
-                html: '<h1>Hello</h1><p>World</p>',
+                html: ['<h1>Hello</h1><p>World</p>'],
             };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(htmlOnly));
 
             const result = await client.getFullMessage('CleanInbox', 42);
 
-            // html-to-text should produce plain text from the HTML (h1 becomes uppercase)
-            expect(result?.bodyText.toLowerCase()).toContain('hello');
-            expect(result?.bodyText.toLowerCase()).toContain('world');
+            expect(result?.bodyText).toBe('Hello\n\nWorld');
         });
 
-        test('truncates body at maxBodySizeBytes', async () => {
+        test('truncates body at maxBodySizeBytes and says so', async () => {
             const client = new WildDuckClient({ ...CLIENT_OPTIONS, maxBodySizeBytes: 10 });
             mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
             mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
@@ -3707,7 +3857,7 @@ describe('WildDuckClient', () => {
 
             const result = await client.getFullMessage('CleanInbox', 42);
 
-            expect(result?.bodyText.length).toBeLessThanOrEqual(10);
+            expect(result?.bodyText).toBe(`${'A'.repeat(10)}\n[body truncated: showing the first 10 of 100 bytes]`);
         });
 
         test('uses the documented 50,000-byte default body limit', async () => {
@@ -3716,7 +3866,7 @@ describe('WildDuckClient', () => {
 
             const result = await client.getFullMessage('CleanInbox', 42);
 
-            expect(result?.bodyText).toHaveLength(50_000);
+            expect(result?.bodyText).toBe(`${'A'.repeat(50_000)}\n[body truncated: showing the first 50000 of 50001 bytes]`);
         });
 
         test('truncates at valid UTF-8 boundary when cutting inside a multi-byte character', async () => {
@@ -3735,7 +3885,7 @@ describe('WildDuckClient', () => {
             const result = await client.getFullMessage('CleanInbox', 42);
 
             // Result must be valid UTF-8 (no partial multi-byte sequences)
-            expect(result?.bodyText).toBe('あ');
+            expect(result?.bodyText).toBe('あ\n[body truncated: showing the first 3 of 9 bytes]');
         });
 
         test('backs up exactly one byte when the cut lands on the continuation byte of a 2-byte character', async () => {
@@ -3751,7 +3901,7 @@ describe('WildDuckClient', () => {
 
             const result = await client.getFullMessage('CleanInbox', 42);
 
-            expect(result?.bodyText).toBe('a');
+            expect(result?.bodyText).toBe('a\n[body truncated: showing the first 1 of 3 bytes]');
         });
 
         test('keeps spf and dkim verification results on their own keys', async () => {
@@ -3945,7 +4095,7 @@ describe('WildDuckClient', () => {
             const htmlOnly = {
                 ...FULL_MESSAGE_RESPONSE,
                 text: undefined,
-                html: '<h1>Hello</h1><p>World</p>',
+                html: ['<h1>Hello</h1><p>World</p>'],
             };
             mockFetch.mockResolvedValueOnce(makeJsonResponse(htmlOnly));
 

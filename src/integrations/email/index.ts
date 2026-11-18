@@ -32,7 +32,7 @@ export type { ProcessEmailCallbacks } from './email-processor';
 export { WildDuckListener } from './wildduck-listener';
 export type { WildDuckListenerConfig } from './wildduck-listener';
 export { WildDuckClient, isWildDuckAttachmentId } from './wildduck-client';
-export type { AttachmentStream, WildDuckAttachment, WildDuckAttachmentMeta, WildDuckMessage, WildDuckMessageAttachment, WildDuckUploadPayload } from './wildduck-client';
+export type { AttachmentStream, WildDuckAttachment, WildDuckAttachmentMeta, WildDuckMessage, WildDuckMessageAttachment, WildDuckSearchParams, WildDuckSearchRow, WildDuckUploadPayload } from './wildduck-client';
 export { createBoundedRunner, startDraftPreview, TAILSCALE_COMMAND_TIMEOUT_MS } from './preview';
 export type { DraftPreview, PreviewServe, PreviewUrlFor, StartDraftPreviewDeps } from './preview';
 export { amendedDraftMeta, draftLockKey, hasDecisionMarker, mergeDraftMeta, newPreviewToken, previewTokenMatches, readDraftApprovalMeta } from './draft-approval-meta';

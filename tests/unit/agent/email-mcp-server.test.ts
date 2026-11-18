@@ -6,7 +6,7 @@ import { buildAttachments, createEmailMCPServer, type EmailApprovalCardPort, typ
 import { EMAIL_TOOL_ERROR_SENTENCES, type EmailToolErrorCode } from '../../../src/agent/email-tool-errors';
 import { ApprovalCardEditGate } from '../../../src/integrations/discord/approvals/card-edit-gate';
 import { EmailOutboundApprovals } from '../../../src/integrations/email/outbound-approvals';
-import { WildDuckAuthError, WildDuckError, type AttachmentStream, type WildDuckClient, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckSearchParams, type WildDuckUploadPayload } from '../../../src/integrations/email/wildduck-client';
+import { WildDuckAuthError, WildDuckError, type AttachmentStream, type WildDuckClient, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckSearchPage, type WildDuckSearchPageRequest, type WildDuckSearchRow, type WildDuckUploadPayload } from '../../../src/integrations/email/wildduck-client';
 import type { ApprovedOutboundAction } from '../../../src/services';
 import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
@@ -209,7 +209,7 @@ describe('createEmailMCPServer', () => {
             const registered = (server.instance as unknown as RegisteredToolInstance)._registeredTools;
             expect(Object.keys(registered).toSorted((a, b) => a.localeCompare(b))).toEqual([
                 'amendAndResubmitDraft', 'archiveEmail', 'checkInbox', 'deleteDraft',
-                'getEmailContent', 'getRejectedDrafts', 'replyToEmail', 'searchEmail', 'sendEmail',
+                'getEmailContent', 'getEmailThread', 'getRejectedDrafts', 'replyToEmail', 'searchEmail', 'sendEmail',
             ]);
             const undocumented: string[] = [];
             for(const [name, definition] of Object.entries(registered)) {
@@ -283,10 +283,10 @@ describe('createEmailMCPServer', () => {
             expect(draftResults.every(result => !result.success)).toBe(true);
         });
 
-        test('search mailbox scope accepts regular, all, and named folders', async () => {
+        test('search mailbox scope accepts only the mailboxes Izzy can read', async () => {
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
             const schema = (server.instance as unknown as RegisteredToolInstance)._registeredTools.searchEmail.inputSchema;
-            const validResults = await Promise.all(['all-regular', 'all', 'CleanInbox', 'Trash'].map(mailbox => schema.safeParseAsync({ mailbox })));
+            const validResults = await Promise.all(['CleanInbox', 'Archive', 'Drafts', 'Sent Mail'].map(mailbox => schema.safeParseAsync({ mailbox })));
             const invalidResult = await schema.safeParseAsync({ mailbox: 'NotAFolder' });
             expect(validResults.every(result => result.success)).toBe(true);
             expect(invalidResult.success).toBe(false);
@@ -304,7 +304,7 @@ describe('createEmailMCPServer', () => {
 
         test.each([
             ['checkInbox',      'Check CleanInbox for emails. Returns counter state and message summaries. By default only unread; set showSeen to include read messages.'],
-            ['getEmailContent', 'Fetch the full content of an email by UID. Marks the email as read.'],
+            ['getEmailContent', 'Fetch the full content of an email by its Mailbox:UID reference and mark it as read. An HTML email\'s body is its HTML converted to text, each link shown as "label [url]"; a body over the size limit is cut, and its last line then says how much of it is shown.'],
             ['archiveEmail',      'Move an email from CleanInbox to Archive.'],
             ['getRejectedDrafts', 'List drafts rejected by admin review.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
@@ -527,6 +527,27 @@ describe('createEmailMCPServer', () => {
             expect(text).toContain('Subject: Meeting tomorrow');
             expect(text).toContain('Let us meet at noon.');
             expect(text).toBe('From: Alice Smith <alice@example.com>\nTo: Bob <bob@example.com>\nSubject: Meeting tomorrow\nDate: 2025-01-15T09:00:00.000Z\n\nLet us meet at noon.');
+        });
+
+        test('ends with the body\'s truncation note when the body was cut', async () => {
+            mockWildDuck.getFullMessage = mock(async () => ({
+                uid:            42,
+                messageId:      '<msg42@example.com>',
+                from:           { address: 'alice@example.com' },
+                to:             [],
+                cc:             [],
+                subject:        'Digest',
+                date:           new Date('2025-01-15T09:00:00.000Z'),
+                bodyText:       'See [https://example.com/p]\n[body truncated: showing the first 28 of 90000 bytes]',
+                hasAttachments: false,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [],
+            }));
+
+            const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent')({ message: 'CleanInbox:42' });
+
+            expect(getText(result).endsWith('\n\nSee [https://example.com/p]\n[body truncated: showing the first 28 of 90000 bytes]')).toBe(true);
         });
 
         test('should mark email as Seen using Mailbox:UID', async () => {
@@ -1782,263 +1803,219 @@ describe('createEmailMCPServer', () => {
     });
 
     describe('searchEmail tool', () => {
-        // Typed mock so we can access .mock.calls without unsafe member access
-        let mockSearch: ReturnType<typeof mock<(params: WildDuckSearchParams) => Promise<never[]>>>;
-        let mockSearchWildDuck: WildDuckClient;
+        type SearchPageMock = ReturnType<typeof mock<(request: WildDuckSearchPageRequest) => Promise<WildDuckSearchPage>>>;
 
-        const getRegisteredTool = (server: ReturnType<typeof createEmailMCPServer>, toolName: string): RegisteredTool => {
-            return (server.instance as unknown as RegisteredToolInstance)._registeredTools[toolName];
-        };
-
-        beforeEach(() => {
-            mockSearch      = mock(async (_params: WildDuckSearchParams) => []);
-            mockSearchWildDuck = { search: mockSearch } as unknown as WildDuckClient;
+        /** A search row in `mailboxId`, as WildDuckClient.searchPage maps it. */
+        const searchRow = (uid: number, overrides: Partial<WildDuckSearchRow> = {}): WildDuckSearchRow => ({
+            message: `Path/${uid}:${uid}`, uid, mailboxId: 'mbx', intro: '', from: { address: `sender${uid}@example.com` }, to: [{ address: 'me@example.com' }], subject: `Subject ${uid}`, date: '2025-01-01T10:00:00.000Z', ...overrides,
         });
 
-        test('should be registered on the MCP server', () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
+        /** `count` rows numbered from `first`. */
+        const searchRows = (first: number, count: number): WildDuckSearchRow[] => Array.from({ length: count }, (_unused, index) => searchRow(first + index));
 
-            const toolDef = getRegisteredTool(server, 'searchEmail') as { description: string };
+        /** A searchPage mock answering each mailbox with its pages in order (an empty last page once they run out). */
+        const pagesByMailbox = (pages: Partial<Record<string, WildDuckSearchPage[]>>): SearchPageMock => mock(async (request: WildDuckSearchPageRequest) => pages[request.mailbox ?? '']?.shift() ?? { results: [] });
 
-            expect(toolDef).toBeDefined();
-            expect(toolDef.description).toBe('Search emails across mailboxes using WildDuck API');
+        /** The searchEmail handler over a client whose searchPage is `searchPage`. */
+        const searchHandler = (searchPage: SearchPageMock): ((args: unknown) => Promise<CallToolResult>) => getToolHandler(createEmailMCPServer({ wildDuckClient: { searchPage } as unknown as WildDuckClient }), 'searchEmail');
+
+        /** The next value a result's last line offers, or undefined when it offers none. */
+        const offeredNext = (result: CallToolResult): string | undefined => /next: (\S+)$/u.exec(getText(result))?.[1];
+
+        test('is described with its scope and its paging', () => {
+            const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.searchEmail;
+            expect(registered.description).toBe('Search the emails you can read (CleanInbox, Archive, Drafts and Sent Mail, mailbox by mailbox), at most 20 a page: each result\'s Mailbox:UID reference, From, To, Subject and Date. When there may be more, the result ends with a next value for the following page.');
+            expect((registered.inputSchema.shape.mailbox as { description?: string }).description).toBe('Search only this mailbox. Omit to search every mailbox you can read: CleanInbox, Archive, Drafts, Sent Mail, in that order.');
+            expect((registered.inputSchema.shape.next as { description?: string }).description).toBe('The next value from the end of an earlier searchEmail result, for the page after it. Give exactly the same filters as that search; a next from a different search is refused.');
+            expect((registered.inputSchema.shape.correspondent as { description?: string }).description).toBe('Match this text in the From, To or Cc header');
         });
 
-        test('should have readOnlyHint annotation', () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-
-            const toolDef = getRegisteredTool(server, 'searchEmail') as { annotations: Record<string, unknown> };
-
-            expect(toolDef.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+        test.each(['Quarantine', 'Review', 'Junk', 'Trash', 'INBOX', 'all', 'all-regular'])('refuses %s as a mailbox to search', async (mailbox) => {
+            const schema = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.searchEmail.inputSchema;
+            const parsed = await schema.safeParseAsync({ mailbox });
+            expect(parsed.success).toBe(false);
         });
 
-        test('should return "no emails found" when search returns empty results', async () => {
-            mockSearch         = mock(async () => []);
-            mockSearchWildDuck = { search: mockSearch } as unknown as WildDuckClient;
+        test('searches only the mailboxes Izzy can read, one after another, never every mailbox', async () => {
+            const searchPage = pagesByMailbox({});
 
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
+            const result = await searchHandler(searchPage)({});
 
-            const result: CallToolResult = await handler({});
-
+            expect(searchPage.mock.calls.map(([request]) => request.mailbox)).toEqual(['CleanInbox', 'Archive', 'Drafts', 'Sent Mail']);
+            expect(searchPage.mock.calls.every(([request]) => request.searchable === undefined && request.next === undefined && request.limit === 20)).toBe(true);
+            expect(getText(result)).toBe('No emails found matching your search criteria.\nNo more results.');
             expect(result.isError).toBeUndefined();
-            expect(getText(result)).toContain('No emails found');
         });
 
-        test('should use searchable=true and no mailbox when no mailbox specified (all-regular default)', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
+        test('searches only the mailbox it is given', async () => {
+            const searchPage = pagesByMailbox({});
 
-            await handler({});
+            await searchHandler(searchPage)({ mailbox: 'Archive' });
 
-            expect(mockSearch).toHaveBeenCalledTimes(1);
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.searchable).toBe(true);
-            expect(params.mailbox).toBeUndefined();
+            expect(searchPage.mock.calls.map(([request]) => request.mailbox)).toEqual(['Archive']);
         });
 
-        test("should use searchable=true and no mailbox when mailbox is 'all-regular'", async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
+        test('passes every filter to each mailbox\'s search', async () => {
+            const searchPage = pagesByMailbox({});
+            const filters = { correspondent: 'alice@example.com', content: 'MiXeD', before: '2025-01-15T00:00:00.000Z', since: '2025-01-01T00:00:00.000Z', header: { name: 'X-Custom', value: 'test' } };
 
-            await handler({ mailbox: 'all-regular' });
+            await searchHandler(searchPage)({ ...filters, mailbox: 'Drafts' });
 
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.searchable).toBe(true);
-            expect(params.mailbox).toBeUndefined();
+            expect(searchPage).toHaveBeenCalledWith({ query: filters, mailbox: 'Drafts', limit: 20, next: undefined });
         });
 
-        test("should omit mailbox and searchable when mailbox is 'all'", async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
+        test('fills a page from the next mailbox once one runs out, asking it only for the rows still wanted', async () => {
+            const searchPage = pagesByMailbox({ CleanInbox: [{ results: searchRows(1, 15) }], Archive: [{ results: searchRows(100, 5) }] });
 
-            await handler({ mailbox: 'all' });
+            const result = await searchHandler(searchPage)({});
 
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.mailbox).toBeUndefined();
-            expect(params.searchable).toBeUndefined();
+            expect(searchPage.mock.calls.map(([request]) => [request.mailbox, request.limit])).toEqual([['CleanInbox', 20], ['Archive', 5]]);
+            const lines = getText(result).split('\n');
+            expect(lines[0]).toBe('Found 20 emails:');
+            expect(lines[1]).toBe('- CleanInbox:1 | From: sender1@example.com | To: me@example.com | Subject: Subject 1 | Date: 2025-01-01T10:00:00.000Z');
+            expect(lines[16]).toBe('- Archive:100 | From: sender100@example.com | To: me@example.com | Subject: Subject 100 | Date: 2025-01-01T10:00:00.000Z');
+            expect(lines).toHaveLength(22);
+            expect(lines[21]).toMatch(/^More results: call searchEmail again with the same filters and next: \S+$/u);
         });
 
-        test('should search only specified mailbox when a specific folder name is provided', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
+        test('pages through a mailbox with WildDuck\'s cursor, then carries on into the next mailbox', async () => {
+            const searchPage = pagesByMailbox({
+                CleanInbox: [{ results: searchRows(1, 20), nextCursor: 'cursor-a' }, { results: searchRows(21, 3) }],
+                Archive:    [{ results: searchRows(100, 2) }],
+            });
+            const handler = searchHandler(searchPage);
 
-            await handler({ mailbox: 'Archive' });
+            const first = await handler({ content: 'invoice' });
+            const second = await handler({ content: 'invoice', next: offeredNext(first) });
 
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.mailbox).toBe('Archive');
-            expect(params.searchable).toBeUndefined();
-        });
-
-        test('should pass correspondent to search query', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            await handler({ correspondent: 'alice@example.com' });
-
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.query?.correspondent).toBe('alice@example.com');
-        });
-
-        test('should leave correspondent undefined in search query when omitted', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            await handler({});
-
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.query?.correspondent).toBeUndefined();
-        });
-
-        test('should pass content to search query', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            await handler({ content: 'invoice' });
-
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.query?.content).toBe('invoice');
-        });
-
-        test('should pass before date to search query', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            await handler({ before: '2025-01-15T00:00:00.000Z' });
-
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.query?.before).toBe('2025-01-15T00:00:00.000Z');
-        });
-
-        test('should pass since date to search query', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            await handler({ since: '2025-01-01T00:00:00.000Z' });
-
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.query?.since).toBe('2025-01-01T00:00:00.000Z');
-        });
-
-        test('should pass header to search query', async () => {
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            await handler({ header: { name: 'X-Custom', value: 'test' } });
-
-            const params = mockSearch.mock.calls[0]?.[0];
-            expect(params.query?.header).toEqual({ name: 'X-Custom', value: 'test' });
-        });
-
-        test('should format result lines correctly', async () => {
-            mockSearchWildDuck.search = mock(async () => [
-                {
-                    message: 'CleanInbox:42',
-                    from:    { name: 'Alice', address: 'alice@example.com' },
-                    to:      [{ address: 'me@example.com' }],
-                    subject: 'Hello world',
-                    date:    '2025-01-01T10:00:00.000Z',
-                },
-                {
-                    message: 'Archive:17',
-                    from:    { address: 'bob@example.com' },
-                    to:      [{ address: 'me@example.com' }, { address: 'other@example.com' }],
-                    subject: 'Second email',
-                    date:    '2025-01-02T10:00:00.000Z',
-                },
+            expect(offeredNext(first)).toMatch(/^[0-9a-f]{16}\.0\.cursor-a$/u);
+            expect(searchPage.mock.calls.map(([request]) => [request.mailbox, request.limit, request.next])).toEqual([
+                ['CleanInbox', 20, undefined],
+                ['CleanInbox', 20, 'cursor-a'],
+                ['Archive', 17, undefined],
+                ['Drafts', 15, undefined],
+                ['Sent Mail', 15, undefined],
             ]);
-
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            const result: CallToolResult = await handler({});
-
-            expect(result.isError).toBeUndefined();
-            const text = getText(result);
-            expect(text).toContain('Found 2 emails:');
-            expect(text.split('\n')).toHaveLength(3);
-            expect(text).toContain('- CleanInbox:42 | From: Alice <alice@example.com> | To: me@example.com | Subject: Hello world | Date: 2025-01-01T10:00:00.000Z');
-            expect(text).toContain('- Archive:17 | From: bob@example.com | To: me@example.com, other@example.com | Subject: Second email | Date: 2025-01-02T10:00:00.000Z');
+            expect(getText(second).split('\n')).toEqual([
+                'Found 5 emails:',
+                ...[21, 22, 23].map(uid => `- CleanInbox:${uid} | From: sender${uid}@example.com | To: me@example.com | Subject: Subject ${uid} | Date: 2025-01-01T10:00:00.000Z`),
+                ...[100, 101].map(uid => `- Archive:${uid} | From: sender${uid}@example.com | To: me@example.com | Subject: Subject ${uid} | Date: 2025-01-01T10:00:00.000Z`),
+                'No more results.',
+            ]);
         });
 
-        test('should use singular "email" for 1 result', async () => {
-            mockSearchWildDuck.search = mock(async () => [
-                {
-                    message: 'CleanInbox:1',
-                    from:    { address: 'alice@example.com' },
-                    to:      [],
-                    subject: 'Test',
-                    date:    '2025-01-01T10:00:00.000Z',
-                },
+        test('offers the next mailbox when a page fills up exactly as one mailbox runs out', async () => {
+            const searchPage = pagesByMailbox({ CleanInbox: [{ results: searchRows(1, 20) }], Archive: [{ results: searchRows(100, 1) }] });
+            const handler = searchHandler(searchPage);
+
+            const first = await handler({});
+            const second = await handler({ next: offeredNext(first) });
+
+            expect(offeredNext(first)).toMatch(/^[0-9a-f]{16}\.1$/u);
+            expect(searchPage.mock.calls.map(([request]) => [request.mailbox, request.next])).toEqual([
+                ['CleanInbox', undefined], ['Archive', undefined], ['Drafts', undefined], ['Sent Mail', undefined],
             ]);
-
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            const result: CallToolResult = await handler({});
-
-            const text = getText(result);
-            expect(text).toContain('Found 1 email:');
-            expect(text).not.toContain('Found 1 emails:');
+            expect(getText(second).split('\n')[1]).toBe('- Archive:100 | From: sender100@example.com | To: me@example.com | Subject: Subject 100 | Date: 2025-01-01T10:00:00.000Z');
         });
 
-        test('should show "(none)" for empty to list', async () => {
-            mockSearchWildDuck.search = mock(async () => [
-                {
-                    message: 'CleanInbox:1',
-                    from:    { address: 'alice@example.com' },
-                    to:      [],
-                    subject: 'Test',
-                    date:    '2025-01-01T10:00:00.000Z',
-                },
-            ]);
+        test('says there are no more results when the last mailbox runs out with the page full', async () => {
+            const searchPage = pagesByMailbox({ 'Sent Mail': [{ results: searchRows(1, 20) }] });
 
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
+            const result = await searchHandler(searchPage)({ mailbox: 'Sent Mail' });
 
-            const result: CallToolResult = await handler({});
+            expect(getText(result).split('\n').at(-1)).toBe('No more results.');
+        });
 
-            expect(getText(result)).toContain('To: (none)');
+        test('names each result by the mailbox searched and its UID, whatever WildDuck calls the mailbox', async () => {
+            const searchPage = pagesByMailbox({ 'Sent Mail': [{ results: [searchRow(7, { message: '[Gmail]/Sent Mail:7', from: { name: 'Alice', address: 'alice@example.com' }, to: [] })] }] });
+
+            const result = await searchHandler(searchPage)({ mailbox: 'Sent Mail' });
+
+            expect(getText(result)).toBe('Found 1 email:\n- Sent Mail:7 | From: Alice <alice@example.com> | To: (none) | Subject: Subject 7 | Date: 2025-01-01T10:00:00.000Z\nNo more results.');
+        });
+
+        test('shows several recipients, a sender without an address and empty fields as they are', async () => {
+            const searchPage = pagesByMailbox({ Archive: [{ results: [searchRow(3, { from: null, to: [{ address: 'a@example.com' }, { name: 'B', address: 'b@example.com' }], subject: '', date: '' })] }] });
+
+            const result = await searchHandler(searchPage)({ mailbox: 'Archive' });
+
+            expect(getText(result).split('\n')[1]).toBe('- Archive:3 | From: (no address) | To: a@example.com, B <b@example.com> | Subject:  | Date: ');
+        });
+
+        test.each([
+            ['correspondent', { correspondent: 'bob@example.com' }],
+            ['content', { content: 'other' }],
+            ['before', { before: '2025-02-01T00:00:00.000Z' }],
+            ['since', { since: '2024-02-01T00:00:00.000Z' }],
+            ['header name', { header: { name: 'X-Other', value: 'v' } }],
+            ['header value', { header: { name: 'X-Custom', value: 'other' } }],
+            ['mailbox', { mailbox: 'Archive' }],
+        ])('refuses a next from a search with a different %s, before any WildDuck call', async (_field, changed) => {
+            const searchPage = pagesByMailbox({ CleanInbox: [{ results: searchRows(1, 20), nextCursor: 'cursor-a' }] });
+            const handler = searchHandler(searchPage);
+            const filters = { correspondent: 'alice@example.com', content: 'invoice', before: '2025-01-15T00:00:00.000Z', since: '2025-01-01T00:00:00.000Z', header: { name: 'X-Custom', value: 'v' }, mailbox: 'CleanInbox' };
+            const next = offeredNext(await handler(filters));
+            searchPage.mockClear();
+
+            const result = await handler({ ...filters, ...changed, next });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'searchEmail: this next value does not belong to this search. Repeat the search that gave it with exactly the same filters, or search again without next.' }], isError: true });
+            expect(searchPage).not.toHaveBeenCalled();
+        });
+
+        test.each([
+            ['is not a next value at all', () => 'garbage'],
+            ['names a mailbox past the end of the search', (next: string) => next.replace(/\.0\./u, '.4.')],
+            ['names a mailbox past the end of a one-mailbox search', (next: string) => next.replace(/\.0\./u, '.1.')],
+            ['has anything before it', (next: string) => `x${next}`],
+            ['has anything after it', (next: string) => `${next} x`],
+            ['has an empty cursor', (next: string) => next.replace(/cursor-a$/u, '')],
+            ['has a cursor WildDuck could not have issued', (next: string) => next.replace(/cursor-a$/u, 'cursor+a')],
+            ['has a mailbox that is not a digit', (next: string) => next.replace(/\.0\./u, '.x.')],
+        ])('refuses a next value that %s', async (_label, tamper) => {
+            const searchPage = pagesByMailbox({ CleanInbox: [{ results: searchRows(1, 20), nextCursor: 'cursor-a' }], Archive: [{ results: searchRows(1, 20), nextCursor: 'cursor-b' }] });
+            const handler = searchHandler(searchPage);
+            const scoped = _label.includes('one-mailbox');
+            const next = offeredNext(await handler(scoped ? { mailbox: 'CleanInbox' } : {}));
+            searchPage.mockClear();
+
+            const result = await handler({ ...(scoped ? { mailbox: 'CleanInbox' } : {}), next: tamper(next ?? '') });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'searchEmail: this next value does not belong to this search. Repeat the search that gave it with exactly the same filters, or search again without next.' }], isError: true });
+            expect(searchPage).not.toHaveBeenCalled();
+        });
+
+        test('accepts a next it gave for the last of four mailboxes', async () => {
+            const searchPage = pagesByMailbox({ 'Sent Mail': [{ results: searchRows(1, 20), nextCursor: 'cursor-s' }, { results: searchRows(21, 1) }] });
+            const handler = searchHandler(searchPage);
+
+            const first = await handler({});
+            const second = await handler({ next: offeredNext(first) });
+
+            expect(searchPage.mock.calls.at(-1)?.[0]).toMatchObject({ mailbox: 'Sent Mail', next: 'cursor-s' });
+            expect(getText(second)).toContain('- Sent Mail:21 |');
+        });
+
+        test('reports an unknown mailbox as an invalid request, never searching more widely', async () => {
+            const searchPage: SearchPageMock = mock(async () => {
+                throw new WildDuckError('WildDuck: unknown mailbox path: Drafts', undefined, { kind: 'invalid_request' });
+            });
+
+            const result = await searchHandler(searchPage)({ mailbox: 'Drafts' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('searchEmail', 'invalid_request') }], isError: true });
+            expect(searchPage).toHaveBeenCalledTimes(1);
         });
 
         test('should handle a WildDuck search refusal gracefully, never echoing WildDuck\'s text', async () => {
-            mockSearchWildDuck.search = mock(async () => {
+            const searchPage: SearchPageMock = mock(async () => {
                 throw new WildDuckError('WildDuck API error: 400 Bad Request: {"error":"invalid query"}', undefined, { status: 400, kind: 'http' });
             });
 
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            const result: CallToolResult = await handler({});
+            const result: CallToolResult = await searchHandler(searchPage)({});
 
             expect(result).toEqual({ content: [{ type: 'text', text: failureText('searchEmail', 'refused') }], isError: true });
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'searchEmail', status: 400, kind: 'http', detail: 'WildDuck API error: 400 Bad Request: {"error":"invalid query"}' }));
-        });
-
-        test('should handle non-Error WildDuck failure gracefully', async () => {
-            mockSearchWildDuck.search = mock(async () => {
-                throw 'connection refused';
-            });
-
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            const result: CallToolResult = await handler({});
-
-            expect(result).toEqual({ content: [{ type: 'text', text: failureText('searchEmail', 'unavailable') }], isError: true });
-        });
-
-        test('should log warning on search error', async () => {
-            mockSearchWildDuck.search = mock(async () => {
-                throw new Error('Search failed');
-            });
-
-            const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
-            const handler = getToolHandler(server, 'searchEmail');
-
-            await handler({});
-
-            expect(mockLogger.warn).toHaveBeenCalled();
         });
     });
 
@@ -5551,6 +5528,152 @@ describe('createEmailMCPServer', () => {
         });
     });
 
+    describe('getEmailThread tool', () => {
+        const THREAD = '0123456789abcdef01234567';
+
+        /** WildDuck's mailbox ids, by the folder names Isambard uses. */
+        const MAILBOX_IDS: Record<string, string> = { CleanInbox: 'mbx-clean', Archive: 'mbx-archive', Drafts: 'mbx-drafts', 'Sent Mail': 'mbx-sent', Quarantine: 'mbx-quarantine', Trash: 'mbx-trash' };
+
+        /** A thread row in WildDuck's mailbox `mailboxId`, as WildDuckClient.searchPage maps it. */
+        const threadRow = (uid: number, mailboxId: string, overrides: Partial<WildDuckSearchRow> = {}): WildDuckSearchRow => ({
+            message: `Path:${uid}`, uid, mailboxId, intro: `Intro ${uid}`, from: { address: `sender${uid}@example.com` }, to: [{ address: 'me@example.com' }], subject: `Subject ${uid}`, date: `2025-01-0${uid % 10}T10:00:00.000Z`, ...overrides,
+        });
+
+        interface ThreadClient {
+            getMessage:         ReturnType<typeof mock<(folder: string, uid: number) => Promise<WildDuckMessage | null>>>
+            searchPage:         ReturnType<typeof mock<(request: WildDuckSearchPageRequest) => Promise<WildDuckSearchPage>>>
+            getMailboxId:       ReturnType<typeof mock<(folder: string) => string | undefined>>
+            updateMessageFlags: ReturnType<typeof mock<() => Promise<void>>>
+        }
+
+        /** A client whose message GET carries `fields` (by default the thread id) and whose thread search answers `page`. */
+        const threadClient = (page: WildDuckSearchPage, fields?: Record<string, unknown>): ThreadClient => ({
+            getMessage:         mock(async (_folder: string, uid: number) => ({ id: uid, ...(fields ?? { thread: THREAD }) })),
+            searchPage:         mock(async () => page),
+            getMailboxId:       mock((folder: string) => MAILBOX_IDS[folder]),
+            updateMessageFlags: mock(async () => undefined),
+        });
+
+        const threadHandler = (client: ThreadClient, extra: Partial<Parameters<typeof createEmailMCPServer>[0]> = {}): ((args: unknown) => Promise<CallToolResult>) => getToolHandler(createEmailMCPServer({ wildDuckClient: client as unknown as WildDuckClient, ...extra }), 'getEmailThread');
+
+        test('is described, read-only, with a documented message reference', () => {
+            const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.getEmailThread;
+            expect(registered.description).toBe('List the messages in an email\'s conversation, oldest first: each one\'s Mailbox:UID reference, From, To, Date, Subject and a short snippet; read one in full with getEmailContent. Lists only messages in CleanInbox, Archive, Drafts and Sent Mail (saying how many others were left out), at most 50, and marks nothing as read.');
+            expect((registered.inputSchema.shape.message as { description?: string }).description).toBe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)');
+            expect(registered.annotations).toEqual({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+        });
+
+        test('lists the thread\'s messages oldest first, by the mailbox names getEmailContent takes, marking nothing as read', async () => {
+            const client = threadClient({ results: [
+                threadRow(1, 'mbx-clean'),
+                threadRow(2, 'mbx-sent', { from: { name: 'Me', address: 'me@example.com' }, to: [{ address: 'a@example.com' }, { name: 'B', address: 'b@example.com' }] }),
+                threadRow(3, 'mbx-archive', { to: [], intro: '' }),
+                threadRow(4, 'mbx-drafts'),
+            ] });
+
+            const result = await threadHandler(client)({ message: 'CleanInbox:1' });
+
+            expect(client.getMessage).toHaveBeenCalledWith('CleanInbox', 1);
+            expect(client.searchPage).toHaveBeenCalledWith({ thread: THREAD, order: 'asc', limit: 50 });
+            expect(client.updateMessageFlags).not.toHaveBeenCalled();
+            expect(result.isError).toBeUndefined();
+            expect(getText(result)).toBe([
+                'Thread of CleanInbox:1, oldest first (4 messages):',
+                '- CleanInbox:1 | From: sender1@example.com | To: me@example.com | Date: 2025-01-01T10:00:00.000Z | Subject: Subject 1 | Snippet: Intro 1',
+                '- Sent Mail:2 | From: Me <me@example.com> | To: a@example.com, B <b@example.com> | Date: 2025-01-02T10:00:00.000Z | Subject: Subject 2 | Snippet: Intro 2',
+                '- Archive:3 | From: sender3@example.com | To: (none) | Date: 2025-01-03T10:00:00.000Z | Subject: Subject 3 | Snippet: ',
+                '- Drafts:4 | From: sender4@example.com | To: me@example.com | Date: 2025-01-04T10:00:00.000Z | Subject: Subject 4 | Snippet: Intro 4',
+            ].join('\n'));
+        });
+
+        test('leaves out messages in mailboxes Izzy cannot read, saying only how many', async () => {
+            const client = threadClient({ results: [threadRow(1, 'mbx-quarantine', { subject: 'secret' }), threadRow(2, 'mbx-clean'), threadRow(3, 'mbx-trash'), threadRow(4, 'mbx-unknown')] });
+
+            const text = getText(await threadHandler(client)({ message: 'CleanInbox:2' }));
+
+            expect(text.split('\n')).toEqual([
+                'Thread of CleanInbox:2, oldest first (1 message):',
+                '- CleanInbox:2 | From: sender2@example.com | To: me@example.com | Date: 2025-01-02T10:00:00.000Z | Subject: Subject 2 | Snippet: Intro 2',
+                '3 messages in mailboxes you cannot read were left out.',
+            ]);
+            expect(text).not.toContain('secret');
+        });
+
+        test('says so in the singular when one message was left out', async () => {
+            const client = threadClient({ results: [threadRow(1, 'mbx-quarantine'), threadRow(2, 'mbx-clean')] });
+
+            const text = getText(await threadHandler(client)({ message: 'CleanInbox:2' }));
+
+            expect(text.split('\n').at(-1)).toBe('1 message in a mailbox you cannot read was left out.');
+        });
+
+        test('says when the thread has more messages than it looked at', async () => {
+            const client = threadClient({ results: [threadRow(1, 'mbx-clean')], nextCursor: 'more' });
+
+            const text = getText(await threadHandler(client)({ message: 'CleanInbox:1' }));
+
+            expect(text.split('\n').at(-1)).toBe('This thread has more than 50 messages; only its oldest 50 were looked at.');
+        });
+
+        test('shows a short, single-line, safe snippet', async () => {
+            const client = threadClient({ results: [threadRow(1, 'mbx-clean', { intro: `  Line one\n\tline‮two ${'x'.repeat(100)}` })] });
+
+            const text = getText(await threadHandler(client)({ message: 'CleanInbox:1' }));
+
+            expect(text.split('\n')[1]?.split(' | Snippet: ')[1]).toBe(`Line one linetwo ${'x'.repeat(63)}…`);
+        });
+
+        test('refuses a message in a mailbox Izzy cannot read as getEmailContent does, before any WildDuck call', async () => {
+            const client = threadClient({ results: [] });
+
+            const result = await threadHandler(client, { sendAdminNotification: mockSendAdminNotification })({ message: 'Quarantine:7' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Access to Quarantine requires admin review. A notification has been sent to #admin.' }], isError: true });
+            expect(mockSendAdminNotification).toHaveBeenCalledWith({ folder: 'Quarantine', uid: 7 });
+            expect(client.getMessage).not.toHaveBeenCalled();
+            expect(client.searchPage).not.toHaveBeenCalled();
+        });
+
+        test('says when the message is not found', async () => {
+            const client = threadClient({ results: [] });
+            client.getMessage.mockImplementation(async () => null);
+
+            const result = await threadHandler(client)({ message: 'Archive:9' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Email Archive:9 not found.' }], isError: true });
+            expect(client.searchPage).not.toHaveBeenCalled();
+        });
+
+        test.each([['no thread id', {}], ['a thread id that is not a string', { thread: 42 }]])('says when WildDuck gave the message %s', async (_label, fields) => {
+            const client = threadClient({ results: [] }, fields);
+
+            const result = await threadHandler(client)({ message: 'Archive:9' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Email Archive:9 has no thread information; read it with getEmailContent.' }], isError: true });
+            expect(client.searchPage).not.toHaveBeenCalled();
+        });
+
+        test('reports a WildDuck failure by its classified code', async () => {
+            const client = threadClient({ results: [] });
+            client.searchPage.mockImplementation(async () => {
+                throw new WildDuckError('WildDuck search returned a message from outside the mailbox searched', undefined, { kind: 'bad_response' });
+            });
+
+            const result = await threadHandler(client)({ message: 'CleanInbox:1' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('getEmailThread', 'unavailable') }], isError: true });
+        });
+
+        test('fails fast while the email service is offline', async () => {
+            const client = threadClient({ results: [] });
+
+            const result = await threadHandler(client, { healthRegistry: makeOfflineHealthRegistry() })({ message: 'CleanInbox:1' });
+
+            expect(result.isError).toBe(true);
+            expect(client.getMessage).not.toHaveBeenCalled();
+        });
+    });
+
     describe('getRejectedDrafts tool', () => {
         test('reports the registered tool name when search fails', async () => {
             const wildDuckClient = { searchByKeyword: mock(async () => {
@@ -6146,22 +6269,6 @@ describe('createEmailMCPServer', () => {
                 seenGate.resolve();
                 await pending.catch(() => undefined);
             }
-        });
-
-        test('search preserves omitted fields, mixed-case content, and empty producer fields', async () => {
-            const search = mock(async () => [{
-                message: 'CleanInbox:1',
-                from:    null,
-                to:      [],
-                subject: '',
-                date:    '',
-            }]);
-            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: { search } as unknown as WildDuckClient }), 'searchEmail');
-            const result = await handler({ content: 'MiXeD' });
-            expect(search).toHaveBeenCalledWith(expect.objectContaining({
-                query: expect.objectContaining({ content: 'MiXeD' }) as unknown,
-            }));
-            expect(getText(result)).toBe('Found 1 email:\n- CleanInbox:1 | From: (no address) | To: (none) | Subject:  | Date: ');
         });
 
         test('one send attachment is uploaded with its exact name, type, and content', async () => {

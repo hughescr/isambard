@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { convert } from 'html-to-text';
+import { messageBodyText } from './body-text';
 import { EmailFolder } from '@/config';
 import { WildDuckError, WildDuckAuthError } from '@/errors';
 import { formatMailboxMessageRef, parseMailboxMessageRef, type EmailMetadata, type EmailAddress, type EmailHeaders, type SearchEmailAddress, type VerificationResults } from '@/integrations/email/types';
@@ -60,6 +60,11 @@ function mapAddress(addr: { address: string, name?: string }): EmailAddress {
     };
 }
 
+/** A search row's UID: its id as a number, or NaN when WildDuck's id is not one. */
+function searchResultUid(result: { id: number | string }): number {
+    return typeof result.id === 'number' || /^\d+$/.test(result.id) ? Number(result.id) : Number.NaN;
+}
+
 /** Maps a partial WildDuck search address while preserving whether an address exists. */
 function mapSearchAddress(addr: { name?: string, address?: string }): SearchEmailAddress {
     if(addr.address) {
@@ -101,6 +106,36 @@ export interface WildDuckSearchResult {
     subject: string
     date:    string
 }
+
+/** What {@link WildDuckClient.searchPage} asks for: the search's filters and which page of it. */
+export interface WildDuckSearchPageRequest extends WildDuckSearchParams {
+    /** Rows on the page (WildDuck takes 1 to 250). */
+    limit:   number
+    /** The previous page's `nextCursor`; omitted for the first page. */
+    next?:   string
+    /** Only the messages of this WildDuck thread id (24 hex digits), in every mailbox unless `mailbox` is given. */
+    thread?: string
+    /** `asc` lists the oldest received first; WildDuck's default is newest first. */
+    order?:  'asc'
+}
+
+/** A search row with the parts {@link WildDuckSearchResult} folds into `message`, and WildDuck's intro. */
+export interface WildDuckSearchRow extends WildDuckSearchResult {
+    uid:       number
+    /** WildDuck's id of the mailbox the message is in. */
+    mailboxId: string
+    /** The start of the message's text, as WildDuck excerpts it; empty when it has none. */
+    intro:     string
+}
+
+/** One page of a search, and the cursor for the next page when there is one. */
+export interface WildDuckSearchPage {
+    results:     WildDuckSearchRow[]
+    nextCursor?: string
+}
+
+/** A thread id as WildDuck issues it (a MongoDB ObjectId) and as its search validates it. */
+const THREAD_ID_PATTERN = /^[0-9a-f]{24}$/iu;
 
 interface WildDuckClientOptions {
     /** Base URL e.g. 'https://wildduck-api.example.com' */
@@ -206,6 +241,8 @@ export interface WildDuckMessage {
     draft?:       boolean
     /** The References header split into Message-IDs (WildDuck returns `[]` when there is none). */
     references?:  string[]
+    /** WildDuck's id of the message's thread, which a thread search takes. */
+    thread?:      string
     /**
      * The `reference` ({action, mailbox, id}) a draft was uploaded with, as WildDuck stored it;
      * absent otherwise. Untrusted shape: parse before use.
@@ -285,11 +322,14 @@ interface SearchResultEntry {
     to:      { name?: string, address?: string }[]
     subject: string
     date:    string
+    intro?:  string
 }
 
 interface SearchResponse {
-    success: boolean
-    results: SearchResultEntry[]
+    success:     boolean
+    results:     SearchResultEntry[]
+    /** The next page's cursor, or false on the last page. */
+    nextCursor?: string | false
 }
 
 /**
@@ -332,7 +372,8 @@ interface FullMessageResponse {
     subject?:             string
     date:                 string
     text?:                string
-    html?:                string
+    /** One string per HTML part. */
+    html?:                string[]
     headers?:             Record<string, string>
     attachments?:         { id: string, filename: string, contentType: string, sizeKb: number }[]
     verificationResults?: VerificationResults & {
@@ -340,27 +381,6 @@ interface FullMessageResponse {
         arc?:  boolean
         bimi?: boolean
     }
-}
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Extract and optionally convert body text, truncating at UTF-8 boundary.
- */
-function extractBody(content: string, isHtml: boolean, maxBytes: number): string {
-    const text = isHtml ? convert(content, { wordwrap: false }) : content;
-    const buf = Buffer.from(text, 'utf8');
-    let end   = Math.min(maxBytes, buf.length);
-    // eslint-disable-next-line no-bitwise -- UTF-8 continuation-byte mask (0xC0/0x80), not integer math
-    while((buf[end]! & 0xC0) === 0x80) {
-        end--;
-    }
-    // A Buffer created from UTF-8 text cannot start with a continuation byte; an
-    // out-of-range read bitwise-coerces to zero, so this also stops at byte zero.
-    // Stryker disable next-line llm: Buffer.slice is the deprecated alias of subarray; both return the same view.
-    return buf.subarray(0, end).toString('utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +469,17 @@ export class WildDuckClient {
      */
     async search(params: WildDuckSearchParams): Promise<WildDuckSearchResult[]> {
         return this.withAuthRetry(() => this.doSearch(params));
+    }
+
+    /**
+     * One page of a search: at most `limit` rows after the `next` cursor, and WildDuck's cursor for
+     * the page after it (absent on the last page). A cursor is only valid with the filters it came
+     * from. An unknown mailbox, or a thread id WildDuck could not have issued, throws a
+     * WildDuckError (`invalid_request`) before any request; a page with a row from another mailbox
+     * than the one searched throws one (`bad_response`).
+     */
+    async searchPage(request: WildDuckSearchPageRequest): Promise<WildDuckSearchPage> {
+        return this.withAuthRetry(() => this.doSearchPage(request));
     }
 
     /**
@@ -749,13 +780,20 @@ export class WildDuckClient {
         );
     }
 
-    private async doSearch(params: WildDuckSearchParams): Promise<WildDuckSearchResult[]> {
+    /**
+     * A search's filters as WildDuck's query parameters. A correspondent is matched in From, or in
+     * To or Cc (`or.from`, `or.to`), never as WildDuck's `q` query language, which would replace
+     * every other filter (the mailbox included) and could name any mailbox itself. An unknown
+     * mailbox throws ({@link resolveMailboxId}) rather than widening the search to every mailbox.
+     */
+    private searchQuery(params: WildDuckSearchParams): URLSearchParams {
         const searchParams = new URLSearchParams();
 
         // Add query criteria
         const query = params.query ?? {};
         if(query.correspondent) {
-            searchParams.set('q', query.correspondent);
+            searchParams.set('or.from', query.correspondent);
+            searchParams.set('or.to', query.correspondent);
         }
         if(query.content) {
             searchParams.set('query', query.content);
@@ -773,31 +811,47 @@ export class WildDuckClient {
             searchParams.set('keyword', query.keyword);
         }
 
-        // Map mailbox name to WildDuck ID
         if(params.mailbox) {
-            const mailboxId = this.reverseMailboxMap.get(params.mailbox);
-            if(mailboxId) {
-                searchParams.set('mailbox', mailboxId);
-            } else {
-                logger.warn({ folderName: params.mailbox, msg: 'WildDuck search: unknown mailbox name skipped' });
-            }
+            searchParams.set('mailbox', this.resolveMailboxId(params.mailbox));
         }
         if(params.searchable) {
             searchParams.set('searchable', 'true');
         }
+        return searchParams;
+    }
 
-        const url = `/users/me/search?${searchParams.toString()}`;
-        const response = await this.makeRequest<SearchResponse>(url, { method: 'GET' });
-
+    private async doSearch(params: WildDuckSearchParams): Promise<WildDuckSearchResult[]> {
+        const response = await this.makeRequest<SearchResponse>(`/users/me/search?${this.searchQuery(params).toString()}`, { method: 'GET' });
         return response.results.map(result => this.mapSearchResult(result));
+    }
+
+    private async doSearchPage(request: WildDuckSearchPageRequest): Promise<WildDuckSearchPage> {
+        if(request.thread !== undefined && !THREAD_ID_PATTERN.test(request.thread)) {
+            throw new WildDuckError('WildDuck: not a valid thread id', undefined, { kind: 'invalid_request' });
+        }
+        const searchParams = this.searchQuery(request);
+        searchParams.set('limit', String(request.limit));
+        if(request.next !== undefined) {
+            searchParams.set('next', request.next);
+        }
+        if(request.thread !== undefined) {
+            searchParams.set('thread', request.thread);
+        }
+        if(request.order !== undefined) {
+            searchParams.set('order', request.order);
+        }
+        const response = await this.makeRequest<SearchResponse>(`/users/me/search?${searchParams.toString()}`, { method: 'GET' });
+        const mailboxId = searchParams.get('mailbox');
+        if(mailboxId !== null && response.results.some(result => result.mailbox !== mailboxId)) {
+            throw new WildDuckError('WildDuck search returned a message from outside the mailbox searched', undefined, { kind: 'bad_response' });
+        }
+        const results = response.results.map(result => ({ ...this.mapSearchResult(result), uid: searchResultUid(result), mailboxId: result.mailbox, intro: result.intro ?? '' }));
+        return typeof response.nextCursor === 'string' && response.nextCursor !== '' ? { results, nextCursor: response.nextCursor } : { results };
     }
 
     private mapSearchResult(result: SearchResultEntry): WildDuckSearchResult {
         const folderName = this.mailboxMap.get(result.mailbox) ?? result.mailbox;
-        const uid        = typeof result.id === 'number' || /^\d+$/.test(result.id)
-            ? Number(result.id)
-            : Number.NaN;
-        const message    = formatMailboxMessageRef({ folder: folderName, uid });
+        const message    = formatMailboxMessageRef({ folder: folderName, uid: searchResultUid(result) });
 
         const from = mapSearchAddress(result.from);
         const to   = result.to.map(address => mapSearchAddress(address));
@@ -993,19 +1047,8 @@ export class WildDuckClient {
         };
     }
 
-    private extractBodyText(response: FullMessageResponse): string {
-        const maxBodySizeBytes = this.options.maxBodySizeBytes ?? 50_000;
-        if(response.text) {
-            return extractBody(response.text, false, maxBodySizeBytes);
-        }
-        if(response.html) {
-            return extractBody(response.html, true, maxBodySizeBytes);
-        }
-        return '';
-    }
-
     private mapFullMessage(response: FullMessageResponse): WildDuckEmailMetadata {
-        const bodyText = this.extractBodyText(response);
+        const bodyText = messageBodyText(response.text, response.html, this.options.maxBodySizeBytes ?? 50_000);
 
         // Map addresses
         const from = response.from ? mapAddress(response.from) : { address: '' };

@@ -12,15 +12,82 @@ import { mcpTextResult, withHealthGuard, withWriteHealthGuard } from './mcp-help
 import { EmailFolder } from '@/config';
 import { EmailProcessingError, WildDuckError } from '@/errors';
 // eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { amendedDraftMeta, checkEmailSendDelivery, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, isWildDuckAttachmentId, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckUploadPayload } from '@/integrations/email';
+import { amendedDraftMeta, checkEmailSendDelivery, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, isWildDuckAttachmentId, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type SearchEmailAddress, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckSearchParams, type WildDuckSearchRow, type WildDuckUploadPayload } from '@/integrations/email';
 import type { DeliveryCheck, ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner, createDeadline, discardBody } from '@/utils';
 /** Mailboxes accessible directly by the agent without admin review. */
 const ACCESSIBLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive]);
 
+/**
+ * The mailboxes Izzy can read (getEmailContent, searchEmail, getEmailThread), in the order a search
+ * of all of them goes through them.
+ */
+const SEARCH_SCOPE = [EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts, EmailFolder.Sent] as const;
+
 /** Mailboxes readable by getEmailContent (also includes Drafts and Sent Mail). */
-const READABLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts, EmailFolder.Sent]);
+const READABLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set(SEARCH_SCOPE);
+
+/** The most results one searchEmail page shows. */
+const SEARCH_PAGE_SIZE = 20;
+
+/** The filters of a searchEmail call, which its `next` values are tied to. */
+interface SearchFilters {
+    correspondent?: string
+    content?:       string
+    before?:        string
+    since?:         string
+    header?:        { name: string, value: string }
+    mailbox?:       EmailFolder
+}
+
+/** Where a searchEmail page starts: a mailbox, by its index in the search's scope, and WildDuck's cursor in it (none at its start). */
+interface SearchPosition {
+    mailbox: number
+    cursor?: string
+}
+
+/**
+ * A `next` value: the search's fingerprint, the mailbox index and, within that mailbox, WildDuck's
+ * cursor (base64url, as WildDuck validates it).
+ */
+const SEARCH_NEXT_PATTERN = /^([0-9a-f]+)\.(\d)(?:\.([\w-]+))?$/u;
+
+const SEARCH_NEXT_REFUSAL = 'searchEmail: this next value does not belong to this search. Repeat the search that gave it with exactly the same filters, or search again without next.';
+
+/** Sixteen hex digits of a hash of the search's filters, so a `next` used with other filters is caught. */
+function searchFingerprint(filters: SearchFilters): string {
+    const key = JSON.stringify([filters.correspondent, filters.content, filters.before, filters.since, filters.header?.name, filters.header?.value, filters.mailbox]);
+    return createHash('sha256').update(key).digest('hex').slice(0, 16);
+}
+
+/** The `next` value for a search page starting at `position`. */
+function encodeSearchNext(fingerprint: string, position: SearchPosition): string {
+    return position.cursor === undefined ? `${fingerprint}.${position.mailbox}` : `${fingerprint}.${position.mailbox}.${position.cursor}`;
+}
+
+/** Where a `next` value starts its page, or undefined when it is malformed, from a search with other filters, or past the end of the scope. */
+function decodeSearchNext(next: string, fingerprint: string, scopeLength: number): SearchPosition | undefined {
+    const match = SEARCH_NEXT_PATTERN.exec(next);
+    if(match?.[1] !== fingerprint) {
+        return undefined;
+    }
+    const mailbox = Number(match[2]);
+    return mailbox < scopeLength ? { mailbox, cursor: match[3] } : undefined;
+}
+
+/** The most messages of a thread getEmailThread looks at, oldest first. */
+const THREAD_MAX_MESSAGES = 50;
+
+/** A thread row's intro as a short snippet: whitespace collapsed to single spaces, then made safe and cut as a filename is ({@link displayName}). */
+function snippet(intro: string): string {
+    return displayName(intro.replaceAll(/\s+/gu, ' ').trim());
+}
+
+/** A search row's recipients for tool text, or `(none)`. */
+function recipientList(to: SearchEmailAddress[]): string {
+    return to.length > 0 ? to.map(address => formatAddressForDisplay(address)).join(', ') : '(none)';
+}
 
 /**
  * Description for a `senderProfile` that the handler defaults to `'formal'` when omitted.
@@ -542,11 +609,12 @@ async function renderVideoAttachment(filePath: string, attachmentPath: string, s
  * Provides tools for:
  * - Checking the CleanInbox for unread messages
  * - Fetching full email content by Mailbox:UID reference and marking as read
+ * - Searching the readable mailboxes a page at a time, and listing a message's thread
  * - Archiving emails by moving them from their current mailbox to Archive
  *
- * Access control: getEmailContent allows CleanInbox, Archive, and Drafts.
- * Access to restricted mailboxes (Quarantine, Junk, Trash, etc.) triggers
- * an admin notification and returns an error.
+ * Access control: getEmailContent and getEmailThread read CleanInbox, Archive, Drafts and Sent
+ * Mail, and searchEmail searches only those. Access to restricted mailboxes (Quarantine, Junk,
+ * Trash, etc.) triggers an admin notification and returns an error.
  *
  * This server wraps WildDuckClient for use with the Claude Agent SDK.
  */
@@ -903,6 +971,47 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         return { kept, removed: attachments.length - keeping.length };
     }
 
+    /**
+     * The refusal of a message in a mailbox Izzy cannot read, after notifying the admin (a failed
+     * notification is only logged).
+     */
+    async function restrictedMailboxRefusal(message: MailboxMessageRef): Promise<CallToolResult> {
+        if(sendAdminNotification) {
+            try {
+                await sendAdminNotification(message);
+            } catch (error) {
+                logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send restricted mailbox notification' });
+            }
+        }
+        return {
+            content: [{ type: 'text' as const, text: `Access to ${message.folder} requires admin review. A notification has been sent to #admin.` }],
+            isError: true,
+        };
+    }
+
+    /**
+     * One searchEmail page: from `start`, each mailbox of `scope` in turn is asked for the rows the
+     * page still lacks, until the page is full or the scope runs out. A mailbox with more (WildDuck
+     * gave a cursor) ends the page there, so each mailbox is asked at most once. Returns the rows,
+     * each with the mailbox it was searched in, and where the next page starts when there may be
+     * one.
+     */
+    async function searchReadablePage(query: WildDuckSearchParams['query'], scope: readonly EmailFolder[], start: SearchPosition): Promise<{ rows: { folder: EmailFolder, row: WildDuckSearchRow }[], next?: SearchPosition }> {
+        const rows: { folder: EmailFolder, row: WildDuckSearchRow }[] = [];
+        let position = start;
+        while(position.mailbox < scope.length && rows.length < SEARCH_PAGE_SIZE) {
+            const folder = scope[position.mailbox]!;
+            // eslint-disable-next-line no-await-in-loop -- each mailbox is asked only for the rows the ones before it left
+            const page = await wildDuckClient.searchPage({ query, mailbox: folder, limit: SEARCH_PAGE_SIZE - rows.length, next: position.cursor });
+            rows.push(...page.results.map(row => ({ folder, row })));
+            if(page.nextCursor !== undefined) {
+                return { rows, next: { mailbox: position.mailbox, cursor: page.nextCursor } };
+            }
+            position = { mailbox: position.mailbox + 1 };
+        }
+        return position.mailbox < scope.length ? { rows, next: position } : { rows };
+    }
+
     /** Whether `mailboxId` is WildDuck's id for a mailbox `replyToEmail` may reply from. */
     function isReplyMailbox(mailboxId: string): boolean {
         return Array.from(ACCESSIBLE_MAILBOXES, folder => wildDuckClient.getMailboxId(folder)).includes(mailboxId);
@@ -1048,7 +1157,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
             tool(
                 'getEmailContent',
-                'Fetch the full content of an email by UID. Marks the email as read.',
+                'Fetch the full content of an email by its Mailbox:UID reference and mark it as read. An HTML email\'s body is its HTML converted to text, each link shown as "label [url]"; a body over the size limit is cut, and its last line then says how much of it is shown.',
                 {
                     message: mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
@@ -1061,18 +1170,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
                             // Access control: CleanInbox, Archive, Drafts, and Sent Mail are directly readable
                             if(!hasReadableMailbox(folder)) {
-                                // Send admin notification (fire-and-forget)
-                                if(sendAdminNotification) {
-                                    try {
-                                        await sendAdminNotification(args.message);
-                                    } catch (error) {
-                                        logger.warn({ error: error instanceof Error ? error.message : String(error), msg: 'Failed to send restricted mailbox notification' });
-                                    }
-                                }
-                                return {
-                                    content: [{ type: 'text' as const, text: `Access to ${folder} requires admin review. A notification has been sent to #admin.` }],
-                                    isError: true,
-                                };
+                                return restrictedMailboxRefusal(args.message);
                             }
 
                             const email = await wildDuckClient.getFullMessage(folder, uid);
@@ -1106,6 +1204,45 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
             ),
 
             tool(
+                'getEmailThread',
+                `List the messages in an email's conversation, oldest first: each one's Mailbox:UID reference, From, To, Date, Subject and a short snippet; read one in full with getEmailContent. Lists only messages in CleanInbox, Archive, Drafts and Sent Mail (saying how many others were left out), at most ${THREAD_MAX_MESSAGES}, and marks nothing as read.`,
+                {
+                    message: mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
+                },
+                withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
+                    withEmailToolErrorHandling('getEmailThread', async (args): Promise<CallToolResult> => {
+                        const { folder, uid } = args.message;
+                        if(!hasReadableMailbox(folder)) {
+                            return restrictedMailboxRefusal(args.message);
+                        }
+                        const ref = formatMailboxMessageRef(args.message);
+                        const message = await wildDuckClient.getMessage(folder, uid);
+                        if(!message) {
+                            return { content: [{ type: 'text' as const, text: `Email ${ref} not found.` }], isError: true };
+                        }
+                        if(typeof message.thread !== 'string') {
+                            return { content: [{ type: 'text' as const, text: `Email ${ref} has no thread information; read it with getEmailContent.` }], isError: true };
+                        }
+                        const page = await wildDuckClient.searchPage({ thread: message.thread, order: 'asc', limit: THREAD_MAX_MESSAGES });
+                        // A thread spans mailboxes: only rows in a mailbox Izzy can read are shown, named as getEmailContent takes them.
+                        const readable = new Map(SEARCH_SCOPE.map(readableFolder => [wildDuckClient.getMailboxId(readableFolder), readableFolder]));
+                        const shown = page.results.flatMap((row) => {
+                            const rowFolder = readable.get(row.mailboxId);
+                            return rowFolder === undefined ? [] : [{ folder: rowFolder, row }];
+                        });
+                        const leftOut = page.results.length - shown.length;
+                        const lines = [
+                            `Thread of ${ref}, oldest first (${counted(shown.length, 'message', 'messages')}):`,
+                            ...shown.map(({ folder: rowFolder, row }) => `- ${formatMailboxMessageRef({ folder: rowFolder, uid: row.uid })} | From: ${formatAddressForDisplay(row.from)} | To: ${recipientList(row.to)} | Date: ${row.date} | Subject: ${row.subject} | Snippet: ${snippet(row.intro)}`),
+                            ...(leftOut === 0 ? [] : [leftOut === 1 ? '1 message in a mailbox you cannot read was left out.' : `${leftOut} messages in mailboxes you cannot read were left out.`]),
+                            ...(page.nextCursor === undefined ? [] : [`This thread has more than ${THREAD_MAX_MESSAGES} messages; only its oldest ${THREAD_MAX_MESSAGES} were looked at.`]),
+                        ];
+                        return mcpTextResult(lines.join('\n'));
+                    })),
+                { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
+            ),
+
+            tool(
                 'archiveEmail',
                 'Move an email from CleanInbox to Archive.',
                 {
@@ -1133,9 +1270,9 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
             tool(
                 'searchEmail',
-                'Search emails across mailboxes using WildDuck API',
+                `Search the emails you can read (CleanInbox, Archive, Drafts and Sent Mail, mailbox by mailbox), at most ${SEARCH_PAGE_SIZE} a page: each result's Mailbox:UID reference, From, To, Subject and Date. When there may be more, the result ends with a next value for the following page.`,
                 {
-                    correspondent: z.string().optional().describe('Search From, To, Cc, Bcc fields'),
+                    correspondent: z.string().optional().describe('Match this text in the From, To or Cc header'),
                     content:       z.string().optional().describe('Search Subject and body text'),
                     before:        z.string().optional().describe('ISO date - return emails before this date'),
                     since:         z.string().optional().describe('ISO date - return emails since this date'),
@@ -1143,53 +1280,29 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         name:  z.string().describe('Header name'),
                         value: z.string().describe('Header value'),
                     }).optional().describe('Search by specific header value'),
-                    mailbox: z.union([
-                        z.literal('all-regular'),
-                        z.literal('all'),
-                        z.enum([
-                            EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Review,
-                            EmailFolder.Quarantine, EmailFolder.Junk, EmailFolder.Trash,
-                            EmailFolder.Drafts, EmailFolder.Sent,
-                        ]),
-                    ]).optional().describe("Mailbox scope. 'all-regular' = all regular mailboxes excluding Junk and Trash (default). 'all' = every folder. Or a specific folder name."),
+                    mailbox: z.enum(SEARCH_SCOPE).optional().describe(`Search only this mailbox. Omit to search every mailbox you can read: ${SEARCH_SCOPE.join(', ')}, in that order.`),
+                    next:    z.string().optional().describe('The next value from the end of an earlier searchEmail result, for the page after it. Give exactly the same filters as that search; a next from a different search is refused.'),
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
                     withEmailToolErrorHandling('searchEmail', async (args): Promise<CallToolResult> => {
-                        // Build search params based on mailbox selection
-                        const mailboxParam = (!args.mailbox || args.mailbox === 'all-regular' || args.mailbox === 'all')
-                            ? undefined
-                            : args.mailbox;
-                        const searchableParam = (!args.mailbox || args.mailbox === 'all-regular')
-                            ? true as const
-                            : undefined;
-
-                        const results = await wildDuckClient.search({
-                            query: {
-                                correspondent: args.correspondent,
-                                content:       args.content,
-                                before:        args.before,
-                                since:         args.since,
-                                header:        args.header,
-                            },
-                            mailbox:    mailboxParam,
-                            searchable: searchableParam,
-                        });
-
-                        // Stryker disable next-line llm: search returns an array or rejects, so an added falsy-results guard is unreachable.
-                        if(results.length === 0) {
-                            return {
-                                content: [{ type: 'text' as const, text: 'No emails found matching your search criteria.' }],
-                            };
+                        const scope = args.mailbox === undefined ? SEARCH_SCOPE : [args.mailbox];
+                        const fingerprint = searchFingerprint(args);
+                        const start = args.next === undefined ? { mailbox: 0 } : decodeSearchNext(args.next, fingerprint, scope.length);
+                        if(start === undefined) {
+                            return { content: [{ type: 'text' as const, text: SEARCH_NEXT_REFUSAL }], isError: true };
                         }
-
+                        const page = await searchReadablePage({
+                            correspondent: args.correspondent,
+                            content:       args.content,
+                            before:        args.before,
+                            since:         args.since,
+                            header:        args.header,
+                        }, scope, start);
                         const lines = [
-                            `Found ${results.length} email${results.length === 1 ? '' : 's'}:`,
-                            ...results.map((r) => {
-                                const toStr = r.to.length > 0 ? r.to.map(address => formatAddressForDisplay(address)).join(', ') : '(none)';
-                                return `- ${r.message} | From: ${formatAddressForDisplay(r.from)} | To: ${toStr} | Subject: ${r.subject} | Date: ${r.date}`;
-                            }),
+                            page.rows.length === 0 ? 'No emails found matching your search criteria.' : `Found ${counted(page.rows.length, 'email', 'emails')}:`,
+                            ...page.rows.map(({ folder, row }) => `- ${formatMailboxMessageRef({ folder, uid: row.uid })} | From: ${formatAddressForDisplay(row.from)} | To: ${recipientList(row.to)} | Subject: ${row.subject} | Date: ${row.date}`),
+                            page.next === undefined ? 'No more results.' : `More results: call searchEmail again with the same filters and next: ${encodeSearchNext(fingerprint, page.next)}`,
                         ];
-
                         return mcpTextResult(lines.join('\n'));
                     })),
                 { annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } }
