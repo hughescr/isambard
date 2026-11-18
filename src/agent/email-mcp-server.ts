@@ -9,7 +9,7 @@ import { buildAttachments, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, saveEmailAttac
 import { failureDetail, recordEmailToolFailure, withEmailToolErrorHandling, type EmailToolErrorCode } from './email-tool-errors';
 import { amendError, counted, displayName } from './email-tool-text';
 import { mcpTextResult, withHealthGuard, withWriteHealthGuard } from './mcp-helpers';
-import { EmailFolder } from '@/config';
+import { EmailFolder, READABLE_EMAIL_FOLDERS } from '@/config';
 // eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
 import { checkEmailSendDelivery, composeEmailBody, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, htmlMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type ComposedEmailBody, type DraftApprovalMeta, type EmailBodyFormat, type WildDuckAttachment, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type MarkdownBodyProblem, type SearchEmailAddress, type WildDuckClient, type WildDuckMessage, type WildDuckSearchParams, type WildDuckSearchRow, type WildDuckUploadPayload } from '@/integrations/email';
 import type { DeliveryCheck, ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
@@ -22,7 +22,7 @@ const ACCESSIBLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set([EmailFolder.Clea
  * The mailboxes Izzy can read (getEmailContent, searchEmail, getEmailThread), in the order a search
  * of all of them goes through them.
  */
-const SEARCH_SCOPE = [EmailFolder.CleanInbox, EmailFolder.Archive, EmailFolder.Drafts, EmailFolder.Sent] as const;
+const SEARCH_SCOPE = READABLE_EMAIL_FOLDERS;
 
 /** Mailboxes readable by getEmailContent (also includes Drafts and Sent Mail). */
 const READABLE_MAILBOXES: ReadonlySet<EmailFolder> = new Set(SEARCH_SCOPE);

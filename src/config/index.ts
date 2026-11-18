@@ -34,7 +34,7 @@ export {
     loadRetryConfig
 } from './retry-config';
 
-export { EmailFolder } from './email-folders';
+export { EmailFolder, READABLE_EMAIL_FOLDERS } from './email-folders';
 
 export {
     QUESTION_PREFIX,
