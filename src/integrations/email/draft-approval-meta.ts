@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
 /**
@@ -31,6 +31,8 @@ export interface DraftApprovalMeta {
     /** Set on an old UID only when an amend could not delete it; the UID of its replacement. */
     supersededBy?: number
     previewToken?: string
+    /** Hex SHA-256 of the exact HTML part Isambard uploaded with this draft; see {@link readDraftHtmlPart}. */
+    htmlSha256?:   string
 }
 
 /** The minimal lock the email module needs; the process-wide approval card gate satisfies it. */
@@ -43,6 +45,8 @@ const cardSchema = z.object({
     messageId: z.string().min(1),
     edits:     z.number().int().nonnegative(),
 });
+
+const htmlSha256Schema = z.string().regex(/^[\da-f]{64}$/u);
 
 const approvalSchema = z.object({
     actionId: z.string().min(1),
@@ -69,8 +73,49 @@ export function readDraftApprovalMeta(metaData: unknown): DraftApprovalMeta {
         reason:       parsed(z.string(), raw.reason),
         supersededBy: parsed(z.number().int(), raw.supersededBy),
         previewToken: parsed(z.string(), raw.previewToken),
+        htmlSha256:   parsed(htmlSha256Schema, raw.htmlSha256),
     };
     return Object.fromEntries(Object.entries(meta).filter(([, value]) => value !== undefined));
+}
+
+/** Whether a stored draft has an HTML part Isambard uploaded: none, one that verifies (with that HTML), or a marker that does not verify. */
+export type DraftHtmlPart = { state: 'none' } | { state: 'verified', html: string } | { state: 'unverified' };
+
+export type DraftHtmlState = DraftHtmlPart['state'];
+
+/** The hex SHA-256 of an HTML part, as the `htmlSha256` marker records it. */
+export function htmlDigest(html: string): string {
+    return createHash('sha256').update(html, 'utf8').digest('hex');
+}
+
+/** The upload-time metaData marker for an HTML part: `{ htmlSha256 }`, or nothing for a body without HTML. */
+export function htmlMarker(html: string | undefined): { htmlSha256?: string } {
+    return html === undefined ? {} : { htmlSha256: htmlDigest(html) };
+}
+
+const htmlPartsSchema = z.array(z.string());
+
+/**
+ * Whether a stored draft has a real HTML part. A non-empty `html` proves nothing: WildDuck's
+ * indexer synthesises `<p>…</p>` HTML for every plain-text message. So a draft has an HTML part
+ * only when its metaData carries a well-formed `htmlSha256` (written with the upload of a new UID
+ * whose HTML Isambard rendered) and its stored HTML hashes to it. The stored HTML is WildDuck's
+ * parts joined with a newline (as the draft summary and the preview join them) with CRLF read as
+ * LF: the only change WildDuck makes to an HTML part Isambard uploads (trimmed, CR-free) is the
+ * CRLF line breaks its MIME encoding gives quoted-printable and 7bit parts. No marker is `none`;
+ * a marker that is malformed, or that a missing, empty or different HTML does not match, is
+ * `unverified`. Never throws.
+ */
+export function readDraftHtmlPart(metaData: unknown, html: unknown): DraftHtmlPart {
+    if(!Object.hasOwn(asRecord(metaData), 'htmlSha256')) {
+        return { state: 'none' };
+    }
+    const parts = htmlPartsSchema.safeParse(html);
+    if(!parts.success) {
+        return { state: 'unverified' };
+    }
+    const stored = parts.data.join('\n').replaceAll('\r\n', '\n');
+    return stored !== '' && htmlDigest(stored) === readDraftApprovalMeta(metaData).htmlSha256 ? { state: 'verified', html: stored } : { state: 'unverified' };
 }
 
 /**

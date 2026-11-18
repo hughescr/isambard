@@ -99,6 +99,21 @@ function attachmentLines(summary: DraftSummary): string {
     return value;
 }
 
+/**
+ * The card's one fixed line about the draft's HTML version (#158 batch D), as a `Body` field: none
+ * without one; that it could not be verified when its digest does not match; else that it has one,
+ * pointing at the preview when there is a link. The card never shows the HTML itself.
+ */
+function htmlFields(summary: DraftSummary, previewUrl: string | undefined): Field[] {
+    if(summary.html === 'none') {
+        return [];
+    }
+    if(summary.html === 'unverified') {
+        return [{ name: 'Body', value: 'HTML version could not be verified' }];
+    }
+    return [{ name: 'Body', value: previewUrl === undefined ? 'Has an HTML version (not shown here)' : 'Has an HTML version — open the preview to see it' }];
+}
+
 function pendingTitle(edits: number): string {
     return edits > 0 ? `${PENDING_TITLE} · Edited (${edits})` : PENDING_TITLE;
 }
@@ -133,7 +148,8 @@ function approvalButtons(uid: number, rejectOnly: boolean, previewUrl: string | 
 
 /**
  * The #admin approval card for an outbound draft (#158), built from the draft as WildDuck
- * stores it: From; To, Cc and Bcc in full with their counts; Subject; a body snippet; one line
+ * stores it: From; To, Cc and Bcc in full with their counts; Subject; a body snippet (from the
+ * text part); one fixed line when the draft has an HTML version ({@link htmlFields}); one line
  * per attachment; and the draft reference. Every draft-derived string is markdown-escaped.
  * Recipients are never truncated: when the card would exceed Discord's limits the snippet and
  * attachment lines go first, and if the recipients still do not fit the card shows only their
@@ -147,6 +163,7 @@ export function buildEmailApprovalCard(input: EmailApprovalCardInput | { state: 
     }
     const { uid, summary, edits, state } = input;
     const pending = state === 'pending';
+    const previewUrl = pending ? input.previewUrl : undefined;
     const title = pending ? pendingTitle(edits) : DELETED_TITLE;
     const attachmentCount = summary.attachments.length;
     const recipientLists: [string, Address[], boolean][] = [['To', summary.to, true], ['Cc', summary.cc, false], ['Bcc', summary.bcc, false]];
@@ -155,6 +172,7 @@ export function buildEmailApprovalCard(input: EmailApprovalCardInput | { state: 
         { name: 'From', value: summary.from === undefined ? '(unknown)' : truncate(formatAddress(summary.from), { length: FIELD_VALUE_MAX }) },
         ...recipients,
         { name: 'Subject', value: summary.subject === '' ? '(no subject)' : truncate(escapeMarkdown(summary.subject), { length: FIELD_VALUE_MAX }) },
+        ...htmlFields(summary, previewUrl),
         ...(attachmentCount > 0 ? [{ name: `Attachments (${attachmentCount})`, value: attachments }] : []),
         { name: 'Draft', value: `Drafts:${uid}` },
     ];
@@ -182,7 +200,7 @@ export function buildEmailApprovalCard(input: EmailApprovalCardInput | { state: 
         .setColor(pending ? BLUE : DRAFT_GONE_GREY)
         .setDescription(chosen.description)
         .addFields(chosen.fields);
-    return { embeds: [embed], components: pending ? [approvalButtons(uid, overflow, input.previewUrl)] : [] };
+    return { embeds: [embed], components: pending ? [approvalButtons(uid, overflow, previewUrl)] : [] };
 }
 
 /** The card an admin click leaves when the draft it acted on no longer exists. */

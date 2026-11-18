@@ -87,6 +87,18 @@ describe('submitApprovedDraft', () => {
             expect(client.submitMessage.mock.calls).toEqual([['Drafts', 42, controller.signal]]);
         });
 
+        test('fails with the submit\'s own failure, and settles only once the submit has', async () => {
+            const refused = new Error('submit refused');
+            client.submitMessage.mockImplementation(async () => {
+                await Promise.resolve();
+                events.push('submit settled');
+                throw refused;
+            });
+
+            expect(await failure()).toBe(refused);
+            expect(events).toEqual(['read Drafts:42', 'submit settled']);
+        });
+
         test('sends a resend (a row claimed before) exactly once', async () => {
             await send(PARAMS, RESEND);
 

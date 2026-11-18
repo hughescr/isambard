@@ -13,7 +13,7 @@ import { failureDetail, isNotFound } from './email-tool-errors';
 import { amendError, counted } from './email-tool-text';
 import { EmailFolder } from '@/config';
 // eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { amendedDraftMeta, newPreviewToken, readDraftApprovalMeta, type DraftApprovalMeta, type WildDuckAttachment, type WildDuckClient, type WildDuckMessage, type WildDuckThreadingHeader, type WildDuckUploadPayload } from '@/integrations/email';
+import { amendedDraftMeta, htmlMarker, newPreviewToken, readDraftApprovalMeta, readDraftHtmlPart, type ComposedEmailBody, type DraftApprovalMeta, type DraftHtmlPart, type DraftHtmlState, type WildDuckAttachment, type WildDuckClient, type WildDuckMessage, type WildDuckThreadingHeader, type WildDuckUploadPayload } from '@/integrations/email';
 import { createDeadline } from '@/utils';
 
 /** How long an amend waits to read its new version back from WildDuck while it holds the draft's key. */
@@ -38,22 +38,82 @@ function amendRefusal(draftRef: string, meta: DraftApprovalMeta): string | undef
 }
 
 /**
- * What an amended draft's upload carries — the card link with one more edit (when it has one) and
- * a fresh preview token, never anything else of the old metaData — and the edit number its card
- * will show.
+ * What an amended draft's upload carries — the card link with one more edit (when it has one), a
+ * fresh preview token and the digest of the HTML part it uploads (if any), never anything else of
+ * the old metaData — and the edit number its card will show.
  */
-function amendCarry(metaData: unknown, meta: DraftApprovalMeta): { metaData: Record<string, unknown>, edits: number } {
+function amendCarry(metaData: unknown, meta: DraftApprovalMeta, html: string | undefined): { metaData: Record<string, unknown>, edits: number } {
     return {
-        metaData: { ...amendedDraftMeta(metaData), previewToken: newPreviewToken() },
+        metaData: { ...amendedDraftMeta(metaData), previewToken: newPreviewToken(), ...htmlMarker(html) },
         edits:    (meta.card?.edits ?? 0) + 1,
     };
+}
+
+/**
+ * What an amend does with the HTML version: keeps the original's verified one (no new body),
+ * replaces it with the new markdown body's, removes it (a new plain-text body), has none (no HTML
+ * before or after), or drops an original's that does not verify (no new body).
+ */
+type HtmlIntent = 'kept' | 'replaced' | 'removed' | 'none' | 'dropped';
+
+/**
+ * The new version's body upload fields — the new body's text and HTML, else the original's text
+ * and its verified HTML version ({@link htmlPlan}) — and what that does to the HTML version.
+ */
+function amendedBody(body: ComposedEmailBody | undefined, original: WildDuckMessage): { intent: HtmlIntent, fields: Pick<WildDuckUploadPayload, 'text' | 'html'> } {
+    const { intent, html } = htmlPlan(body, readDraftHtmlPart(original.metaData, original.html));
+    const text = body?.text ?? original.text ?? '';
+    return { intent, fields: html === undefined ? { text } : { text, html } };
+}
+
+/** The HTML version the new version uploads, and what that does to the original's. */
+function htmlPlan(body: ComposedEmailBody | undefined, original: DraftHtmlPart): { intent: HtmlIntent, html?: string } {
+    if(body !== undefined) {
+        if(body.html !== undefined) {
+            return { intent: 'replaced', html: body.html };
+        }
+        return { intent: original.state === 'verified' ? 'removed' : 'none' };
+    }
+    if(original.state === 'verified') {
+        return { intent: 'kept', html: original.html };
+    }
+    return { intent: original.state === 'unverified' ? 'dropped' : 'none' };
+}
+
+/** The HTML part the stored new version must have for each intent. */
+const HTML_EXPECTED: Readonly<Record<HtmlIntent, DraftHtmlState>> = { kept: 'verified', replaced: 'verified', removed: 'none', none: 'none', dropped: 'none' };
+
+/** What an amend tells the agent of the HTML version once the stored new version matches. */
+const HTML_CARRIED: Readonly<Record<HtmlIntent, string>> = {
+    kept:     ' HTML version: kept from the original draft.',
+    replaced: ' HTML version: rendered from the new markdown body.',
+    removed:  ' HTML version: removed; the new version is plain text only.',
+    none:     '',
+    dropped:  ' Warning: the original draft\'s HTML version could not be verified, so it was not carried; the new version is plain text only. Check it before it is approved.',
+};
+
+const HTML_UNCONFIRMED = ' The HTML version could not be confirmed on the stored draft either.';
+const HTML_MISMATCH_WARNING = ' Warning: the amended draft\'s HTML version is not what this amend uploaded; check it before it is approved.';
+
+/**
+ * What an amend tells the agent of the HTML version, checked against the stored new version by
+ * its digest ({@link readDraftHtmlPart}): the carried note when it matches, a warning when it
+ * does not, and that it could not be confirmed when the draft could not be read back. A draft with
+ * no HTML version before or after says nothing about it unless the stored version has one.
+ */
+function htmlNote(intent: HtmlIntent, stored: StoredDraft | undefined): string {
+    if(stored === undefined) {
+        return intent === 'none' ? '' : `${HTML_CARRIED[intent]}${HTML_UNCONFIRMED}`;
+    }
+    return stored.html === HTML_EXPECTED[intent] ? HTML_CARRIED[intent] : HTML_MISMATCH_WARNING;
 }
 
 /** What an amend changes; an absent field keeps the draft's own value. */
 export interface DraftAmendment {
     from:               WildDuckUploadPayload['from']
     subject?:           string
-    body?:              string
+    /** The new body as composed (`composeEmailBody`); absent keeps the draft's text and its verified HTML version. */
+    body?:              ComposedEmailBody
     to?:                WildDuckUploadPayload['to']
     /** Replaces the draft's Cc; `[]` removes it. */
     cc?:                WildDuckUploadPayload['cc']
@@ -94,6 +154,8 @@ const storedDraftSchema = z.object({
     cc:          z.array(z.unknown()).optional(),
     attachments: z.array(z.unknown()).optional(),
     references:  z.unknown().optional(),
+    html:        z.unknown().optional(),
+    metaData:    z.unknown().optional(),
 });
 
 const THREAD_KEPT_NOTE = ' Its References header matches the original draft\'s, so it stays in the same conversation.';
@@ -127,11 +189,12 @@ interface CarriedCounts {
     added:   number
 }
 
-/** An amend's new version as WildDuck stored it: its Cc and attachment counts, and its References (undefined when unreadable). */
+/** An amend's new version as WildDuck stored it: its Cc and attachment counts, its References (undefined when unreadable) and its HTML part's state. */
 interface StoredDraft {
     cc:          number
     attachments: number
     references:  string[] | undefined
+    html:        DraftHtmlState
 }
 
 /**
@@ -349,6 +412,7 @@ export function createDraftAmender(deps: DraftAmenderDeps): DraftAmender {
                 cc:          parsed.data.cc?.length ?? 0,
                 attachments: parsed.data.attachments?.length ?? 0,
                 references:  referencesSchema.safeParse(parsed.data.references).data,
+                html:        readDraftHtmlPart(parsed.data.metaData, parsed.data.html).state,
             };
         } catch (err) {
             logger.warn({ newUid, ...failureDetail(err), msg: 'Could not read back the amended draft' });
@@ -363,10 +427,12 @@ export function createDraftAmender(deps: DraftAmenderDeps): DraftAmender {
      * draft fresh, refuses it when gone, not a draft, approved or already replaced, fetches the
      * attachments it keeps and reads the files it adds, works out the reply threading
      * ({@link resolveThreading}), uploads the new version built from THAT read (subject, body, To
-     * and Cc fall back to it; its attachments and its reply threading are carried; the card link
-     * and edit number come from it), removes the old UID — WildDuck's replace, else a
+     * and Cc fall back to it; its attachments, its reply threading and, for a kept body, its
+     * verified HTML version ({@link htmlPlan}) are carried; the card link and edit number come
+     * from it), removes the old UID — WildDuck's replace, else a
      * delete, else `supersededBy` — so no decision can land on the old UID between the read and its
-     * removal, and reads the new version back once to check what it stores and its reply threading.
+     * removal, and reads the new version back once to check what it stores (Cc, attachments, the
+     * HTML version by its digest) and its reply threading.
      * Returns the refusal as a tool result, or the new UID, the notes for the tool text and the
      * edit number the card will show. Every WildDuck call is bounded by `signal`, the amend's
      * {@link AMEND_DEADLINE_MS} budget: one that runs out before or during the upload throws (the
@@ -391,22 +457,25 @@ export function createDraftAmender(deps: DraftAmenderDeps): DraftAmender {
             return attachments;
         }
 
-        // Re-upload as a new UID replacing the old one, carrying the card link (one more edit) and
-        // a fresh preview token, and nothing else of the old metaData — never a decision, a
-        // reason or the old token. The explicit To and Cc (empty lists included) win over the
+        // Re-upload as a new UID replacing the old one, carrying the card link (one more edit), a
+        // fresh preview token and the digest of the HTML part it uploads, and nothing else of the
+        // old metaData — never a decision, a reason, the old token or the old digest. The explicit To and Cc (empty lists included) win over the
         // recipients WildDuck would derive from the reply reference; the subject wins only when it
         // is not empty, so a reference is passed only with a non-empty one. A reply is threaded by
         // its reference or by its own headers, never both.
         const cc = amendment.cc ?? original.cc ?? [];
         const subject = amendment.subject ?? original.subject ?? '';
         const threading = await resolveThreading(uid, original, subject, signal);
-        const carry = amendCarry(original.metaData, meta);
+        // A new body uploads its own HTML version, if any; a kept body carries the original's
+        // text and, only when its digest verifies, its HTML version unchanged.
+        const body = amendedBody(amendment.body, original);
+        const carry = amendCarry(original.metaData, meta, body.fields.html);
         const { id: newUid, previousDeleted } = await wildDuckClient.uploadReplacingDraft({
             from:        amendment.from,
             to:          amendment.to ?? original.to ?? [],
             cc,
             subject,
-            text:        amendment.body ?? original.text ?? '',
+            ...body.fields,
             ...threadingFields(threading),
             attachments: attachments.attachments,
             draft:       true,
@@ -418,7 +487,7 @@ export function createDraftAmender(deps: DraftAmenderDeps): DraftAmender {
         const removal = previousDeleted ? '' : await removeReplacedDraft(uid, newUid, signal);
         const stored = await readBackAmended(newUid, signal);
         const carried = carryNote({ cc: cc.length, ccGiven: amendment.cc !== undefined, kept: attachments.kept, removed: attachments.removed, added: attachments.added }, stored);
-        return { newUid, notes: `${carried}${threadingNote(threading, stored)}${removal}`, edits: carry.edits };
+        return { newUid, notes: `${carried}${htmlNote(body.intent, stored)}${threadingNote(threading, stored)}${removal}`, edits: carry.edits };
     }
 
     return { replaceAmendedDraft };

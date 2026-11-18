@@ -205,6 +205,8 @@ export interface WildDuckUploadPayload {
     cc?:              { name?: string, address: string }[]
     subject:          string
     text:             string
+    /** An HTML alternative to `text`; WildDuck then builds `multipart/alternative`. */
+    html?:            string
     reference?:       WildDuckMessageReference
     headers?:         WildDuckThreadingHeader[]
     attachments?:     WildDuckAttachment[]

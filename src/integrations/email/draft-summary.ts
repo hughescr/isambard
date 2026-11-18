@@ -1,4 +1,5 @@
 import { convert } from 'html-to-text';
+import { readDraftHtmlPart, type DraftHtmlState } from './draft-approval-meta';
 import type { WildDuckMessage } from './wildduck-client';
 
 /** The longest body snippet an approval card shows, in code points (the ellipsis included). */
@@ -19,6 +20,8 @@ export interface DraftSummary {
     /** Plain text, whitespace collapsed, at most {@link DRAFT_SNIPPET_MAX_CODE_POINTS} code points. */
     snippet:     string
     attachments: { filename: string, contentType: string, sizeBytes: number }[]
+    /** Whether the draft has an HTML version Isambard uploaded, by its digest (`readDraftHtmlPart`); the snippet still comes from the text part. */
+    html:        DraftHtmlState
 }
 
 /** A byte count as B, KB, MB or GB (binary units, one decimal above bytes). */
@@ -58,6 +61,7 @@ export function buildDraftSummary(draft: WildDuckMessage): DraftSummary {
         bcc:         draft.bcc ?? [],
         subject:     draft.subject ?? '',
         snippet:     snippetOf(bodyText(draft)),
+        html:        readDraftHtmlPart(draft.metaData, draft.html).state,
         attachments: (draft.attachments ?? []).map(attachment => ({
             filename:    attachment.filename,
             contentType: attachment.contentType,

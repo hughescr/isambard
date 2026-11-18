@@ -1017,6 +1017,21 @@ describe('EmailOutboundApprovals', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith({ err: failure, uid: UID, msg: 'Notify failed for email rejection' });
         });
     });
+
+    describe('the HTML part marker', () => {
+        const MARKED = { approvalCard: LINK, previewToken: 'tok', htmlSha256: 'a'.repeat(64) };
+
+        test.each([
+            ['linking the card', async (h: Harness) => h.ops.linkCard(UID, { ...LINK, edits: 2 })],
+            ['approving', async (h: Harness) => h.ops.approveSend(UID, 'direct', CARD)],
+            ['rejecting', async (h: Harness) => h.ops.rejectSend(UID, 'nope')],
+        ])('survives %s, so the draft keeps its HTML part', async (_label, write) => {
+            const h = makeHarness({}, draftWith(MARKED));
+            await write(h);
+
+            expect(h.updateMetadata.mock.calls[0]?.[2]).toMatchObject({ previewToken: 'tok', htmlSha256: 'a'.repeat(64) });
+        });
+    });
 });
 
 describe('emailSendParamsSchema', () => {

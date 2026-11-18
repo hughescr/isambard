@@ -18,6 +18,7 @@ function summary(overrides: Partial<DraftSummary> = {}): DraftSummary {
         subject:     'Hello',
         snippet:     'The body',
         attachments: [],
+        html:        'none',
         ...overrides,
     };
 }
@@ -299,6 +300,51 @@ describe('buildEmailApprovalCard — pending', () => {
             { name: 'Draft', value: 'Drafts:9' },
         ]);
         expect(buttonsOf(card).map(b => b.custom_id)).toEqual(['email-send-reject:9']);
+    });
+
+    describe('the HTML version', () => {
+        const PREVIEW = 'https://mac.ts.net/d/42/tok';
+
+        test.each([
+            ['a verified HTML version with a preview link', 'verified', PREVIEW, 'Has an HTML version — open the preview to see it'],
+            ['a verified HTML version without a preview link', 'verified', undefined, 'Has an HTML version (not shown here)'],
+            ['an HTML version that does not verify', 'unverified', PREVIEW, 'HTML version could not be verified'],
+            ['an HTML version that does not verify, without a preview link', 'unverified', undefined, 'HTML version could not be verified'],
+        ] as const)('shows one fixed line after the Subject for %s, keeping the text snippet', (_label, html, previewUrl, line) => {
+            const embed = embedOf(buildEmailApprovalCard({ uid: 42, edits: 0, state: 'pending', summary: summary({ html, attachments: [{ filename: 'a', contentType: 'b', sizeBytes: 1 }] }), previewUrl }));
+
+            expect(embed.description).toBe('The body');
+            expect(embed.fields?.map(field => field.name)).toEqual(['From', 'To (1)', 'Subject', 'Body', 'Attachments (1)', 'Draft']);
+            expect(fieldValue(embed, 'Body')).toBe(line);
+        });
+
+        test('shows no line for a draft without an HTML version', () => {
+            expect(fieldValue(embedOf(buildEmailApprovalCard({ uid: 42, edits: 0, state: 'pending', summary: summary(), previewUrl: PREVIEW })), 'Body')).toBeUndefined();
+        });
+
+        test('keeps the line on a card whose recipients cannot fit, and on a deleted card', () => {
+            const overflow = embedOf(buildEmailApprovalCard({ uid: 9, edits: 0, state: 'pending', summary: summary({ to: addresses(160), html: 'unverified' }) }));
+            const deleted = embedOf(buildEmailApprovalCard({ uid: 9, edits: 0, state: 'deleted', summary: summary({ html: 'verified' }), previewUrl: PREVIEW }));
+
+            expect(fieldValue(overflow, 'Body')).toBe('HTML version could not be verified');
+            expect(fieldValue(deleted, 'Body')).toBe('Has an HTML version (not shown here)');
+        });
+
+        test('counts the line toward the size limit: the snippet stays at exactly 6000 characters and goes one character later', () => {
+            const to = addresses(131);
+            const withLine = summary({ to, snippet: '', html: 'verified' });
+            const base = embedLength(embedOf(buildEmailApprovalCard({ uid: 1, edits: 0, state: 'pending', summary: withLine, previewUrl: PREVIEW }))) - '(empty body)'.length;
+            const room = 6000 - base;
+
+            const exact = embedOf(buildEmailApprovalCard({ uid: 1, edits: 0, state: 'pending', summary: { ...withLine, snippet: 'x'.repeat(room) }, previewUrl: PREVIEW }));
+            const over = embedOf(buildEmailApprovalCard({ uid: 1, edits: 0, state: 'pending', summary: { ...withLine, snippet: 'x'.repeat(room + 1) }, previewUrl: PREVIEW }));
+
+            expect(room).toBe(6000 - embedLength(embedOf(buildEmailApprovalCard({ uid: 1, edits: 0, state: 'pending', summary: summary({ to, snippet: '' }) }))) + '(empty body)'.length - 'Body'.length - 'Has an HTML version — open the preview to see it'.length);
+            expect(embedLength(exact)).toBe(6000);
+            expect(exact.description).toBe('x'.repeat(room));
+            expect(over.description).toBe('(body omitted to fit — see preview)');
+            expect(fieldValue(over, 'Body')).toBe('Has an HTML version — open the preview to see it');
+        });
     });
 
     test('shows counts when a single address is too long for a field', () => {

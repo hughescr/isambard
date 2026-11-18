@@ -1,12 +1,16 @@
 import { describe, test, expect } from 'bun:test';
+import { createHash } from 'node:crypto';
 import {
     amendedDraftMeta,
     draftLockKey,
     hasDecisionMarker,
+    htmlDigest,
+    htmlMarker,
     mergeDraftMeta,
     newPreviewToken,
     previewTokenMatches,
     readDraftApprovalMeta,
+    readDraftHtmlPart,
     readDraftSendMeta
 } from '@/integrations/email/draft-approval-meta';
 
@@ -202,5 +206,66 @@ describe('previewTokenMatches', () => {
     test('rejects any candidate when the draft has no token', () => {
         expect(previewTokenMatches(undefined, token)).toBe(false);
         expect(previewTokenMatches(undefined, '')).toBe(false);
+    });
+});
+
+describe('the HTML part marker (htmlSha256)', () => {
+    const HTML = '<p style="margin:0 0 1em">Hi <strong>there</strong></p>\n<p style="margin:0 0 1em">two</p>';
+    const DIGEST = createHash('sha256').update(HTML, 'utf8').digest('hex');
+
+    test('htmlDigest is the hex SHA-256 of the exact UTF-8 string', () => {
+        expect(htmlDigest(HTML)).toBe(DIGEST);
+        expect(htmlDigest('é')).toBe(createHash('sha256').update(Buffer.from('é', 'utf8')).digest('hex'));
+    });
+
+    test('htmlMarker is the digest under htmlSha256, or nothing without HTML', () => {
+        expect(htmlMarker(HTML)).toStrictEqual({ htmlSha256: DIGEST });
+        expect(htmlMarker(undefined)).toStrictEqual({});
+    });
+
+    test('readDraftApprovalMeta reads a well-formed digest and drops a malformed one', () => {
+        expect(readDraftApprovalMeta({ htmlSha256: DIGEST })).toEqual({ htmlSha256: DIGEST });
+        for(const malformed of [DIGEST.toUpperCase(), `${DIGEST}0`, DIGEST.slice(1), `x${DIGEST}`, `${DIGEST}x`, 'g'.repeat(64), 5]) {
+            expect(readDraftApprovalMeta({ htmlSha256: malformed })).toEqual({});
+        }
+    });
+
+    test('a draft with no marker has no HTML part, whatever its html (WildDuck synthesises one for every plain-text message)', () => {
+        expect(readDraftHtmlPart({ previewToken: 't' }, ['<p>synthesised</p>'])).toEqual({ state: 'none' });
+        expect(readDraftHtmlPart(undefined, undefined)).toEqual({ state: 'none' });
+    });
+
+    test('a marker matching the stored HTML is a verified HTML part, carrying that HTML', () => {
+        expect(readDraftHtmlPart({ htmlSha256: DIGEST }, [HTML])).toEqual({ state: 'verified', html: HTML });
+    });
+
+    test('the stored parts are joined with a newline, and CRLF line breaks (as the MIME encoding stores them) count as LF', () => {
+        const [first, second] = HTML.split('\n');
+        expect(readDraftHtmlPart({ htmlSha256: DIGEST }, [first, second])).toEqual({ state: 'verified', html: HTML });
+        expect(readDraftHtmlPart({ htmlSha256: DIGEST }, [HTML.replaceAll('\n', '\r\n')])).toEqual({ state: 'verified', html: HTML });
+    });
+
+    test.each([
+        ['different HTML', ['<p>other</p>']],
+        ['trimmed differently', [` ${HTML}`]],
+        ['no HTML at all', undefined],
+        ['HTML that is not a list of strings', [5]],
+        ['an empty HTML part matching a digest of nothing', []],
+    ])('a marker that does not verify against %s is unverified', (_label, html) => {
+        const digest = html?.length === 0 ? htmlDigest('') : DIGEST;
+        expect(readDraftHtmlPart({ htmlSha256: digest }, html)).toEqual({ state: 'unverified' });
+    });
+
+    test('a malformed marker is unverified, never ignored', () => {
+        expect(readDraftHtmlPart({ htmlSha256: DIGEST.toUpperCase() }, [HTML])).toEqual({ state: 'unverified' });
+        expect(readDraftHtmlPart({ htmlSha256: null }, [HTML])).toEqual({ state: 'unverified' });
+    });
+
+    test('an amend never carries the marker over from the old metaData', () => {
+        expect(amendedDraftMeta({ approvalCard: { channelId: 'ch', messageId: 'msg', edits: 0 }, htmlSha256: DIGEST })).toStrictEqual({ approvalCard: { channelId: 'ch', messageId: 'msg', edits: 1 } });
+    });
+
+    test('a metaData merge keeps the marker', () => {
+        expect(mergeDraftMeta({ htmlSha256: DIGEST, previewToken: 't' }, { rejectedAt: 'now' })).toEqual({ htmlSha256: DIGEST, previewToken: 't', rejectedAt: 'now' });
     });
 });

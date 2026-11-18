@@ -1,4 +1,5 @@
 import { describe, test, expect } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { buildDraftSummary, DRAFT_SNIPPET_MAX_CODE_POINTS, formatAttachmentSize } from '@/integrations/email/draft-summary';
 
 describe('buildDraftSummary', () => {
@@ -21,13 +22,23 @@ describe('buildDraftSummary', () => {
             subject:     'Hello',
             snippet:     'Body',
             attachments: [],
+            html:        'none',
         });
     });
 
     test('defaults missing recipients to empty lists, the subject to empty, and leaves From absent', () => {
         const summary = buildDraftSummary({ id: 7 });
 
-        expect(summary).toStrictEqual({ from: undefined, to: [], cc: [], bcc: [], subject: '', snippet: '', attachments: [] });
+        expect(summary).toStrictEqual({ from: undefined, to: [], cc: [], bcc: [], subject: '', snippet: '', attachments: [], html: 'none' });
+    });
+
+    test('says whether the draft has a verified HTML version, by its digest, and keeps the snippet from the text', () => {
+        const html = '<p>Rich <b>body</b></p>';
+        const htmlSha256 = createHash('sha256').update(html).digest('hex');
+
+        expect(buildDraftSummary({ id: 1, text: 'Rich body', html: [html], metaData: { htmlSha256 } })).toMatchObject({ snippet: 'Rich body', html: 'verified' });
+        expect(buildDraftSummary({ id: 1, text: 'Rich body', html: ['<p>changed</p>'], metaData: { htmlSha256 } }).html).toBe('unverified');
+        expect(buildDraftSummary({ id: 1, text: 'Plain', html: ['<p>Plain</p>'], metaData: {} }).html).toBe('none');
     });
 
     test('prefers the text body over the HTML body', () => {

@@ -241,6 +241,27 @@ describe('createEmailMCPServer', () => {
             }
         });
 
+        test('describes bodyFormat on every body-taking tool: when markdown helps, what is literal, what the admin sees, and the limits', () => {
+            const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools;
+            const describedAs = (toolName: string, field: string): string | undefined => (registered[toolName].inputSchema.shape[field] as { description?: string }).description;
+            const markdown = 'How body is written: "text" (the default) sends it exactly as written, as plain text only; "markdown" renders it. Use markdown when formatting helps the reader: lists, links, emphasis, headings, quotes, code or tables. The email then has a plain-text version and an HTML version, both rendered from your markdown. The plain-text version shows each link as its text and then its whole destination in brackets ("the docs [https://example.com/docs]"), or just once when the text is exactly the destination, or is the address of a mailto: to that address. Raw HTML in the markdown is shown literally, never interpreted, and images are never embedded (each becomes a link to its URL). A link is clickable only when its destination is at most 2048 characters and is either an absolute http:// or https:// URL with a host and no user name or password, or mailto: and one plain address (no ?subject= or other query, one recipient); any other link is shown as its text and destination, not clickable. The admin sees the plain-text version on the approval card and both versions in the preview. Limits: 64 KB of markdown, 90 KB of rendered text, 500 KB of rendered HTML; lists and quotes cannot nest deeply.';
+
+            expect(describedAs('sendEmail', 'bodyFormat')).toBe(markdown);
+            expect(describedAs('replyToEmail', 'bodyFormat')).toBe(markdown);
+            expect(describedAs('amendAndResubmitDraft', 'bodyFormat')).toBe(`How the new body is written; give it only with body. ${markdown} A new plain-text body removes the draft's HTML version.`);
+            expect(describedAs('sendEmail', 'body')).toBe('Email body: plain text, or markdown with bodyFormat "markdown"');
+            expect(describedAs('replyToEmail', 'body')).toBe('Reply body: plain text, or markdown with bodyFormat "markdown"');
+        });
+
+        test('bodyFormat accepts only "text" and "markdown", and may be omitted', async () => {
+            const schema = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.sendEmail.inputSchema;
+            const base = { to: 'a@example.com', subject: 's', body: 'b' };
+
+            const results = await Promise.all([base, { ...base, bodyFormat: 'text' }, { ...base, bodyFormat: 'markdown' }, { ...base, bodyFormat: 'html' }].map(async args => schema.safeParseAsync(args)));
+
+            expect(results.map(result => result.success)).toEqual([true, true, true, false]);
+        });
+
         test('exposes senderProfile without the legacy identity tool parameter', () => {
             const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools;
             for(const [name, description] of [
@@ -2252,6 +2273,16 @@ describe('createEmailMCPServer', () => {
             expect(payload.from).toEqual({ address: 'formal@example.com', name: 'Izzy Formal' });
         });
 
+        test('sendEmail through the SDK MCP validator accepts bodyFormat markdown and uploads the HTML version', async () => {
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist });
+
+            const result = await callSdkTool(server, 'sendEmail', { to: 'alice@example.com', subject: 'Hi', body: '*Hello*', bodyFormat: 'markdown' });
+
+            expect(result.isError).toBeUndefined();
+            const [, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.html).toBe('<p style="margin:0 0 1em"><em>Hello</em></p>');
+        });
+
         test('should pass structured to object { name, email_address } to uploadMessage as { name, address }', async () => {
             mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
 
@@ -2601,6 +2632,54 @@ describe('createEmailMCPServer', () => {
             expect(tokens[0]).not.toBe(tokens[1]);
         });
 
+        test.each([
+            ['omitted', {}],
+            ['text', { bodyFormat: 'text' }],
+        ])('with bodyFormat %s, uploads exactly the plain body as before, with no HTML part or marker', async (_label, format) => {
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist }), 'sendEmail');
+
+            await handler({ to: 'target@example.com', subject: 'Hi', body: 'Body **raw** <b>x</b>', ...format });
+
+            const [, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload).toStrictEqual({
+                from:     { address: 'formal@example.com', name: 'Izzy Formal' },
+                to:       [{ address: 'target@example.com' }],
+                subject:  'Hi',
+                text:     'Body **raw** <b>x</b>',
+                draft:    true,
+                metaData: { previewToken: expect.stringMatching(PREVIEW_TOKEN_RE) },
+            });
+        });
+
+        test('with bodyFormat markdown, uploads the rendered text and HTML together, recording the HTML\'s digest', async () => {
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist }), 'sendEmail');
+            const html = '<p style="margin:0 0 1em">Hi <strong>there</strong> <a href="https://example.com">docs</a></p>';
+
+            await handler({ to: 'target@example.com', subject: 'Hi', body: 'Hi **there** [docs](https://example.com)', bodyFormat: 'markdown' });
+
+            const [, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload).toStrictEqual({
+                from:     { address: 'formal@example.com', name: 'Izzy Formal' },
+                to:       [{ address: 'target@example.com' }],
+                subject:  'Hi',
+                text:     'Hi there docs [https://example.com]',
+                html,
+                draft:    true,
+                metaData: { previewToken: expect.stringMatching(PREVIEW_TOKEN_RE), htmlSha256: createHash('sha256').update(html).digest('hex') },
+            });
+        });
+
+        test('a markdown body the renderer refuses uploads nothing and sends nothing', async () => {
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist }), 'sendEmail');
+
+            const result = await handler({ to: 'target@example.com', subject: 'Hi', body: 'a'.repeat(64 * 1024 + 1), bodyFormat: 'markdown' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Nothing was saved or sent: the markdown body is larger than 64.0 KB.' }], isError: true });
+            expect(mockUploadMessage).not.toHaveBeenCalled();
+            expect(mockSubmitMessage).not.toHaveBeenCalled();
+        });
+
         test('should not include rate limit warning in result when limit is not reached', async () => {
             mockAllowlist.isAllowed   = mock((_platform: string, _value: string) => true);
             mockRateLimiter.isAtLimit = mock(() => false);
@@ -2828,6 +2907,47 @@ describe('createEmailMCPServer', () => {
             const [_folder, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
             expect((payload.reference as Record<string, unknown> | undefined)?.action).toBe('reply');
             expect((payload.reference as Record<string, unknown> | undefined)?.id).toBe(42);
+        });
+
+        test.each([
+            ['omitted', {}],
+            ['text', { bodyFormat: 'text' }],
+        ])('with bodyFormat %s, uploads exactly the plain reply body as before, with no HTML part or marker', async (_label, format) => {
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist }), 'replyToEmail');
+
+            await handler({ message: 'CleanInbox:42', body: 'Reply *raw*', mode: 'reply', ...format });
+
+            const [, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload).toStrictEqual({
+                from:      { address: 'formal@example.com', name: 'Izzy Formal' },
+                subject:   'Re: Re: Hello',
+                text:      'Reply *raw*',
+                reference: { action: 'reply', mailbox: 'mbx-clean', id: 42 },
+                draft:     true,
+                metaData:  { previewToken: expect.stringMatching(PREVIEW_TOKEN_RE) },
+            });
+        });
+
+        test('with bodyFormat markdown, uploads the rendered reply text and HTML together, recording the HTML\'s digest', async () => {
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist }), 'replyToEmail');
+            const html = '<p style="margin:0 0 1em">Reply <em>styled</em></p>';
+
+            await handler({ message: 'CleanInbox:42', body: 'Reply *styled*', mode: 'reply', bodyFormat: 'markdown' });
+
+            const [, payload] = mockUploadMessage.mock.calls[0] as [string, Record<string, unknown>];
+            expect(payload.text).toBe('Reply styled');
+            expect(payload.html).toBe(html);
+            expect(payload.metaData).toEqual({ previewToken: expect.stringMatching(PREVIEW_TOKEN_RE), htmlSha256: createHash('sha256').update(html).digest('hex') });
+        });
+
+        test('a markdown reply the renderer refuses uploads nothing and sends nothing', async () => {
+            const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockReplyWildDuck, allowlist: mockAllowlist }), 'replyToEmail');
+
+            const result = await handler({ message: 'CleanInbox:42', body: `${'>'.repeat(30)} deep`, mode: 'reply', bodyFormat: 'markdown' });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Nothing was saved or sent: the markdown body nests lists or block quotes too deeply.' }], isError: true });
+            expect(mockUploadMessage).not.toHaveBeenCalled();
+            expect(mockSubmitMessage).not.toHaveBeenCalled();
         });
 
         test('should build reference object with replyAll action for replyAll mode', async () => {
@@ -3582,6 +3702,137 @@ describe('createEmailMCPServer', () => {
             expect(mockUploadMessageAmend).not.toHaveBeenCalled();
             expect(mockDeleteMessageAmend).not.toHaveBeenCalled();
             expect(mockSendApprovalRequest).not.toHaveBeenCalled();
+        });
+
+        describe('the HTML version', () => {
+            const ORIGINAL_HTML = '<p style="margin:0 0 1em">Original <strong>body</strong></p>';
+            const sha = (value: string): string => createHash('sha256').update(value).digest('hex');
+            /** The original draft with a verified HTML part (stored with CRLF line breaks, as WildDuck's MIME encoding leaves them). */
+            const withHtml = { ...originalDraft, html: [ORIGINAL_HTML], metaData: { htmlSha256: sha(ORIGINAL_HTML) } };
+            const KEPT = ' HTML version: kept from the original draft.';
+            const RENDERED = ' HTML version: rendered from the new markdown body.';
+            const REMOVED = ' HTML version: removed; the new version is plain text only.';
+            const MISMATCH = ' Warning: the amended draft\'s HTML version is not what this amend uploaded; check it before it is approved.';
+            const UNCONFIRMED = ' The HTML version could not be confirmed on the stored draft either.';
+            const NOT_CONFIRMED = ' Cc and attachments were sent to WildDuck (0 Cc, 0 attachments kept, 0 removed, 0 added) but could not be confirmed on the stored draft.';
+            const DROPPED = ' Warning: the original draft\'s HTML version could not be verified, so it was not carried; the new version is plain text only. Check it before it is approved.';
+
+            /** The original (Drafts:42) and the new version as WildDuck stores it (Drafts:55, echoing the upload's html and metaData unless `stored` says otherwise). */
+            function drafts(original: Record<string, unknown>, stored?: Record<string, unknown> | null): void {
+                mockGetMessageAmend.mockImplementation(async (_folder: string, uid: number) => {
+                    if(uid === 42) {
+                        return original;
+                    }
+                    if(stored === null) {
+                        throw new Error('read-back failed');
+                    }
+                    const [payload] = mockUploadMessageAmend.mock.calls[0] as [{ html?: string, metaData: Record<string, unknown> }];
+                    return { id: 55, cc: [], attachments: [], references: [], html: payload.html === undefined ? ['<p>synthesised</p>'] : [payload.html.replaceAll('\n', '\r\n')], metaData: payload.metaData, ...stored };
+                });
+            }
+
+            async function amend(args: Record<string, unknown>): Promise<CallToolResult> {
+                const server = createEmailMCPServer({ wildDuckClient: mockWildDuckAmend, approvalCards: cardPort(mockSendApprovalRequest) });
+                return getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42', ...args });
+            }
+
+            const uploaded = (): Record<string, unknown> => (mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>])[0];
+
+            test('bodyFormat without body is refused before anything is read or changed', async () => {
+                expect(await amend({ bodyFormat: 'markdown' })).toEqual({
+                    content: [{ type: 'text', text: 'Could not amend draft Drafts:42: bodyFormat was given without body; give the new body with it, or leave both out to keep the draft\'s body. Nothing was changed.' }],
+                    isError: true,
+                });
+                expect(mockGetMessageAmend).not.toHaveBeenCalled();
+                expect(mockUploadMessageAmend).not.toHaveBeenCalled();
+            });
+
+            test('a markdown body the renderer refuses is refused before anything is read or changed', async () => {
+                expect(await amend({ body: 'a'.repeat(64 * 1024 + 1), bodyFormat: 'markdown' })).toEqual({
+                    content: [{ type: 'text', text: 'Could not amend draft Drafts:42: the markdown body is larger than 64.0 KB. Nothing was changed.' }],
+                    isError: true,
+                });
+                expect(mockGetMessageAmend).not.toHaveBeenCalled();
+                expect(mockUploadMessageAmend).not.toHaveBeenCalled();
+            });
+
+            test('a new markdown body uploads its rendered text and HTML with a new digest, confirmed on the stored draft', async () => {
+                drafts(withHtml);
+                const html = '<p style="margin:0 0 1em">New <em>body</em></p>';
+
+                expect(getText(await amend({ body: 'New *body*', bodyFormat: 'markdown' }))).toBe(`${PENDING}${NOTHING_CARRIED}${RENDERED}`);
+
+                expect(uploaded()).toMatchObject({ text: 'New body', html, metaData: { previewToken: expect.stringMatching(PREVIEW_TOKEN_RE), htmlSha256: sha(html) } });
+            });
+
+            test('a new plain-text body uploads text only and says the original\'s HTML version was removed', async () => {
+                drafts(withHtml);
+
+                expect(getText(await amend({ body: 'Plain *now*', bodyFormat: 'text' }))).toBe(`${PENDING}${NOTHING_CARRIED}${REMOVED}`);
+
+                expect(uploaded().text).toBe('Plain *now*');
+                expect(Object.hasOwn(uploaded(), 'html')).toBe(false);
+                expect(Object.hasOwn(uploaded().metaData as object, 'htmlSha256')).toBe(false);
+            });
+
+            test('a new body without bodyFormat is plain text, and a draft without an HTML version says nothing about HTML', async () => {
+                drafts(originalDraft);
+
+                expect(getText(await amend({ body: 'Plain' }))).toBe(`${PENDING}${NOTHING_CARRIED}`);
+
+                expect(Object.hasOwn(uploaded(), 'html')).toBe(false);
+            });
+
+            test('keeping the body carries the original text and its verified HTML unchanged, with the same digest', async () => {
+                drafts({ ...withHtml, html: [ORIGINAL_HTML.replaceAll('\n', '\r\n')] });
+
+                expect(getText(await amend({ subject: 'New subject' }))).toBe(`${PENDING}${NOTHING_CARRIED}${KEPT}`);
+
+                expect(uploaded()).toMatchObject({ text: 'Original body text', html: ORIGINAL_HTML, metaData: { htmlSha256: sha(ORIGINAL_HTML) } });
+            });
+
+            test('keeping the body of a draft whose html is WildDuck\'s synthesised version carries the text only, as before', async () => {
+                drafts({ ...originalDraft, html: ['<p>Original body text</p>'] });
+
+                expect(getText(await amend({}))).toBe(`${PENDING}${NOTHING_CARRIED}`);
+
+                expect(Object.hasOwn(uploaded(), 'html')).toBe(false);
+                expect(Object.hasOwn(uploaded().metaData as object, 'htmlSha256')).toBe(false);
+            });
+
+            test('keeping the body of a draft whose HTML no longer matches its digest carries the text only, with a warning', async () => {
+                drafts({ ...withHtml, html: ['<p>tampered</p>'] });
+
+                expect(getText(await amend({}))).toBe(`${PENDING}${NOTHING_CARRIED}${DROPPED}`);
+
+                expect(Object.hasOwn(uploaded(), 'html')).toBe(false);
+            });
+
+            test.each([
+                ['kept', {}, { html: ['<p>other</p>'] }],
+                ['rendered', { body: '*x*', bodyFormat: 'markdown' }, { metaData: {} }],
+                ['removed', { body: 'x' }, { metaData: { htmlSha256: sha('<p>x</p>') }, html: ['<p>x</p>'] }],
+            ])('warns when the stored new version\'s HTML is not what was uploaded (%s)', async (_label, args, stored) => {
+                drafts(withHtml, stored);
+
+                expect(getText(await amend(args))).toBe(`${PENDING}${NOTHING_CARRIED}${MISMATCH}`);
+            });
+
+            test.each([
+                ['kept', {}, KEPT],
+                ['rendered', { body: '*x*', bodyFormat: 'markdown' }, RENDERED],
+                ['removed', { body: 'x' }, REMOVED],
+            ])('says the HTML version (%s) could not be confirmed when the read-back fails', async (_label, args, note) => {
+                drafts(withHtml, null);
+
+                expect(getText(await amend(args))).toBe(`${PENDING}${NOT_CONFIRMED}${note}${UNCONFIRMED}`);
+            });
+
+            test('a failed read-back of a draft without HTML adds nothing about HTML', async () => {
+                drafts(originalDraft, null);
+
+                expect(getText(await amend({}))).toBe(`${PENDING}${NOT_CONFIRMED}`);
+            });
         });
 
         test('uploads the new version carrying the card link with one more edit, and nothing else of the old metaData', async () => {
@@ -5477,7 +5728,7 @@ describe('createEmailMCPServer', () => {
             test('the tool description says what an amend carries and adds, and how it keeps a reply threaded', () => {
                 const registered = (createEmailMCPServer({ wildDuckClient: mockWildDuck }).instance as unknown as RegisteredToolInstance)._registeredTools.amendAndResubmitDraft;
 
-                expect(registered.description).toBe('Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. The new version keeps the draft\'s Cc addresses and attachments unless you override them (cc, removeAttachments), and adds the files you name in addAttachments; kept and added together it carries at most 50 attachments, 25.0 MB in all. The result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended or could not be confirmed. An amended reply stays in its conversation: it is threaded from the message it replies to while that is still in the inbox or archive and the subject is not empty, and otherwise from the original draft\'s own In-Reply-To and References headers; the result says whether that was confirmed. A pending draft\'s approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.');
+                expect(registered.description).toBe('Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. The new version keeps the draft\'s Cc addresses and attachments unless you override them (cc, removeAttachments), and adds the files you name in addAttachments; kept and added together it carries at most 50 attachments, 25.0 MB in all. The result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended or could not be confirmed. Omitting body keeps the draft\'s text and its HTML version; a new markdown body replaces both, and a new plain-text body removes the HTML version; the result says which, and warns if the stored HTML version is not what was uploaded. An amended reply stays in its conversation: it is threaded from the message it replies to while that is still in the inbox or archive and the subject is not empty, and otherwise from the original draft\'s own In-Reply-To and References headers; the result says whether that was confirmed. A pending draft\'s approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.');
                 expect(registered.description).not.toContain('cannot attach');
             });
 
@@ -5496,7 +5747,7 @@ describe('createEmailMCPServer', () => {
 
                 expect(['subject', 'body', 'to'].map(field => (shape[field] as { description?: string }).description)).toEqual([
                     'New subject line (omit to keep the original)',
-                    'New plain text body (omit to keep the original)',
+                    'New body: plain text, or markdown with bodyFormat "markdown". Omit to keep the original body, its HTML version included.',
                     'New To address(es) (omit to keep the original)',
                 ]);
             });

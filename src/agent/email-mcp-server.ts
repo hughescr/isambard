@@ -7,11 +7,11 @@ import { buildAdminRejectedSubsection } from './context-builder';
 import { AMEND_DEADLINE_MS, createDraftAmender } from './email-amend';
 import { buildAttachments, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, saveEmailAttachments, type AttachmentProblem, type ContainedFileReader, type LocalAttachmentSource } from './email-attachments';
 import { failureDetail, recordEmailToolFailure, withEmailToolErrorHandling, type EmailToolErrorCode } from './email-tool-errors';
-import { counted, displayName } from './email-tool-text';
+import { amendError, counted, displayName } from './email-tool-text';
 import { mcpTextResult, withHealthGuard, withWriteHealthGuard } from './mcp-helpers';
 import { EmailFolder } from '@/config';
 // eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { checkEmailSendDelivery, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type SearchEmailAddress, type WildDuckClient, type WildDuckMessage, type WildDuckSearchParams, type WildDuckSearchRow } from '@/integrations/email';
+import { checkEmailSendDelivery, composeEmailBody, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, htmlMarker, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type ComposedEmailBody, type DraftApprovalMeta, type EmailBodyFormat, type WildDuckAttachment, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type MarkdownBodyProblem, type SearchEmailAddress, type WildDuckClient, type WildDuckMessage, type WildDuckSearchParams, type WildDuckSearchRow, type WildDuckUploadPayload } from '@/integrations/email';
 import type { DeliveryCheck, ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { createDeadline, openContainedForRead } from '@/utils';
@@ -179,9 +179,23 @@ const ATTACHMENTS_DESCRIPTION = `Files to attach: ${ATTACHMENT_PATH_RULES} At mo
 /** What `amendAndResubmitDraft` says of the reply threading it keeps. */
 const AMEND_THREADING_DESCRIPTION = 'An amended reply stays in its conversation: it is threaded from the message it replies to while that is still in the inbox or archive and the subject is not empty, and otherwise from the original draft\'s own In-Reply-To and References headers; the result says whether that was confirmed.';
 
-/** The tool text for local attachments refused before anything was uploaded. */
-function attachmentRefusal(problem: AttachmentProblem): CallToolResult {
+/** The tool text for local attachments or a markdown body refused before anything was uploaded. */
+function uploadRefusal(problem: AttachmentProblem | MarkdownBodyProblem): CallToolResult {
     return { content: [{ type: 'text' as const, text: `Nothing was saved or sent: ${problem.problem}.` }], isError: true };
+}
+
+/** What every body-taking tool says of markdown. */
+const MARKDOWN_BODY_DESCRIPTION = 'Use markdown when formatting helps the reader: lists, links, emphasis, headings, quotes, code or tables. The email then has a plain-text version and an HTML version, both rendered from your markdown. The plain-text version shows each link as its text and then its whole destination in brackets ("the docs [https://example.com/docs]"), or just once when the text is exactly the destination, or is the address of a mailto: to that address. Raw HTML in the markdown is shown literally, never interpreted, and images are never embedded (each becomes a link to its URL). A link is clickable only when its destination is at most 2048 characters and is either an absolute http:// or https:// URL with a host and no user name or password, or mailto: and one plain address (no ?subject= or other query, one recipient); any other link is shown as its text and destination, not clickable. The admin sees the plain-text version on the approval card and both versions in the preview. Limits: 64 KB of markdown, 90 KB of rendered text, 500 KB of rendered HTML; lists and quotes cannot nest deeply.';
+
+/** The `bodyFormat` parameter of `sendEmail`, `replyToEmail` and `amendAndResubmitDraft`. */
+const bodyFormatSchema = z.enum(['text', 'markdown']).optional();
+
+/** The `bodyFormat` description: plain text by default, or markdown. */
+const BODY_FORMAT_DESCRIPTION = `How body is written: "text" (the default) sends it exactly as written, as plain text only; "markdown" renders it. ${MARKDOWN_BODY_DESCRIPTION}`;
+
+/** The upload's body fields: the text, and the HTML only when the body has one (a plain-text body uploads exactly its text). */
+function bodyFields(body: ComposedEmailBody): Pick<WildDuckUploadPayload, 'text' | 'html'> {
+    return body.html === undefined ? { text: body.text } : { text: body.text, html: body.html };
 }
 
 /**
@@ -409,6 +423,20 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 return mcpTextResult(`Message saved to Drafts, pending admin approval (draft UID: ${draftUid}).${notes}`);
             }
         }
+    }
+
+    /**
+     * What `sendEmail` and `replyToEmail` upload besides their headers, worked out before anything
+     * is uploaded: the body as composed (a markdown body rendered), then the attached files read
+     * from the working directory only; or the refusal of either, with nothing saved or sent.
+     */
+    async function prepareUpload(bodySource: string, format: EmailBodyFormat | undefined, paths: string[]): Promise<{ body: ComposedEmailBody, attachments: WildDuckAttachment[] } | CallToolResult> {
+        const body = composeEmailBody(bodySource, format);
+        if('problem' in body) {
+            return uploadRefusal(body);
+        }
+        const local = await buildAttachments(attachmentSource, paths);
+        return 'problem' in local ? uploadRefusal(local) : { body, attachments: local.attachments };
     }
 
     /** Whether a reply goes out without approval: never for replyAll (its Cc included), else when the replied-to address is allowlisted. */
@@ -667,7 +695,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     to: z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)])
                         .describe('Recipient email: plain address string or {name, email_address} object, or array of either'),
                     subject:       z.string().describe('Email subject'),
-                    body:          z.string().describe('Email body text'),
+                    body:          z.string().describe('Email body: plain text, or markdown with bodyFormat "markdown"'),
+                    bodyFormat:    bodyFormatSchema.describe(BODY_FORMAT_DESCRIPTION),
                     senderProfile: emailSenderProfileSchema.optional().describe(SENDER_PROFILE_DEFAULT_FORMAL_DESCRIPTION),
                     attachments:   z.array(z.string()).optional().describe(ATTACHMENTS_DESCRIPTION),
                 },
@@ -692,24 +721,22 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // Check rate limit — warn but don't block
                         const rateLimitWarning = buildRateLimitWarning();
 
-                        // Read the attached files from the working directory only, before anything is uploaded.
                         // Stryker disable next-line llm: the schema yields string[] or undefined; arrays are truthy, so ?? and || agree.
-                        const local = await buildAttachments(attachmentSource, args.attachments ?? []);
-                        if('problem' in local) {
-                            return attachmentRefusal(local);
+                        const prepared = await prepareUpload(args.body, args.bodyFormat, args.attachments ?? []);
+                        if('content' in prepared) {
+                            return prepared;
                         }
-                        const { attachments } = local;
+                        const { body, attachments } = prepared;
 
-                        // Upload to Drafts
+                        // Upload to Drafts, recording the digest of any HTML part with the new UID.
                         const uid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
                             from,
                             to:       toAddresses,
                             subject:  args.subject,
-                            // Stryker disable next-line llm: sendEmail's schema requires body to be a string, so a nullish fallback is inert.
-                            text:     args.body,
+                            ...bodyFields(body),
                             ...(attachments.length > 0 ? { attachments } : {}),
                             draft:    true,
-                            metaData: { previewToken: newPreviewToken() },
+                            metaData: { previewToken: newPreviewToken(), ...htmlMarker(body.html) },
                         });
 
                         // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
@@ -724,7 +751,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 'Reply to an existing email. If recipient is on the allowlist, sends immediately. Otherwise, saves to Drafts for admin approval.',
                 {
                     message:       mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format to reply to'),
-                    body:          z.string().describe('Reply body text'),
+                    body:          z.string().describe('Reply body: plain text, or markdown with bodyFormat "markdown"'),
+                    bodyFormat:    bodyFormatSchema.describe(BODY_FORMAT_DESCRIPTION),
                     mode:          z.enum(['reply', 'replyAll']).describe('Reply mode: reply to sender only, or reply-all'),
                     senderProfile: emailSenderProfileSchema.optional().describe(SENDER_PROFILE_DEFAULT_FORMAL_DESCRIPTION),
                     attachments:   z.array(z.string()).optional().describe(ATTACHMENTS_DESCRIPTION),
@@ -775,20 +803,19 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                 };
                             }
 
-                            // Read the attached files from the working directory only, before anything is uploaded.
-                            const local = await buildAttachments(attachmentSource, args.attachments ?? []);
-                            if('problem' in local) {
-                                return attachmentRefusal(local);
+                            const prepared = await prepareUpload(args.body, args.bodyFormat, args.attachments ?? []);
+                            if('content' in prepared) {
+                                return prepared;
                             }
-                            const { attachments } = local;
+                            const { body, attachments } = prepared;
 
-                            // Upload to Drafts with WildDuck reference for threading.
+                            // Upload to Drafts with WildDuck reference for threading, recording the
+                            // digest of any HTML part with the new UID.
                             // WildDuck derives all recipients (To, Cc) from the reference object automatically.
                             const uid = await wildDuckClient.uploadMessage(EmailFolder.Drafts, {
                                 from,
                                 subject:   `Re: ${original.subject ?? ''}`,
-                                // Stryker disable next-line llm: the reply tool schema requires body to be a string, so a nullish empty-string fallback is inert.
-                                text:      args.body,
+                                ...bodyFields(body),
                                 reference: {
                                     action:  args.mode === 'replyAll' ? 'replyAll' : 'reply',
                                     mailbox: mailboxWildDuckId,
@@ -796,7 +823,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                 },
                                 ...(attachments.length > 0 ? { attachments } : {}),
                                 draft:    true,
-                                metaData: { previewToken: newPreviewToken() },
+                                metaData: { previewToken: newPreviewToken(), ...htmlMarker(body.html) },
                             });
 
                             return submitOrRequestApproval('replyToEmail', uid, isReplyAllowed(args.mode, primaryTo), rateLimitWarning, `Reply sent to ${primaryTo}.`);
@@ -843,11 +870,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
             tool(
                 'amendAndResubmitDraft',
-                `Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. The new version keeps the draft's Cc addresses and attachments unless you override them (cc, removeAttachments), and adds the files you name in addAttachments; kept and added together it carries at most ${MAX_ATTACHMENTS} attachments, ${formatAttachmentSize(MAX_ATTACHMENT_BYTES)} in all. The result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended or could not be confirmed. ${AMEND_THREADING_DESCRIPTION} A pending draft's approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.`,
+                `Amend a pending or rejected draft and resubmit it for admin approval. Reads the existing draft, applies your changes, and re-uploads it as a new draft UID, replacing the old one. The new version keeps the draft's Cc addresses and attachments unless you override them (cc, removeAttachments), and adds the files you name in addAttachments; kept and added together it carries at most ${MAX_ATTACHMENTS} attachments, ${formatAttachmentSize(MAX_ATTACHMENT_BYTES)} in all. The result says how many Cc addresses and attachments the stored new version has, and warns if they differ from what was intended or could not be confirmed. Omitting body keeps the draft's text and its HTML version; a new markdown body replaces both, and a new plain-text body removes the HTML version; the result says which, and warns if the stored HTML version is not what was uploaded. ${AMEND_THREADING_DESCRIPTION} A pending draft's approval card is updated in place; a rejected draft gets a new card. A draft the admin has approved cannot be amended.`,
                 {
                     message:           draftsMailboxMessageRefSchema.describe('The pending or rejected draft to amend, in Drafts:UID format'),
                     subject:           z.string().optional().describe('New subject line (omit to keep the original)'),
-                    body:              z.string().optional().describe('New plain text body (omit to keep the original)'),
+                    body:              z.string().optional().describe('New body: plain text, or markdown with bodyFormat "markdown". Omit to keep the original body, its HTML version included.'),
+                    bodyFormat:        bodyFormatSchema.describe(`How the new body is written; give it only with body. ${BODY_FORMAT_DESCRIPTION} A new plain-text body removes the draft's HTML version.`),
                     to:                z.union([emailAddressSchema, z.array(emailAddressSchema).min(1)]).optional().describe('New To address(es) (omit to keep the original)'),
                     cc:                z.union([emailAddressSchema, z.array(emailAddressSchema)]).optional().describe('New Cc address(es), replacing the draft\'s Cc: plain address string or {name, email_address} object, or array of either. Omit to keep the draft\'s Cc; pass an empty array to remove every Cc address.'),
                     removeAttachments: z.union([z.literal('all'), z.array(z.string())]).optional().describe('Attachments to drop from the draft: "all", or an array of filenames (each drops every attachment with exactly that name). Omit to keep every attachment. A filename the draft does not have refuses the amend and changes nothing.'),
@@ -867,6 +895,16 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         const { uid } = args.message;
                         const draftRef = formatMailboxMessageRef(args.message);
 
+                        // Compose the new body before anything is read: a bodyFormat without a body,
+                        // or a markdown body the renderer refuses, changes nothing.
+                        if(args.body === undefined && args.bodyFormat !== undefined) {
+                            return amendError(`Could not amend draft ${draftRef}: bodyFormat was given without body; give the new body with it, or leave both out to keep the draft's body. Nothing was changed.`);
+                        }
+                        const body = args.body === undefined ? undefined : composeEmailBody(args.body, args.bodyFormat);
+                        if(body !== undefined && 'problem' in body) {
+                            return amendError(`Could not amend draft ${draftRef}: ${body.problem}. Nothing was changed.`);
+                        }
+
                         // Normalize args.to and args.cc: undefined → keep the draft's addresses; structured/plain string → array
                         const to = uploadAddresses(normalizeToAddresses(args.to));
                         const cc = uploadAddresses(normalizeToAddresses(args.cc));
@@ -878,7 +916,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // superseded (#161), all within one AMEND_DEADLINE_MS budget. The card is
                         // presented after the key is released (lock order is card key, then draft key).
                         const amended = await withDraftLock(uid, AMEND_DEADLINE_MS, async signal => amender.replaceAmendedDraft(uid, draftRef, {
-                            from, subject: args.subject, body: args.body, to, cc, removeAttachments: args.removeAttachments, addAttachments: args.addAttachments,
+                            from, subject: args.subject, body, to, cc, removeAttachments: args.removeAttachments, addAttachments: args.addAttachments,
                         }, signal));
                         if('content' in amended) {
                             return amended;

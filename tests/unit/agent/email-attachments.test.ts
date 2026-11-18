@@ -212,6 +212,14 @@ describe('readLocalAttachments', () => {
         expect(result).toEqual({ problem: 'the attachments come to more than the 25.0 MB one email can carry' });
     });
 
+    test('refuses files that pass the budget by a single byte', async () => {
+        const read = fakeReader({ a: '123456', b: '12345' });
+        const budget = { remaining: 10 };
+        const result = await readLocalAttachments({ root: ROOT, read }, [plan('a', 'a', 'a'), plan('b', 'b', 'b')], budget);
+        expect(budget.remaining).toBe(-1);
+        expect(result).toEqual({ problem: 'the attachments come to more than the 25.0 MB one email can carry' });
+    });
+
     test('accepts files that use up the budget exactly', async () => {
         const read = fakeReader({ a: '12345', b: '12345' });
         const budget = { remaining: 10 };
