@@ -355,7 +355,7 @@ export class EmailOutboundApprovals {
 
     /**
      * Note an approved send for Izzy without opening a turn: the send has not happened yet, and
-     * the outcome reporter tells Izzy (waking her) once it has succeeded or failed. A thrown or
+     * the outcome reporter tells Izzy (waking them) once it has succeeded or failed. A thrown or
      * false-returning notify never fails the approval.
      */
     announceApproved(uid: number): void {

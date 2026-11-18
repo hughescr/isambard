@@ -334,7 +334,7 @@ export class ApprovedOutboundActionBackend extends DynamoTableAccess {
      * Escalate the listed unknown episode of an `unverified` row to the admin (#125): mark it
      * `escalated` with its outcome report pending, so the reporter redraws its card with the
      * admin's controls and pings the admin. When the listed row's report had already been
-     * delivered, it is reopened, marked as notified to Izzy (she was already told the outcome is
+     * delivered, it is reopened, marked as notified to Izzy (they were already told the outcome is
      * unknown); when its interim report is still pending — Izzy or the card not yet told — the
      * escalation joins that report and leaves whether Izzy was told as it is, so an undelivered
      * interim report never holds the escalation back. Conditioned on the row still being

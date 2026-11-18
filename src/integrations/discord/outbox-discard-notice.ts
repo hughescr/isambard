@@ -1,5 +1,5 @@
 /**
- * Notices telling Izzy that the outbox discarded one of her queued Discord messages undelivered
+ * Notices telling Izzy that the outbox discarded one of their queued Discord messages undelivered
  * (#141). A reply dropped because its target was deleted is told by the replay itself
  * (`describeDroppedReply`); this module covers the discards the drainer decides.
  */
@@ -40,8 +40,8 @@ export function describeDiscardedMessage(item: OutboxItem, reason: DrainerDiscar
 }
 
 /**
- * The drainer's discard reporter: tells Izzy about a discarded `agent_response` (her own words)
- * and returns whether she could be told. Other outbox types are discarded without a notice.
+ * The drainer's discard reporter: tells Izzy about a discarded `agent_response` (their own words)
+ * and returns whether they could be told. Other outbox types are discarded without a notice.
  */
 export function createOutboxDiscardReporter(notify: NotifyFn): OutboxDiscardReporter {
     return (item, reason) => item.type !== 'agent_response' || notify(describeDiscardedMessage(item, reason));

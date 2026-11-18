@@ -83,7 +83,7 @@ export type ApprovalCardRef = z.infer<typeof approvalCardRefSchema>;
  * state, drops it on a retry reset, and the outcome reporter clears it only once the card and
  * Izzy have both been told.
  * `outcomeNotified` records accepted handoff to Izzy separately from the card edit, so a
- * restart with a pending card does not notify her again. It is cleared with the pending marker
+ * restart with a pending card does not notify them again. It is cleared with the pending marker
  * after both halves finish and on every new state revision. There is still a best-effort crash
  * window between notification acceptance and persisting this flag (external effects cannot be
  * atomic); persisting first instead would silently lose a notification.

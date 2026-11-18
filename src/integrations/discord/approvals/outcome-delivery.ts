@@ -99,7 +99,7 @@ const NO_CARD: ShownCard = {};
  *
  * An escalated unknown outcome (#125) is delivered the same way, on the same reporter loop, so
  * its card edit is ordered with every other outcome of the row: the card gains the admin's
- * controls, and Izzy is not told again (unless she has not yet taken the interim report). Once
+ * controls, and Izzy is not told again (unless they have not yet taken the interim report). Once
  * the card shows the controls (or can never be edited), the admin is pinged in the admin channel,
  * mentioning only the admin and linking the card; a row with no editable card gets the controls
  * on the ping itself — whether or not Izzy has been told. The ping is sent only while the row has

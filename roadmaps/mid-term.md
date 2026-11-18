@@ -26,7 +26,7 @@
 
 ## Deferred: Session Introspection & Forking (claude-agent-sdk)
 - The SDK exposes `listSessions`, `getSessionInfo`, `getSessionMessages`, and `forkSession` top-level functions
-- Today Izzy tracks session IDs via `src/storage/task-session/backend.ts` but cannot introspect her own past transcripts except through memory-logged summaries
+- Today Izzy tracks session IDs via `src/storage/task-session/backend.ts` but cannot introspect their own past transcripts except through memory-logged summaries
 - Build a new MCP server (e.g. `src/agent/session-mcp-server.ts`) exposing tools to list past sessions, inspect their metadata/messages, and branch from a past point via `forkSession`
 - Useful for richer self-reflection and parallel exploration (e.g. perch forks from last interactive session instead of linear resume)
 - Evaluate once the Phase 2 hook foundation is stable and a concrete use case emerges

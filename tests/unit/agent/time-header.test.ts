@@ -123,7 +123,7 @@ describe('formatTimeHeader', () => {
         }
     });
 
-    test('gives Izzy her own time-of-day bucket, distinct from the user\'s', () => {
+    test('gives Izzy their own time-of-day bucket, distinct from the user\'s', () => {
         const originalTimezone = process.env.TZ;
         process.env.TZ = 'UTC';
 

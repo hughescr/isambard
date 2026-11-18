@@ -92,7 +92,7 @@ describe('describeDiscardedMessage', () => {
 });
 
 describe('createOutboxDiscardReporter', () => {
-    test('notifies Izzy of a discarded agent response and returns whether she could be told', () => {
+    test('notifies Izzy of a discarded agent response and returns whether they could be told', () => {
         const notify = mock((_params: NotifyParams): boolean => false);
         const report = createOutboxDiscardReporter(notify);
         const item = makeItem();

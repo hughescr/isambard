@@ -55,7 +55,7 @@ const outboxProgressSchema = z.object({
     deliveredParts: z.number().int().min(0).optional(),
     /**
      * A terminal disposition the drainer already decided but could not finish (Izzy could not be
-     * told yet, or the delete failed after she was). Such a row is never resent: a later pass
+     * told yet, or the delete failed after they were). Such a row is never resent: a later pass
      * reports it and discards it with this reason.
      */
     pendingDiscard: drainerDiscardReasonSchema.optional(),

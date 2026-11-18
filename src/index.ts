@@ -727,7 +727,7 @@ async function buildAppLifecycle(registerCleanup: (step: Omit<ShutdownStep, 'onF
         // Jev classifies known Discord send rejections as retry/abandon when Resource.TypesafeApiKey
         // is configured; an absent/empty key leaves the classifier on the deterministic retry fallback.
         failureClassifier: createJevOutboxFailureClassifier({ apiKey: config.typesafe?.apiKey }),
-        // Tells Izzy about every other discard of one of her queued messages (#141).
+        // Tells Izzy about every other discard of one of their queued messages (#141).
         reportDiscard:     createOutboxDiscardReporter(notificationBridge.notify),
         logger,
     });
