@@ -5,7 +5,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { buildAdminRejectedSubsection } from './context-builder';
 import { AMEND_DEADLINE_MS, createDraftAmender } from './email-amend';
-import { buildAttachments, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, saveEmailAttachments, type AttachmentProblem, type ContainedFileReader, type LocalAttachmentSource } from './email-attachments';
+import { buildAttachments, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, saveEmailAttachments, saveFullEmailBody, type AttachmentProblem, type ContainedFileReader, type LocalAttachmentSource } from './email-attachments';
 import { failureDetail, recordEmailToolFailure, withEmailToolErrorHandling, type EmailToolErrorCode } from './email-tool-errors';
 import { amendError, counted, displayName } from './email-tool-text';
 import { mcpTextResult, withHealthGuard, withWriteHealthGuard } from './mcp-helpers';
@@ -542,7 +542,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
             tool(
                 'getEmailContent',
-                'Fetch the full content of an email by its Mailbox:UID reference and mark it as read. An HTML email\'s body is its HTML converted to text, each link shown as "label [url]"; a body over the size limit is cut, and its last line then says how much of it is shown.',
+                'Fetch the full content of an email by its Mailbox:UID reference and mark it as read. An HTML email\'s body is its HTML converted to text, each link shown as "label [url]"; a body over the size limit is cut, its last line then says how much of it is shown, and the full text is saved to a file whose path and size in bytes follow the body.',
                 {
                     message: mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
@@ -570,6 +570,8 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             // Lazy-fetch and save attachments using WildDuck's mailbox and UID identity.
                             // Stryker disable next-line llm: getFullMessage normalizes attachmentMeta to an array, which is always truthy.
                             const attachmentLines = await saveEmailAttachments(wildDuckClient, folder, uid, email.attachmentMeta);
+                            // A body that was cut has its whole text saved beside the attachments, for Izzy to read the rest.
+                            const fullBodyLine = email.fullBodyText === undefined ? undefined : await saveFullEmailBody(folder, uid, email.fullBodyText);
 
                             const toList = email.to.map(addr => formatAddressForDisplay(addr)).join(', ');
                             const lines = ([
@@ -580,6 +582,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                 `Date: ${email.date.toISOString()}`,
                                 '',
                                 email.bodyText,
+                                fullBodyLine,
                                 ...(attachmentLines.length > 0 ? ['\nAttachments:', ...attachmentLines] : []),
                             ]).filter(line => line !== undefined);
                             const text = lines.join('\n');

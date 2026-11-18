@@ -1,5 +1,5 @@
 import { logger } from '@hughescr/logger';
-import { messageBodyText } from './body-text';
+import { messageBody } from './body-text';
 import { EmailFolder } from '@/config';
 import { WildDuckError, WildDuckAuthError } from '@/errors';
 import { formatMailboxMessageRef, parseMailboxMessageRef, type EmailMetadata, type EmailAddress, type EmailHeaders, type SearchEmailAddress, type VerificationResults } from '@/integrations/email/types';
@@ -168,6 +168,8 @@ export interface WildDuckAttachmentMeta {
 interface WildDuckEmailMetadata extends EmailMetadata {
     /** WildDuck attachment metadata (IDs + names) for lazy fetching */
     attachmentMeta: WildDuckAttachmentMeta[]
+    /** The whole body text, uncut; present only when `bodyText` was cut at `maxBodySizeBytes` */
+    fullBodyText?:  string
 }
 
 interface WildDuckAddress {
@@ -1085,7 +1087,7 @@ export class WildDuckClient {
     }
 
     private mapFullMessage(response: FullMessageResponse): WildDuckEmailMetadata {
-        const bodyText = messageBodyText(response.text, response.html, this.options.maxBodySizeBytes ?? 50_000);
+        const body = messageBody(response.text, response.html, this.options.maxBodySizeBytes ?? 50_000);
 
         // Map addresses
         const from = response.from ? mapAddress(response.from) : { address: '' };
@@ -1118,7 +1120,7 @@ export class WildDuckClient {
             subject:        response.subject ?? '',
             // Stryker disable next-line llm: date is contractually non-null, and undefined and an empty string both produce Invalid Date.
             date:           new Date(response.date),
-            bodyText,
+            ...body,
             // Stryker disable next-line NumberLiteralValue: the fallback is compared only with > 0, so any non-positive value is equivalent.
             hasAttachments: (response.attachments?.length ?? 0) > 0,
             headers,

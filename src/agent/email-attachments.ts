@@ -227,6 +227,39 @@ export async function buildAttachments(source: LocalAttachmentSource, filePaths:
 const AMEND_ATTACHMENT_DEADLINE_MS = 60_000;
 
 /**
+ * Where an email's files are saved, keyed by mailbox and UID: its absolute directory and the same
+ * directory relative to Izzy's working directory (`attachments/email-<hash>`, the form shown to
+ * Izzy). Attachments live in `attachment-<hash>` folders inside it, the full body text beside them.
+ */
+function emailFilesLocation(mailboxName: string, uid: number): { directory: string, relativeDirectory: string } {
+    // ast-grep-ignore: security-no-weak-hash-literal -- sha1 shortens a stable mailbox/UID cache key for a directory name; it does not protect security or integrity
+    const hash = createHash('sha1').update(JSON.stringify([mailboxName, uid])).digest('hex');
+    return { directory: path.join(process.cwd(), 'attachments', `email-${hash}`), relativeDirectory: `attachments/email-${hash}` };
+}
+
+/** The name of the file holding a cut body's full text, in the email's directory. */
+const FULL_BODY_FILENAME = 'full-body.txt';
+
+/**
+ * Save the whole text of a body that was cut to a file in the email's directory, written afresh on
+ * every call (a draft's text can change). Best-effort: a failure is logged and recorded, and
+ * becomes a note. Returns the line for the email content display, giving the relative path and the
+ * size in bytes.
+ */
+export async function saveFullEmailBody(mailboxName: string, uid: number, fullBodyText: string): Promise<string> {
+    const { directory, relativeDirectory } = emailFilesLocation(mailboxName, uid);
+    try {
+        await mkdir(directory, { recursive: true });
+        await writeFile(path.join(directory, FULL_BODY_FILENAME), fullBodyText, 'utf8');
+        return `Full body text (${Buffer.byteLength(fullBodyText)} bytes) saved to ${relativeDirectory}/${FULL_BODY_FILENAME}`;
+    } catch (error) {
+        const failure = recordEmailToolFailure('getEmailContent', error);
+        logger.warn({ reference: failure.reference, msg: 'Failed to save full body text (best-effort)' });
+        return `Note: could not save the full body text (${failure.code}; reference ${failure.reference}).`;
+    }
+}
+
+/**
  * Save email attachments to disk (lazy-fetch from WildDuck, keyed by mailbox, UID, and attachment ID).
  * Returns lines suitable for appending to the email content display.
  */
@@ -236,9 +269,7 @@ export async function saveEmailAttachments(
     uid:            number,
     attachmentMeta: WildDuckAttachmentMeta[]
 ): Promise<string[]> {
-    // ast-grep-ignore: security-no-weak-hash-literal -- sha1 shortens a stable mailbox/UID cache key for a directory name; it does not protect security or integrity
-    const hash          = createHash('sha1').update(JSON.stringify([mailboxName, uid])).digest('hex');
-    const attachmentDir = path.join(process.cwd(), 'attachments', `email-${hash}`);
+    const { directory: attachmentDir, relativeDirectory } = emailFilesLocation(mailboxName, uid);
     const usedFilenames = new Set<string>();
     const namedAttachments = attachmentMeta.map((meta) => {
         const safeBase     = sanitizeFilename(meta.filename);
@@ -248,7 +279,7 @@ export async function saveEmailAttachments(
     });
     const limit = pLimit(2);
     const groups = await Promise.all(namedAttachments.map(({ meta, safeFilename }) => limit(() => saveOneEmailAttachment(
-        wildDuckClient, mailboxName, uid, meta, safeFilename, attachmentDir, hash
+        wildDuckClient, mailboxName, uid, meta, safeFilename, attachmentDir, relativeDirectory
     ))));
     return groups.flat();
 }
@@ -260,7 +291,7 @@ async function saveOneEmailAttachment(
     meta: WildDuckAttachmentMeta,
     safeFilename: string,
     attachmentDir: string,
-    hash: string
+    relativeDirectory: string
 ): Promise<string[]> {
     try {
         // ast-grep-ignore: security-no-weak-hash-literal -- sha1 shortens the attachment ID for a directory name; it does not protect security or integrity
@@ -285,7 +316,7 @@ async function saveOneEmailAttachment(
                 return videoLines;
             }
         }
-        return [`- attachments/email-${hash}/attachment-${attachmentHash}/${safeFilename} (${meta.contentType})`];
+        return [`- ${relativeDirectory}/attachment-${attachmentHash}/${safeFilename} (${meta.contentType})`];
     } catch (error) {
         // The failure's own text (WildDuck's response body, say) goes to the log only.
         const failure = recordEmailToolFailure('getEmailContent', error);

@@ -1,13 +1,16 @@
 import { describe, test, expect } from 'bun:test';
-import { messageBodyText } from '@/integrations/email/body-text';
+import { messageBody } from '@/integrations/email/body-text';
 
 /** Plenty of room: no test below is about the size limit unless it says so. */
 const ROOMY = 50_000;
 
+/** The (possibly cut) body text alone. */
+const messageBodyText = (text: string | undefined, html: string[] | undefined, maxBytes: number): string => messageBody(text, html, maxBytes).bodyText;
+
 /** The body built from HTML parts alone. */
 const fromHtml = (...html: string[]): string => messageBodyText(undefined, html, ROOMY);
 
-describe('messageBodyText', () => {
+describe('messageBody', () => {
     describe('choosing the part', () => {
         test('builds the body from the HTML when there is a text part too', () => {
             expect(messageBodyText('the text part', ['<p>the <b>HTML</b> part</p>'], ROOMY)).toBe('the HTML part');
@@ -147,6 +150,25 @@ describe('messageBodyText', () => {
 
         test('backs up exactly one byte from the continuation byte of a two-byte character', () => {
             expect(messageBodyText('aé', undefined, 2)).toBe('a\n[body truncated: showing the first 1 of 3 bytes]');
+        });
+    });
+
+    describe('the full text of a cut body', () => {
+        test('carries the whole text part, uncut, beside the cut body', () => {
+            expect(messageBody('abcdef', undefined, 5)).toEqual({ bodyText: 'abcde\n[body truncated: showing the first 5 of 6 bytes]', fullBodyText: 'abcdef' });
+        });
+
+        test('carries the text built from HTML, converted once, not the HTML', () => {
+            expect(messageBody('the text part', ['<p><b>abcdefgh</b></p>'], 5)).toEqual({ bodyText: 'abcde\n[body truncated: showing the first 5 of 8 bytes]', fullBodyText: 'abcdefgh' });
+        });
+
+        test('carries the text part uncut when the HTML yields nothing', () => {
+            expect(messageBody('abcdef', ['<div>&nbsp;</div>'], 5).fullBodyText).toBe('abcdef');
+        });
+
+        test('has no full text when the body fits, not even an undefined one', () => {
+            expect(messageBody('abcde', undefined, 5)).toEqual({ bodyText: 'abcde' });
+            expect(Object.keys(messageBody('abcde', undefined, 5))).toEqual(['bodyText']);
         });
     });
 });

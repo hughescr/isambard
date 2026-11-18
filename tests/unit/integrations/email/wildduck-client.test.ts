@@ -3932,6 +3932,29 @@ describe('WildDuckClient', () => {
             expect(result?.bodyText).toBe(`${'A'.repeat(10)}\n[body truncated: showing the first 10 of 100 bytes]`);
         });
 
+        test('keeps the whole body text beside the cut one, so only readers of fullBodyText see more', async () => {
+            const client = new WildDuckClient({ ...CLIENT_OPTIONS, maxBodySizeBytes: 10 });
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(AUTH_RESPONSE));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse(MAILBOX_RESPONSE));
+            await client.init();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...FULL_MESSAGE_RESPONSE, text: 'A'.repeat(100) }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.fullBodyText).toBe('A'.repeat(100));
+            expect(result?.bodyText).toBe(`${'A'.repeat(10)}\n[body truncated: showing the first 10 of 100 bytes]`);
+        });
+
+        test('has no fullBodyText key when the body was not cut', async () => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...FULL_MESSAGE_RESPONSE, text: 'short' }));
+
+            const result = await client.getFullMessage('CleanInbox', 42);
+
+            expect(result?.bodyText).toBe('short');
+            expect(result).not.toHaveProperty('fullBodyText');
+        });
+
         test('uses the documented 50,000-byte default body limit', async () => {
             const client = await makeInitializedClient();
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...FULL_MESSAGE_RESPONSE, text: 'A'.repeat(50_001) }));

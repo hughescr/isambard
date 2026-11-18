@@ -30,14 +30,23 @@ const htmlToText = compile({
     ],
 });
 
+/** A message's body as text: cut to the size limit, and the whole text too when it was cut. */
+export interface MessageBody {
+    /** The body, cut to the size limit with a last line saying so when it was longer. */
+    bodyText:      string
+    /** The whole body text, uncut; present only when `bodyText` was cut. */
+    fullBodyText?: string
+}
+
 /**
  * `body` cut to at most `maxBytes` bytes of UTF-8, backing up to a whole character, with a last
- * line saying how many bytes of how many are shown; a body within the limit is returned as it is.
+ * line saying how many bytes of how many are shown, and the whole `body` beside it; a body within
+ * the limit is returned as it is, with no full text.
  */
-function truncateBody(body: string, maxBytes: number): string {
+function truncateBody(body: string, maxBytes: number): MessageBody {
     const bytes = Buffer.from(body, 'utf8');
     if(bytes.length <= maxBytes) {
-        return body;
+        return { bodyText: body };
     }
     let end = maxBytes;
     // A Buffer created from UTF-8 text cannot start with a continuation byte, so this stops at byte zero at the latest.
@@ -46,15 +55,16 @@ function truncateBody(body: string, maxBytes: number): string {
         end--;
     }
     // Stryker disable next-line llm: Buffer.slice is the deprecated alias of subarray; both return the same view.
-    return `${bytes.subarray(0, end).toString('utf8')}\n[body truncated: showing the first ${end} of ${bytes.length} bytes]`;
+    return { bodyText: `${bytes.subarray(0, end).toString('utf8')}\n[body truncated: showing the first ${end} of ${bytes.length} bytes]`, fullBodyText: body };
 }
 
 /**
  * A message's body as text, from its plain-text part and its HTML parts (WildDuck returns one
  * string per HTML part): the HTML parts joined and converted ({@link htmlToText}) when they yield
- * anything but whitespace, else the text part unchanged; then cut to `maxBytes` ({@link truncateBody}).
+ * anything but whitespace, else the text part unchanged; then cut to `maxBytes` ({@link truncateBody}),
+ * keeping the whole text when it is cut.
  */
-export function messageBodyText(text: string | undefined, html: string[] | undefined, maxBytes: number): string {
+export function messageBody(text: string | undefined, html: string[] | undefined, maxBytes: number): MessageBody {
     const fromHtml = html === undefined ? '' : htmlToText(html.join('\n'));
     return truncateBody(fromHtml.trim() === '' ? text ?? '' : fromHtml, maxBytes);
 }

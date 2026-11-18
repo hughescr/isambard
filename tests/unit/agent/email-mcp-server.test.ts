@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn, jest } from 'bun:test';
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { buildAdminRejectedSubsection } from '../../../src/agent/context-builder';
 import { buildAttachments, MAX_ATTACHMENT_BYTES, type ContainedFileReader } from '../../../src/agent/email-attachments';
@@ -319,7 +320,7 @@ describe('createEmailMCPServer', () => {
 
         test.each([
             ['checkInbox',      'Check CleanInbox for emails. Returns counter state and message summaries. By default only unread; set showSeen to include read messages.'],
-            ['getEmailContent', 'Fetch the full content of an email by its Mailbox:UID reference and mark it as read. An HTML email\'s body is its HTML converted to text, each link shown as "label [url]"; a body over the size limit is cut, and its last line then says how much of it is shown.'],
+            ['getEmailContent', 'Fetch the full content of an email by its Mailbox:UID reference and mark it as read. An HTML email\'s body is its HTML converted to text, each link shown as "label [url]"; a body over the size limit is cut, its last line then says how much of it is shown, and the full text is saved to a file whose path and size in bytes follow the body.'],
             ['archiveEmail',      'Move an email from CleanInbox to Archive.'],
             ['getRejectedDrafts', 'List drafts rejected by admin review.'],
         ])('should have %s tool with correct description', (toolName, expectedDescription) => {
@@ -563,6 +564,103 @@ describe('createEmailMCPServer', () => {
             const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent')({ message: 'CleanInbox:42' });
 
             expect(getText(result).endsWith('\n\nSee [https://example.com/p]\n[body truncated: showing the first 28 of 90000 bytes]')).toBe(true);
+        });
+
+        describe('the full text of a cut body', () => {
+            const FULL_BODY = 'さようなら '.repeat(40);
+            const FULL_BODY_BYTES = Buffer.byteLength(FULL_BODY);
+            const CUT_BODY = 'さようなら\n[body truncated: showing the first 15 of 640 bytes]';
+            const HASH = createHash('sha1').update(JSON.stringify(['Archive', 61])).digest('hex');
+            const RELATIVE_PATH = `attachments/email-${HASH}/full-body.txt`;
+            type FullMessage = NonNullable<Awaited<ReturnType<WildDuckClient['getFullMessage']>>>;
+
+            /** A message in Archive with the given body fields and `attachmentMeta` empty unless given. */
+            const message = (bodyText: string, overrides: Partial<FullMessage> = {}): FullMessage => ({
+                bodyText,
+                uid:            61,
+                messageId:      '<cut@example.com>',
+                from:           { address: 'sender@example.com' },
+                to:             [{ address: 'recipient@example.com' }],
+                cc:             [],
+                subject:        'Long',
+                date:           new Date('2025-01-01T00:00:00.000Z'),
+                hasAttachments: false,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [],
+                ...overrides,
+            });
+
+            /** A message whose body was cut. */
+            const cutMessage = (overrides: Partial<FullMessage> = {}): FullMessage => message(CUT_BODY, { fullBodyText: FULL_BODY, ...overrides });
+
+            const readCut = async (): Promise<CallToolResult> => getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent')({ message: 'Archive:61' });
+
+            test('saves the whole body beside the attachments and says where, right after the cut body', async () => {
+                mockWildDuck.getFullMessage = mock(async () => cutMessage());
+
+                const result = await readCut();
+
+                expect(mockFsPromises.mkdir).toHaveBeenCalledTimes(1);
+                expect(mockFsPromises.mkdir).toHaveBeenCalledWith(path.join(process.cwd(), 'attachments', `email-${HASH}`), { recursive: true });
+                expect(mockFsPromises.writeFile).toHaveBeenCalledTimes(1);
+                expect(mockFsPromises.writeFile).toHaveBeenCalledWith(path.join(process.cwd(), RELATIVE_PATH), FULL_BODY, 'utf8');
+                expect(getText(result)).toBe(`From: sender@example.com\nTo: recipient@example.com\nSubject: Long\nDate: 2025-01-01T00:00:00.000Z\n\n${CUT_BODY}\nFull body text (${FULL_BODY_BYTES} bytes) saved to ${RELATIVE_PATH}`);
+            });
+
+            test('puts the full-body line before the Attachments block', async () => {
+                mockWildDuck.getFullMessage = mock(async () => cutMessage({ attachmentMeta: [{ id: 'att-1', filename: 'a.pdf', contentType: 'application/pdf', sizeKb: 1 }] }));
+                mockWildDuck.getAttachment = mock(async () => Buffer.from('pdf'));
+
+                const result = await readCut();
+
+                const attachmentHash = createHash('sha1').update('att-1').digest('hex');
+                expect(getText(result).split(`${CUT_BODY}\n`).at(1)).toBe(`Full body text (${FULL_BODY_BYTES} bytes) saved to ${RELATIVE_PATH}\n\nAttachments:\n- attachments/email-${HASH}/attachment-${attachmentHash}/a.pdf (application/pdf)`);
+            });
+
+            test('writes the file on every read, without checking whether it exists', async () => {
+                mockWildDuck.getFullMessage = mock(async () => cutMessage());
+
+                await readCut();
+                await readCut();
+
+                expect(mockFsPromises.access).not.toHaveBeenCalled();
+                expect(mockFsPromises.writeFile).toHaveBeenCalledTimes(2);
+            });
+
+            test('writes nothing and adds no line when the body was not cut', async () => {
+                mockWildDuck.getFullMessage = mock(async () => message('short'));
+
+                const result = await readCut();
+
+                expect(mockFsPromises.mkdir).not.toHaveBeenCalled();
+                expect(mockFsPromises.writeFile).not.toHaveBeenCalled();
+                expect(getText(result)).toBe('From: sender@example.com\nTo: recipient@example.com\nSubject: Long\nDate: 2025-01-01T00:00:00.000Z\n\nshort');
+            });
+
+            test('still returns the email, with a note giving the code and reference, when the file cannot be written', async () => {
+                mockWildDuck.getFullMessage = mock(async () => cutMessage());
+                mockFsPromises.writeFile.mockRejectedValueOnce(new Error('disk full'));
+
+                const result = await readCut();
+
+                const reference = lastFailureReference();
+                expect(result.isError).toBeUndefined();
+                expect(getText(result).endsWith(`\n\n${CUT_BODY}\nNote: could not save the full body text (unavailable; reference ${reference}).`)).toBe(true);
+                expect(getText(result)).not.toContain('disk full');
+                expect(mockLogger.warn).toHaveBeenCalledWith({ reference, msg: 'Failed to save full body text (best-effort)' });
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getEmailContent', reference, detail: 'disk full' }));
+            });
+
+            test('still returns the email when the directory cannot be made', async () => {
+                mockWildDuck.getFullMessage = mock(async () => cutMessage());
+                mockFsPromises.mkdir.mockRejectedValueOnce(new Error('read-only'));
+
+                const result = await readCut();
+
+                expect(getText(result)).toContain('Note: could not save the full body text (unavailable; reference ');
+                expect(mockFsPromises.writeFile).not.toHaveBeenCalled();
+            });
         });
 
         test('should mark email as Seen using Mailbox:UID', async () => {

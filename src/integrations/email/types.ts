@@ -107,7 +107,7 @@ export interface EmailMetadata {
     subject:              string
     /** Date header */
     date:                 Date
-    /** Plain text body (truncated at maxBodySizeBytes) */
+    /** Body text, cut at maxBodySizeBytes with a last line saying how much is shown */
     bodyText:             string
     /** Whether message has attachments */
     hasAttachments:       boolean
