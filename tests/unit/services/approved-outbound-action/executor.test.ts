@@ -1502,6 +1502,8 @@ describe('createApprovedOutboundActionExecutor', () => {
 
 describe('classifyFailure', () => {
     const zodError = z.object({ uid: z.number() }).safeParse({ uid: 'x' }).error;
+    /** A context whose status is not a number, as untyped code could still build one. */
+    const UNTYPED_STATUS_CONTEXT: Record<string, unknown> = { status: '500' };
 
     const cases: [string, unknown, 'transient' | 'permanent' | 'ambiguous'][] = [
         ['a ZodError (unreadable params)', zodError, 'permanent'],
@@ -1527,7 +1529,7 @@ describe('classifyFailure', () => {
         ['a WildDuckError with status 404 (the draft may already be in Sent Mail)', new WildDuckError('gone', undefined, { status: 404 }), 'ambiguous'],
         ['a WildDuckError with status 500', new WildDuckError('down', undefined, { status: 500 }), 'ambiguous'],
         ['a WildDuckError with status 503', new WildDuckError('down', undefined, { status: 503 }), 'ambiguous'],
-        ['a WildDuckError with a non-numeric status', new WildDuckError('odd', undefined, { status: '500' }), 'transient'],
+        ['a WildDuckError with a non-numeric status', new WildDuckError('odd', undefined, UNTYPED_STATUS_CONTEXT), 'transient'],
         ['a WildDuck request timeout', new DOMException('The operation timed out.', 'TimeoutError'), 'ambiguous'],
         ['an aborted request', new DOMException('The operation was aborted.', 'AbortError'), 'ambiguous'],
         ['a fetch TypeError', new TypeError('fetch failed'), 'ambiguous'],

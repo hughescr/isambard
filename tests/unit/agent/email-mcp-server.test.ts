@@ -3,9 +3,10 @@ import { createHash } from 'node:crypto';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { buildAdminRejectedSubsection } from '../../../src/agent/context-builder';
 import { buildAttachments, createEmailMCPServer, type EmailApprovalCardPort, type RestrictedMailboxNotification } from '../../../src/agent/email-mcp-server';
+import { EMAIL_TOOL_ERROR_SENTENCES, type EmailToolErrorCode } from '../../../src/agent/email-tool-errors';
 import { ApprovalCardEditGate } from '../../../src/integrations/discord/approvals/card-edit-gate';
 import { EmailOutboundApprovals } from '../../../src/integrations/email/outbound-approvals';
-import { WildDuckError, type AttachmentStream, type WildDuckClient, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckSearchParams, type WildDuckUploadPayload } from '../../../src/integrations/email/wildduck-client';
+import { WildDuckAuthError, WildDuckError, type AttachmentStream, type WildDuckClient, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckSearchParams, type WildDuckUploadPayload } from '../../../src/integrations/email/wildduck-client';
 import type { ApprovedOutboundAction } from '../../../src/services';
 import type { ServiceHealthRegistry } from '../../../src/services/health-registry';
 import type { TokenBucketRateLimiter } from '../../../src/services/rate-limiters/token-bucket';
@@ -136,6 +137,35 @@ describe('createEmailMCPServer', () => {
             return record.text;
         }
         return '';
+    };
+
+    /** The reference the last logged email tool failure carried, which its tool text repeats. */
+    const lastFailureReference = (): string => {
+        const entry = mockLogger.warn.mock.calls.map(([logged]) => logged as { msg?: string, reference?: string }).findLast(logged => logged.msg === 'Email tool failed');
+        return entry?.reference ?? 'no failure logged';
+    };
+
+    /** The classified tool text for a failure of `tool` with `code`, carrying the last logged reference. */
+    const failureText = (tool: string, code: EmailToolErrorCode): string => `${tool} failed (${code}): ${EMAIL_TOOL_ERROR_SENTENCES[code]} Reference: ${lastFailureReference()}.`;
+
+    /** A WildDuck call that hangs until `signal` aborts, then rejects with its reason; an already-aborted signal rejects at once. */
+    const untilAborted = async (signal: AbortSignal | undefined): Promise<never> => new Promise<never>((_resolve, reject) => {
+        if(signal?.aborted) {
+            reject(signal.reason as Error);
+        }
+        signal?.addEventListener('abort', () => {
+            reject(signal.reason as Error);
+        });
+    });
+
+    const realCreateDeadline = utils.createDeadline;
+
+    /** Replaces the `ms` deadline with one this test aborts, leaving every other deadline real. */
+    const controlDeadline = (ms: number): { controller: AbortController, clear: ReturnType<typeof mock>, spy: ReturnType<typeof spyOn<typeof utils, 'createDeadline'>> } => {
+        const controller = new AbortController();
+        const clear = mock(() => undefined);
+        const spy = spyOn(utils, 'createDeadline').mockImplementation(duration => (duration === ms ? { signal: controller.signal, clear } : realCreateDeadline(duration)));
+        return { controller, clear, spy };
     };
 
     test('attachment read failures preserve the missing path in message and context', async () => {
@@ -366,14 +396,13 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({});
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Error: listMessages connection failed');
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'checkInbox' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('checkInbox', 'unavailable') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'checkInbox', detail: 'listMessages connection failed', msg: 'Email tool failed' }));
         });
 
-        test('should handle WildDuck getMailboxCounts error gracefully', async () => {
+        test('should handle WildDuck getMailboxCounts timeout gracefully', async () => {
             mockWildDuck.getMailboxCounts = mock(async () => {
-                throw new Error('WildDuck timeout');
+                throw new DOMException('The operation timed out.', 'TimeoutError');
             });
 
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
@@ -381,8 +410,7 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({});
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Error: WildDuck timeout');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('checkInbox', 'timeout') }], isError: true });
         });
 
         test('should handle non-Error listMessages failure gracefully', async () => {
@@ -395,8 +423,8 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({});
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('listMessages error string');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('checkInbox', 'unavailable') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'checkInbox', error: 'string', detail: 'listMessages error string' }));
         });
 
         test('should call listMessages with unseen filter when showSeen is false', async () => {
@@ -467,8 +495,8 @@ describe('createEmailMCPServer', () => {
             });
             const handler = getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent');
             const result = await handler({ message: 'CleanInbox:42' });
-            expect(result.isError).toBe(true);
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getEmailContent', error: 'read failed' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('getEmailContent', 'unavailable') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getEmailContent', detail: 'read failed', msg: 'Email tool failed' }));
         });
 
         test('should fetch email and return formatted content using Mailbox:UID format', async () => {
@@ -635,8 +663,7 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:1' });
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Error:');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('getEmailContent', 'unavailable') }], isError: true });
         });
 
         test('should include date in formatted output', async () => {
@@ -1322,6 +1349,36 @@ describe('createEmailMCPServer', () => {
             expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ filename: 'broken.pdf', msg: 'Failed to save attachment (best-effort)' }));
         });
 
+        test('notes an attachment WildDuck failed to deliver by its code and reference, never WildDuck\'s text', async () => {
+            mockWildDuck.getFullMessage = mock(async () => ({
+                uid:            53,
+                messageId:      '',
+                from:           { address: 'sender@example.com' },
+                to:             [{ address: 'recipient@example.com' }],
+                cc:             [],
+                subject:        'Documents',
+                date:           new Date('2025-01-01T00:00:00.000Z'),
+                bodyText:       'See attached',
+                hasAttachments: true,
+                headers:        {},
+                attachments:    [],
+                attachmentMeta: [{ id: 'ATT1', filename: 'report.pdf', contentType: 'application/pdf', sizeKb: 1 }],
+            }));
+            mockWildDuck.getAttachment = mock(async () => {
+                throw new WildDuckError('WildDuck API error: 502 Bad Gateway: <html>upstream page</html>', undefined, { status: 502, kind: 'http' });
+            });
+            mockFsPromises.access.mockRejectedValueOnce(new Error('ENOENT'));
+            mockFsPromises.mkdir.mockResolvedValueOnce(undefined);
+
+            const result = await getToolHandler(createEmailMCPServer({ wildDuckClient: mockWildDuck }), 'getEmailContent')({ message: 'CleanInbox:53' });
+
+            const reference = lastFailureReference();
+            expect(getText(result).split('\n').at(-1)).toBe(`- Note: could not save attachment report.pdf (unavailable; reference ${reference}).`);
+            expect(getText(result)).not.toContain('upstream page');
+            expect(mockLogger.warn).toHaveBeenCalledWith({ filename: 'report.pdf', reference, msg: 'Failed to save attachment (best-effort)' });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getEmailContent', reference, status: 502, detail: 'WildDuck API error: 502 Bad Gateway: <html>upstream page</html>' }));
+        });
+
         test('should show processed video frames and fall back to the saved file after processing fails', async () => {
             mockWildDuck.getFullMessage = mock(async () => ({
                 uid:            52,
@@ -1634,9 +1691,9 @@ describe('createEmailMCPServer', () => {
             expect(text).not.toContain('UID 7 ');
         });
 
-        test('should handle move error gracefully', async () => {
+        test('should handle a move WildDuck answers 404 as not found', async () => {
             mockWildDuck.moveMessage = mock(async () => {
-                throw new Error('Move failed: folder not found');
+                throw new WildDuckError('WildDuck API error: 404 Not Found: {"error":"Message not found"}', undefined, { status: 404, kind: 'http' });
             });
 
             const server = createEmailMCPServer({ wildDuckClient: mockWildDuck });
@@ -1644,9 +1701,8 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:7' });
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Error: Move failed: folder not found');
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'archiveEmail' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('archiveEmail', 'not_found') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'archiveEmail', status: 404, msg: 'Email tool failed' }));
         });
 
         test('should handle non-Error move failure gracefully', async () => {
@@ -1659,8 +1715,7 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:3' });
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Network timeout');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('archiveEmail', 'unavailable') }], isError: true });
         });
 
         test('should archive from any accessible mailbox (not just CleanInbox)', async () => {
@@ -1946,9 +2001,9 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('To: (none)');
         });
 
-        test('should handle WildDuck search error gracefully', async () => {
+        test('should handle a WildDuck search refusal gracefully, never echoing WildDuck\'s text', async () => {
             mockSearchWildDuck.search = mock(async () => {
-                throw new Error('WildDuck API unavailable');
+                throw new WildDuckError('WildDuck API error: 400 Bad Request: {"error":"invalid query"}', undefined, { status: 400, kind: 'http' });
             });
 
             const server = createEmailMCPServer({ wildDuckClient: mockSearchWildDuck });
@@ -1956,9 +2011,8 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({});
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('Error: WildDuck API unavailable');
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'searchEmail' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('searchEmail', 'refused') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'searchEmail', status: 400, kind: 'http', detail: 'WildDuck API error: 400 Bad Request: {"error":"invalid query"}' }));
         });
 
         test('should handle non-Error WildDuck failure gracefully', async () => {
@@ -1971,8 +2025,7 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({});
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('connection refused');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('searchEmail', 'unavailable') }], isError: true });
         });
 
         test('should log warning on search error', async () => {
@@ -2007,6 +2060,8 @@ describe('createEmailMCPServer', () => {
             ]);
             mockSendWildDuck = {
                 uploadMessage:         mockUploadMessage,
+                // The draft read before a direct send, for its Message-ID and Date.
+                getMessage:            mock(async (_folder: string, uid: number) => ({ id: uid, messageId: `<draft-${uid}@example.com>`, date: '2026-11-17T10:00:00.000Z', draft: true })),
                 submitMessage:         mockSubmitMessage,
                 getUserAddresses:      mockGetUserAddresses,
                 getMailboxId:          mock(() => 'mbx-drafts'),
@@ -2397,9 +2452,22 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', senderProfile: 'formal' });
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('WildDuck upload failed');
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'sendEmail' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('sendEmail', 'unavailable') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'sendEmail', detail: 'WildDuck upload failed', msg: 'Email tool failed' }));
+            expect(mockSubmitMessage).not.toHaveBeenCalled();
+        });
+
+        test('shows a missing attachment file as Isambard\'s own text, uploading nothing', async () => {
+            mockAllowlist.isAllowed = mock((_platform: string, _value: string) => true);
+            mockFsPromises.readFile.mockImplementation(async () => {
+                throw new Error('ENOENT');
+            });
+            const server = createEmailMCPServer({ wildDuckClient: mockSendWildDuck, allowlist: mockAllowlist });
+
+            const result = await getToolHandler(server, 'sendEmail')({ to: 'alice@example.com', subject: 'Hi', body: 'Hello', attachments: ['/tmp/missing.pdf'] });
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Error: Attachment file not found: /tmp/missing.pdf' }], isError: true });
+            expect(mockUploadMessage).not.toHaveBeenCalled();
         });
 
         test('should return failure message when presenting the approval card throws', async () => {
@@ -2929,9 +2997,8 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ message: 'CleanInbox:42', body: 'Reply', mode: 'reply', senderProfile: 'formal' });
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('getMessage failed');
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'replyToEmail' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('replyToEmail', 'unavailable') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'replyToEmail', detail: 'getMessage failed', msg: 'Email tool failed' }));
         });
 
         test('should return error when getMessage returns null', async () => {
@@ -3228,8 +3295,8 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBeUndefined();
             expect(getText(result)).toBe('Draft Drafts:42 deleted.');
-            expect(mockGetMessageDelete).toHaveBeenCalledWith('Drafts', 42);
-            expect(mockDeleteMessage).toHaveBeenCalledWith('Drafts', 42);
+            expect(mockGetMessageDelete).toHaveBeenCalledWith('Drafts', 42, expect.any(AbortSignal));
+            expect(mockDeleteMessage).toHaveBeenCalledWith('Drafts', 42, expect.any(AbortSignal));
             expect(mockGetMessageDelete.mock.invocationCallOrder[0]).toBeLessThan(mockDeleteMessage.mock.invocationCallOrder[0]);
         });
 
@@ -3306,7 +3373,7 @@ describe('createEmailMCPServer', () => {
 
             await handler({ message: 'Drafts:99' });
 
-            expect(mockDeleteMessage).toHaveBeenCalledWith('Drafts', 99);
+            expect(mockDeleteMessage).toHaveBeenCalledWith('Drafts', 99, expect.any(AbortSignal));
         });
 
         test('should return error when deleteMessage throws', async () => {
@@ -3320,9 +3387,8 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ message: 'Drafts:42' });
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('WildDuck delete failed');
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'deleteDraft' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('deleteDraft', 'unavailable') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'deleteDraft', detail: 'WildDuck delete failed', msg: 'Email tool failed' }));
         });
 
         describe('under the draft lock', () => {
@@ -3569,7 +3635,7 @@ describe('createEmailMCPServer', () => {
 
             const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
 
-            expect(mockDeleteMessageAmend.mock.calls).toEqual([['Drafts', 42]]);
+            expect(mockDeleteMessageAmend.mock.calls).toEqual([['Drafts', 42, expect.any(AbortSignal)]]);
             expect(mockDeleteMessageAmend.mock.invocationCallOrder[0]).toBeLessThan(mockSendApprovalRequest.mock.invocationCallOrder[0]);
             expect(markSuperseded).not.toHaveBeenCalled();
             expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}`);
@@ -3666,7 +3732,7 @@ describe('createEmailMCPServer', () => {
             expect(getText(result)).toContain('pending admin approval');
             expect(getText(result)).toContain('55');
             expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}`);
-            expect(mockGetMessageAmend).toHaveBeenCalledWith('Drafts', 42);
+            expect(mockGetMessageAmend).toHaveBeenCalledWith('Drafts', 42, expect.any(AbortSignal));
             const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
             expect(payload.subject).toBe('Updated Subject');
             expect(payload).not.toHaveProperty('replacePrevious');
@@ -3821,9 +3887,8 @@ describe('createEmailMCPServer', () => {
 
             const result: CallToolResult = await handler({ message: 'Drafts:42' });
 
-            expect(result.isError).toBe(true);
-            expect(getText(result)).toContain('WildDuck unavailable');
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'amendAndResubmitDraft' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('amendAndResubmitDraft', 'unavailable') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'amendAndResubmitDraft', detail: 'WildDuck unavailable', msg: 'Email tool failed' }));
         });
 
         test('should return failure message when sendApprovalRequest fails', async () => {
@@ -3921,7 +3986,8 @@ describe('createEmailMCPServer', () => {
             expect(result.isError).toBeUndefined();
             expect(mockUploadMessageAmend).toHaveBeenCalledWith(
                 expect.objectContaining({ subject: '', text: '' }),
-                42
+                42,
+                expect.any(AbortSignal)
             );
         });
 
@@ -4694,13 +4760,11 @@ describe('createEmailMCPServer', () => {
 
                     test('passes one deadline to every fetch and stands it down once they finish', async () => {
                         original = { ...originalDraft, attachments: [REPORT, PHOTO] };
-                        const controller = new AbortController();
-                        const clear = mock(() => undefined);
-                        const deadline = spyOn(utils, 'createDeadline').mockReturnValueOnce({ signal: controller.signal, clear });
+                        const { controller, clear, spy: deadline } = controlDeadline(60_000);
                         try {
                             await amend();
 
-                            expect(deadline.mock.calls[0]).toEqual([60_000]);
+                            expect(deadline.mock.calls.map(([ms]) => ms)).toContain(60_000);
                             expect(clear).toHaveBeenCalledTimes(1);
                             const signals = mockOpenStream.mock.calls.map(call => call[3]);
                             expect(signals.map(signal => signal.aborted)).toEqual([false, false]);
@@ -4723,7 +4787,7 @@ describe('createEmailMCPServer', () => {
                 test('reads the new version back once, under its own deadline, and states what it stores', async () => {
                     const result = await amend();
 
-                    expect(mockGetMessageAmend.mock.calls).toEqual([['Drafts', 42], ['Drafts', 55, expect.any(AbortSignal)]]);
+                    expect(mockGetMessageAmend.mock.calls).toEqual([['Drafts', 42, expect.any(AbortSignal)], ['Drafts', 55, expect.any(AbortSignal)]]);
                     expect(getText(result)).toBe(`${PENDING}${CARRIED}`);
                 });
 
@@ -4823,7 +4887,7 @@ describe('createEmailMCPServer', () => {
                     const result = await amend();
 
                     expect(uploaded().reference).toEqual(REPLY_REFERENCE);
-                    expect(mockGetMessageAmend.mock.calls).toEqual([['Drafts', 42], ['Drafts', 55, expect.any(AbortSignal)]]);
+                    expect(mockGetMessageAmend.mock.calls).toEqual([['Drafts', 42, expect.any(AbortSignal)], ['Drafts', 55, expect.any(AbortSignal)]]);
                     expect(getText(result)).toBe(`${PENDING}${NOTHING_CARRIED}${THREAD_KEPT}`);
                 });
 
@@ -5227,8 +5291,9 @@ describe('createEmailMCPServer', () => {
 
                 const result = await getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42' });
 
-                expect(result.isError).toBe(true);
-                expect(getText(result)).toContain(`${failing} failed`);
+                expect(result).toEqual({ content: [{ type: 'text', text: failureText('amendAndResubmitDraft', 'unavailable') }], isError: true });
+                expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'amendAndResubmitDraft', detail: `${failing} failed`, msg: 'Email tool failed' }));
+                expect(present).not.toHaveBeenCalled();
                 expect(events).toEqual(expected);
             });
 
@@ -5291,7 +5356,7 @@ describe('createEmailMCPServer', () => {
 
                 const [payload] = mockUploadMessageAmend.mock.calls[0] as [Record<string, unknown>, number];
                 expect(payload).toMatchObject({ subject: 'Fresh Subject', text: 'Fresh body', to: [{ address: 'fresh@example.com' }], metaData: { approvalCard: { ...LINK, edits: 5 } } });
-                expect(mockGetMessageAmend.mock.calls).toEqual([['Drafts', 42], ['Drafts', 55, expect.any(AbortSignal)]]);
+                expect(mockGetMessageAmend.mock.calls).toEqual([['Drafts', 42, expect.any(AbortSignal)], ['Drafts', 55, expect.any(AbortSignal)]]);
                 expect(present.mock.calls).toEqual([[55, 42]]);
                 expect(result.isError).toBeUndefined();
             });
@@ -5493,8 +5558,8 @@ describe('createEmailMCPServer', () => {
             }) } as unknown as WildDuckClient;
             const server = createEmailMCPServer({ wildDuckClient });
             const result = await getToolHandler(server, 'getRejectedDrafts')({});
-            expect(result.isError).toBe(true);
-            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getRejectedDrafts' }), 'MCP tool error');
+            expect(result).toEqual({ content: [{ type: 'text', text: failureText('getRejectedDrafts', 'unavailable') }], isError: true });
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getRejectedDrafts', detail: 'search unavailable', msg: 'Email tool failed' }));
         });
         test('should return an empty-but-valid result when admin-rejection search is empty', async () => {
             const wildDuckClient = {
@@ -5561,6 +5626,362 @@ describe('createEmailMCPServer', () => {
 
             expect(result.isError).toBe(true);
             expect(wildDuckClient.searchByKeyword).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('a bound on every WildDuck call under a draft key (#202)', () => {
+        let events: string[];
+        let draftLocks: { acquire: ReturnType<typeof mock> };
+
+        beforeEach(() => {
+            events = [];
+            draftLocks = {
+                acquire: mock(async (key: string) => {
+                    events.push(`acquire ${key}`);
+                    return () => {
+                        events.push(`release ${key}`);
+                    };
+                }),
+            };
+        });
+
+        afterEach(() => {
+            jest.restoreAllMocks();
+            jest.useRealTimers();
+        });
+
+        describe('deleteDraft', () => {
+            const draft = { id: 42, draft: true, metaData: {} };
+
+            test('gives the read and the delete one signal, aborted 45 s after the key is taken and stood down once they finish', async () => {
+                const { controller, clear, spy } = controlDeadline(45_000);
+                const getMessage = mock(async (_folder: string, _uid: number, _signal?: AbortSignal) => draft);
+                const deleteMessage = mock(async (_folder: string, _uid: number, _signal?: AbortSignal) => undefined);
+                const server = createEmailMCPServer({ wildDuckClient: { getMessage, deleteMessage } as unknown as WildDuckClient, draftLocks });
+
+                expect(getText(await getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' }))).toBe('Draft Drafts:42 deleted.');
+
+                expect(spy.mock.calls).toEqual([[45_000]]);
+                expect(clear).toHaveBeenCalledTimes(1);
+                expect(getMessage.mock.calls[0]?.[2]).toBe(controller.signal);
+                expect(deleteMessage.mock.calls[0]?.[2]).toBe(controller.signal);
+            });
+
+            test('fails as a timeout at exactly 45 s, not a millisecond earlier, releasing the key', async () => {
+                jest.useFakeTimers();
+                const deleteMessage = mock(async (_folder: string, _uid: number, signal?: AbortSignal) => untilAborted(signal));
+                const server = createEmailMCPServer({ wildDuckClient: { getMessage: mock(async () => draft), deleteMessage } as unknown as WildDuckClient, draftLocks });
+                let settled = false;
+
+                const deleting = getToolHandler(server, 'deleteDraft')({ message: 'Drafts:42' }).finally(() => {
+                    settled = true;
+                });
+                await drainMicrotasks(50);
+                jest.advanceTimersByTime(44_999);
+                await drainMicrotasks(50);
+                expect(settled).toBe(false);
+                jest.advanceTimersByTime(1);
+                const result = await deleting;
+
+                expect(result).toEqual({ content: [{ type: 'text', text: `deleteDraft failed (timeout): The mail server did not answer in time, so it is not known whether this took effect. Check the current state (search or list again) before trying again. Reference: ${lastFailureReference()}.` }], isError: true });
+                expect(events).toEqual(['acquire email-draft:42', 'release email-draft:42']);
+                expect(jest.getTimerCount()).toBe(0);
+            });
+        });
+
+        describe('amendAndResubmitDraft', () => {
+            const ATTACHMENT = { id: 'ATT00001', filename: 'a.txt', contentType: 'text/plain', sizeKb: 1, size: 3 };
+            const original = { id: 42, draft: true, subject: 'S', to: [{ address: 'to@example.com' }], cc: [], text: 'body', references: [], metaData: {}, attachments: [ATTACHMENT] };
+            const PENDING = 'Message saved to Drafts, pending admin approval (draft UID: 55).';
+            let client: Record<string, ReturnType<typeof mock>>;
+
+            const amend = async (): Promise<CallToolResult> => {
+                const server = createEmailMCPServer({ wildDuckClient: client as unknown as WildDuckClient, draftLocks, approvalCards: cardPort(mock(async () => 'posted')) });
+                return getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42', body: 'new body' });
+            };
+
+            beforeEach(() => {
+                client = {
+                    getUserAddresses: mock(async () => [{ id: '1', address: 'formal@example.com', name: 'Izzy', main: false, tags: ['formal'] }]),
+                    getMailboxId:     mock(() => undefined),
+                    getMessage:       mock(async (_folder: string, uid: number, signal?: AbortSignal) => {
+                        signal?.throwIfAborted();
+                        return uid === 42 ? original : { id: 55, cc: [], attachments: [ATTACHMENT], references: [] };
+                    }),
+                    openAttachmentStream: mock(async (_folder: string, _uid: number, _id: string, _signal?: AbortSignal) => ({
+                        status: 200, body: new Response('abc').body, contentLength: 3,
+                    })),
+                    uploadReplacingDraft: mock(async (_payload: unknown, _uid: number, _signal?: AbortSignal) => ({ id: 55, previousDeleted: false })),
+                    deleteMessage:        mock(async (_folder: string, _uid: number, _signal?: AbortSignal) => undefined),
+                };
+            });
+
+            test('ties every WildDuck call under the key to one 120 s budget, stood down once the locked section ends', async () => {
+                const { controller, clear, spy } = controlDeadline(120_000);
+
+                expect(getText(await amend())).toBe(`${PENDING} Cc: 0 addresses (kept from the original draft). Attachments: 1 kept from the original draft, 0 removed.`);
+
+                expect(spy.mock.calls.map(([ms]) => ms)).toEqual([120_000, 60_000, 10_000]);
+                expect(clear).toHaveBeenCalledTimes(1);
+                const signals = [
+                    ...client.getMessage.mock.calls.map(call => call[2] as AbortSignal),
+                    client.openAttachmentStream.mock.calls[0]?.[3] as AbortSignal,
+                    client.uploadReplacingDraft.mock.calls[0]?.[2] as AbortSignal,
+                    client.deleteMessage.mock.calls[0]?.[2] as AbortSignal,
+                ];
+                expect(signals).toHaveLength(5);
+                expect(signals.map(signal => signal.aborted)).toEqual([false, false, false, false, false]);
+                controller.abort();
+                expect(signals.map(signal => signal.aborted)).toEqual([true, true, true, true, true]);
+            });
+
+            test('an upload still unanswered at exactly 120 s, not a millisecond earlier, fails as a timeout and releases the key', async () => {
+                jest.useFakeTimers();
+                client.uploadReplacingDraft.mockImplementation(async (_payload: unknown, _uid: number, signal?: AbortSignal) => untilAborted(signal));
+                let settled = false;
+
+                const amending = amend().finally(() => {
+                    settled = true;
+                });
+                await drainMicrotasks(100);
+                jest.advanceTimersByTime(119_999);
+                await drainMicrotasks(50);
+                expect(settled).toBe(false);
+                jest.advanceTimersByTime(1);
+                const result = await amending;
+
+                expect(result).toEqual({ content: [{ type: 'text', text: `amendAndResubmitDraft failed (timeout): The mail server did not answer in time, so it is not known whether this took effect. Check the current state (search or list again) before trying again. Reference: ${lastFailureReference()}.` }], isError: true });
+                expect(events).toEqual(['acquire email-draft:42', 'release email-draft:42']);
+                expect(client.uploadReplacingDraft).toHaveBeenCalledTimes(1);
+                expect(jest.getTimerCount()).toBe(0);
+            });
+
+            test('a budget spent after the upload still reports the new draft and what could not be completed', async () => {
+                jest.useFakeTimers();
+                client.deleteMessage.mockImplementation(async (_folder: string, _uid: number, signal?: AbortSignal) => untilAborted(signal));
+                const markSuperseded = mock(async () => false);
+                const server = createEmailMCPServer({ wildDuckClient: client as unknown as WildDuckClient, draftLocks, approvalCards: cardPort(mock(async () => 'posted'), { markSuperseded }) });
+
+                const amending = getToolHandler(server, 'amendAndResubmitDraft')({ message: 'Drafts:42', body: 'new body' });
+                await drainMicrotasks(100);
+                jest.advanceTimersByTime(120_000);
+                const result = await amending;
+
+                expect(result.isError).toBeUndefined();
+                expect(getText(result)).toBe(`${PENDING} Cc and attachments were sent to WildDuck (0 Cc, 1 attachment kept, 0 removed) but could not be confirmed on the stored draft. Warning: the previous version Drafts:42 could not be removed; delete it with deleteDraft.`);
+                expect(markSuperseded).toHaveBeenCalledWith(42, 55);
+                expect(client.deleteMessage).toHaveBeenCalledTimes(1);
+                expect(events).toEqual(['acquire email-draft:42', 'release email-draft:42']);
+            });
+        });
+    });
+
+    describe('the outcome of a direct send whose submit failed', () => {
+        const DRAFT = { id: 99, messageId: '<draft-99@example.com>', date: '2026-11-17T10:00:00.000Z', draft: true };
+        let client: Record<string, ReturnType<typeof mock>>;
+        let rateLimiter: { isAtLimit: ReturnType<typeof mock>, tokensRemaining: ReturnType<typeof mock>, increment: ReturnType<typeof mock> };
+        const allowlist = { isAllowed: mock(() => true) } as unknown as PersonAllowlist;
+
+        const send = async (): Promise<CallToolResult> => {
+            const server = createEmailMCPServer({ wildDuckClient: client as unknown as WildDuckClient, allowlist, rateLimiter: rateLimiter as unknown as TokenBucketRateLimiter });
+            return getToolHandler(server, 'sendEmail')({ to: 'alice@example.com', subject: 'Hi', body: 'Hello' });
+        };
+        const refusal = (status: number): WildDuckError => new WildDuckError(`WildDuck API error: ${status} Error: upstream says no`, undefined, { status, kind: 'http' });
+        const timeout = (): DOMException => new DOMException('The operation timed out.', 'TimeoutError');
+        /** A WildDuck call that fails with `error`. */
+        const throwing = (error: unknown) => async (): Promise<never> => {
+            throw error;
+        };
+        const notSent = (code: string, notes = ''): string => `Not sent: the mail server refused to send this message (${code}), and it is still an unsent draft, Drafts:99. To try again, delete it with deleteDraft, then send or reply again; if it is refused again, tell the admin. Reference: ${lastFailureReference()}.${notes}`;
+        const unknown = (code: string, notes = ''): string => `Outcome unknown: the mail server did not confirm sending this message (${code}), so it may or may not have gone out (draft Drafts:99). Do not send this again; check Sent Mail later. Reference: ${lastFailureReference()}.${notes}`;
+
+        beforeEach(() => {
+            client = {
+                getUserAddresses:       mock(async () => [{ id: '1', address: 'formal@example.com', name: 'Izzy', main: false, tags: ['formal'] }]),
+                uploadMessage:          mock(async () => 99),
+                getMessage:             mock(async (_folder: string, _uid: number, _signal?: AbortSignal) => DRAFT),
+                submitMessage:          mock(async () => undefined),
+                findMessageByMessageId: mock(async (_folder: string, _messageId: string, _signal?: AbortSignal) => false),
+            };
+            rateLimiter = { isAtLimit: mock(() => false), tokensRemaining: mock(() => 3), increment: mock(() => undefined) };
+        });
+
+        afterEach(() => {
+            jest.restoreAllMocks();
+            jest.useRealTimers();
+        });
+
+        test('reads the draft\'s Message-ID and Date before submitting, and a submit that succeeds is reported as before', async () => {
+            const result = await send();
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Sent successfully.' }] });
+            expect(client.getMessage).toHaveBeenCalledWith('Drafts', 99, expect.any(AbortSignal));
+            expect(client.getMessage.mock.invocationCallOrder[0]).toBeLessThan(client.submitMessage.mock.invocationCallOrder[0]);
+            expect(client.submitMessage).toHaveBeenCalledWith('Drafts', 99);
+            expect(client.findMessageByMessageId).not.toHaveBeenCalled();
+            expect(rateLimiter.increment).toHaveBeenCalledTimes(1);
+        });
+
+        test('a failed submit whose message is in Sent Mail is reported sent, and charged once', async () => {
+            client.submitMessage.mockImplementation(async () => {
+                throw timeout();
+            });
+            client.findMessageByMessageId.mockImplementation(async () => true);
+
+            const result = await send();
+
+            expect(result).toEqual({ content: [{ type: 'text', text: 'Sent successfully. The mail server reported an error, but the message was found in Sent Mail.' }] });
+            expect(client.findMessageByMessageId).toHaveBeenCalledWith('Sent Mail', '<draft-99@example.com>', expect.any(AbortSignal));
+            expect(client.submitMessage).toHaveBeenCalledTimes(1);
+            expect(rateLimiter.increment).toHaveBeenCalledTimes(1);
+        });
+
+        test.each([
+            ['a 4xx refusal', async () => { throw refusal(400); }, 'refused'],
+            ['a 499 refusal', async () => { throw refusal(499); }, 'refused'],
+            ['a refused login', async () => { throw new WildDuckAuthError('WildDuck authentication failed (401)', { kind: 'auth' }); }, 'auth'],
+            ['a request refused before it was sent', async () => { throw new WildDuckError('WildDuck: unknown mailbox path: Drafts', undefined, { kind: 'invalid_request' }); }, 'invalid_request'],
+        ] as const)('%s with the draft untouched in Drafts is reported not sent, kept as its draft, and not charged', async (_label, submit, code) => {
+            client.submitMessage.mockImplementation(submit);
+
+            const result = await send();
+
+            expect(result).toEqual({ content: [{ type: 'text', text: notSent(code) }], isError: true });
+            expect(client.submitMessage).toHaveBeenCalledTimes(1);
+            expect(client.getMessage).toHaveBeenCalledTimes(2);
+            expect(client.getMessage.mock.calls[1]).toEqual(['Drafts', 99, expect.any(AbortSignal)]);
+            expect(rateLimiter.increment).not.toHaveBeenCalled();
+            expect(getText(result)).not.toContain('upstream says no');
+        });
+
+        test.each([
+            ['a timeout', async () => { throw timeout(); }, 'timeout'],
+            ['a 408', async () => { throw refusal(408); }, 'timeout'],
+            ['a 5xx', async () => { throw refusal(503); }, 'unavailable'],
+            ['a 404', async () => { throw refusal(404); }, 'not_found'],
+            ['a network failure', async () => { throw new TypeError('fetch failed'); }, 'unavailable'],
+        ] as const)('%s is reported unknown even with the draft untouched (the submit may still be running), and charged', async (_label, submit, code) => {
+            client.submitMessage.mockImplementation(submit);
+
+            const result = await send();
+
+            expect(result).toEqual({ content: [{ type: 'text', text: unknown(code) }], isError: true });
+            expect(client.submitMessage).toHaveBeenCalledTimes(1);
+            expect(rateLimiter.increment).toHaveBeenCalledTimes(1);
+        });
+
+        test('a refusal whose draft has changed since it was read is reported unknown, and charged', async () => {
+            client.submitMessage.mockImplementation(throwing(refusal(400)));
+            client.getMessage.mockImplementationOnce(async () => DRAFT).mockImplementationOnce(async () => ({ ...DRAFT, date: '2026-11-17T10:00:05.000Z' }));
+
+            expect(getText(await send())).toBe(unknown('refused'));
+            expect(rateLimiter.increment).toHaveBeenCalledTimes(1);
+        });
+
+        test('a refusal whose outcome check fails is reported unknown, and the check failure is logged', async () => {
+            client.submitMessage.mockImplementation(throwing(refusal(400)));
+            client.findMessageByMessageId.mockImplementation(throwing(refusal(502)));
+
+            expect(getText(await send())).toBe(unknown('refused'));
+            expect(mockLogger.warn).toHaveBeenCalledWith({ uid: 99, status: 502, msg: 'Could not check whether a failed send went out' });
+            expect(rateLimiter.increment).toHaveBeenCalledTimes(1);
+        });
+
+        const READ_FAILED = 'Could not read the draft before sending it; a failed send will be reported as unknown';
+        const CHECK_FAILED = 'Could not check whether a failed send went out';
+
+        test.each([
+            ['the read fails', throwing(new TypeError('fetch failed')), [READ_FAILED]],
+            ['the draft is not found', async () => null, []],
+            ['the draft has no Date', async () => ({ ...DRAFT, date: null }), []],
+        ])('when %s before the submit, the send still goes ahead, and a refusal is reported unknown', async (_label, read, logged) => {
+            client.getMessage.mockImplementation(read);
+            client.submitMessage.mockImplementationOnce(async () => undefined).mockImplementationOnce(throwing(refusal(400)));
+
+            expect(getText(await send())).toBe('Sent successfully.');
+            expect(getText(await send())).toBe(unknown('refused'));
+            expect(client.findMessageByMessageId).not.toHaveBeenCalled();
+            const messages = mockLogger.warn.mock.calls.map(([entry]) => (entry as { msg?: string }).msg);
+            const outcomeLogs = new Set<string | undefined>([READ_FAILED, CHECK_FAILED]);
+            expect(messages.filter(msg => outcomeLogs.has(msg))).toEqual([...logged, ...logged]);
+        });
+
+        test('stands down the read\'s and the check\'s deadlines once each is done', async () => {
+            jest.useFakeTimers();
+
+            expect(getText(await send())).toBe('Sent successfully.');
+            expect(jest.getTimerCount()).toBe(0);
+            client.submitMessage.mockImplementation(throwing(refusal(400)));
+            expect(getText(await send())).toBe(notSent('refused'));
+            expect(jest.getTimerCount()).toBe(0);
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'sendEmail', code: 'refused', status: 400, msg: 'Email tool failed' }));
+        });
+
+        test('logs a failed read before the submit by its error name, never its text', async () => {
+            client.getMessage.mockImplementation(throwing(new TypeError('fetch failed')));
+
+            await send();
+
+            expect(mockLogger.warn).toHaveBeenCalledWith({ uid: 99, error: 'TypeError', msg: 'Could not read the draft before sending it; a failed send will be reported as unknown' });
+        });
+
+        test('appends the rate-limit note to each outcome', async () => {
+            rateLimiter.isAtLimit.mockImplementation(() => true);
+            const NOTE = ' Warning: send rate limit reached (3 tokens remaining).';
+
+            client.submitMessage.mockImplementation(throwing(refusal(400)));
+            expect(getText(await send())).toBe(notSent('refused', NOTE));
+            client.submitMessage.mockImplementation(throwing(timeout()));
+            expect(getText(await send())).toBe(unknown('timeout', NOTE));
+            client.findMessageByMessageId.mockImplementation(async () => true);
+            expect(getText(await send())).toBe(`Sent successfully. The mail server reported an error, but the message was found in Sent Mail.${NOTE}`);
+        });
+
+        test('gives up on the read before the submit at exactly 10 s, not a millisecond earlier, then submits', async () => {
+            jest.useFakeTimers();
+            client.getMessage.mockImplementation(async (_folder: string, _uid: number, signal?: AbortSignal) => untilAborted(signal));
+            const sending = send();
+            await drainMicrotasks(50);
+            jest.advanceTimersByTime(9999);
+            await drainMicrotasks(50);
+            expect(client.submitMessage).not.toHaveBeenCalled();
+            jest.advanceTimersByTime(1);
+
+            expect(getText(await sending)).toBe('Sent successfully.');
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('gives up on the outcome check at exactly 20 s, not a millisecond earlier, reporting unknown', async () => {
+            jest.useFakeTimers();
+            client.submitMessage.mockImplementation(throwing(refusal(400)));
+            client.findMessageByMessageId.mockImplementation(async (_folder: string, _id: string, signal?: AbortSignal) => untilAborted(signal));
+            let settled = false;
+            const sending = send().finally(() => {
+                settled = true;
+            });
+            await drainMicrotasks(50);
+            jest.advanceTimersByTime(19_999);
+            await drainMicrotasks(50);
+            expect(settled).toBe(false);
+            jest.advanceTimersByTime(1);
+
+            expect(getText(await sending)).toBe(unknown('refused'));
+            expect(mockLogger.warn).toHaveBeenCalledWith({ uid: 99, error: 'TimeoutError', msg: 'Could not check whether a failed send went out' });
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('replyToEmail\'s direct reply reports the same outcomes, confirming a sent reply with its own text', async () => {
+            const original = { id: 7, subject: 'Hello', from: { address: 'alice@example.com' } };
+            client.getMessage.mockImplementation(async (folder: string) => (folder === 'Drafts' ? DRAFT : original));
+            client.getMailboxId = mock(() => 'mbx-clean');
+            client.submitMessage.mockImplementation(throwing(timeout()));
+            const server = createEmailMCPServer({ wildDuckClient: client as unknown as WildDuckClient, allowlist, rateLimiter: rateLimiter as unknown as TokenBucketRateLimiter });
+            const reply = async (): Promise<CallToolResult> => getToolHandler(server, 'replyToEmail')({ message: 'CleanInbox:7', body: 'Thanks', mode: 'reply' });
+
+            expect(getText(await reply())).toBe(unknown('timeout'));
+            expect(mockLogger.warn).toHaveBeenCalledWith(expect.objectContaining({ tool: 'replyToEmail', code: 'timeout', msg: 'Email tool failed' }));
+            client.findMessageByMessageId.mockImplementation(async () => true);
+            expect(getText(await reply())).toBe('Reply sent to alice@example.com. The mail server reported an error, but the message was found in Sent Mail.');
         });
     });
 

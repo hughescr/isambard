@@ -208,7 +208,7 @@ describe('setupEmail — isSendableChannel type guard', () => {
 
     it('deletes a draft on the process-wide gate\'s draft key, so it waits for an admin decision in flight', async () => {
         const getMessage = mock(async () => ({ id: 8, draft: true, metaData: {} }));
-        const deleteMessage = mock(async (_folder: string, _uid: number) => undefined);
+        const deleteMessage = mock(async (_folder: string, _uid: number, _signal?: AbortSignal) => undefined);
         options.wildDuckClient = { ...options.wildDuckClient, getMessage, deleteMessage } as unknown as WildDuckClient;
         const result = await setupEmail(options);
         const releaseDraft = approvalCardEditGate.hold('email-draft:8');
@@ -219,7 +219,7 @@ describe('setupEmail — isSendableChannel type guard', () => {
 
         releaseDraft();
         const response = await deleting;
-        expect(deleteMessage.mock.calls).toEqual([['Drafts', 8]]);
+        expect(deleteMessage.mock.calls).toEqual([['Drafts', 8, expect.any(AbortSignal)]]);
         expect((response.content[0] as { text: string }).text).toBe('Draft Drafts:8 deleted.');
     });
 

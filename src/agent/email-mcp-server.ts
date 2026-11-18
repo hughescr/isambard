@@ -7,12 +7,13 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 import { buildAdminRejectedSubsection } from './context-builder';
-import { mcpTextResult, withHealthGuard, withToolErrorHandling, withWriteHealthGuard } from './mcp-helpers';
+import { recordEmailToolFailure, withEmailToolErrorHandling, type EmailToolErrorCode } from './email-tool-errors';
+import { mcpTextResult, withHealthGuard, withWriteHealthGuard } from './mcp-helpers';
 import { EmailFolder } from '@/config';
 import { EmailProcessingError, WildDuckError } from '@/errors';
 // eslint-disable-next-line @hughescr/module-boundaries/dependencies -- The MCP server is the email integration's public agent-facing boundary.
-import { amendedDraftMeta, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, isWildDuckAttachmentId, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckUploadPayload } from '@/integrations/email';
-import type { ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
+import { amendedDraftMeta, checkEmailSendDelivery, draftLockKey, draftsMailboxMessageRefSchema, emailSenderProfileSchema, formatAddressForDisplay, formatAttachmentSize, formatMailboxMessageRef, hasDecisionMarker, isWildDuckAttachmentId, mailboxMessageRefSchema, newPreviewToken, readDraftApprovalMeta, searchDraftsByReviewState, type DraftApprovalMeta, type DraftLocks, type EmailSenderProfile, type MailboxMessageRef, type WildDuckClient, type WildDuckAttachment, type WildDuckAttachmentMeta, type WildDuckMessage, type WildDuckMessageAttachment, type WildDuckUploadPayload } from '@/integrations/email';
+import type { DeliveryCheck, ServiceHealthRegistry, ReconnectionLoop, TokenBucketRateLimiter } from '@/services';
 import type { PersonAllowlist } from '@/storage';
 import { sanitizeFilename, deduplicateFilename, processLocalVideo, createSpawnRunner, createBinarySpawnRunner, createDeadline, discardBody } from '@/utils';
 /** Mailboxes accessible directly by the agent without admin review. */
@@ -105,6 +106,29 @@ const AMEND_ATTACHMENT_DEADLINE_MS = 60_000;
 
 /** How long an amend waits to read its new version back from WildDuck while it holds the draft's key. */
 const AMEND_READ_BACK_DEADLINE_MS = 10_000;
+
+/**
+ * The most time all of an amend's WildDuck calls under the draft's key may take together: the
+ * read, the attachment fetches (inside their own {@link AMEND_ATTACHMENT_DEADLINE_MS}), the
+ * upload, the old UID's delete and the read-back (inside its own {@link AMEND_READ_BACK_DEADLINE_MS}).
+ */
+const AMEND_DEADLINE_MS = 120_000;
+
+/** The most time `deleteDraft`'s read and delete under the draft's key may take together. */
+const DELETE_DRAFT_DEADLINE_MS = 45_000;
+
+/** How long a direct send waits to read its draft's Message-ID and Date before submitting it. */
+const SEND_FINGERPRINT_DEADLINE_MS = 10_000;
+
+/** How long a direct send whose submit failed looks for what happened to it. */
+const SEND_OUTCOME_CHECK_DEADLINE_MS = 20_000;
+
+/**
+ * The failures that prove WildDuck refused a submit before handing anything over for delivery: a
+ * 4xx answer (other than a 404 or 408), a refused login, or a request refused before it was sent.
+ * Any other failure may leave a submit still running in WildDuck.
+ */
+const DEFINITIVE_SUBMIT_REFUSALS: ReadonlySet<EmailToolErrorCode> = new Set<EmailToolErrorCode>(['refused', 'auth', 'invalid_request']);
 
 /**
  * The reply reference WildDuck stored with a draft uploaded by `replyToEmail` (returned by its
@@ -489,9 +513,10 @@ async function saveOneEmailAttachment(
         }
         return [`- attachments/email-${hash}/attachment-${attachmentHash}/${safeFilename} (${meta.contentType})`];
     } catch (error) {
-        const errMsg = error instanceof Error ? error.message : String(error);
-        logger.warn({ error: errMsg, filename: safeFilename, msg: 'Failed to save attachment (best-effort)' });
-        return [`- Note: could not save attachment ${safeFilename}: ${errMsg}`];
+        // The failure's own text (WildDuck's response body, say) goes to the log only.
+        const failure = recordEmailToolFailure('getEmailContent', error);
+        logger.warn({ filename: safeFilename, reference: failure.reference, msg: 'Failed to save attachment (best-effort)' });
+        return [`- Note: could not save attachment ${safeFilename} (${failure.code}; reference ${failure.reference}).`];
     }
 }
 
@@ -624,27 +649,90 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
     }
 
     /**
-     * Submit the draft immediately when every recipient is allowed (the caller decides: all To
-     * addresses allowlisted for a send, the replied-to address for a plain reply, never for a
-     * reply-all or an amend), or else show it to the admin for approval. An amend passes the
-     * draft it replaced and the new edit count, so the admin's existing card can be edited in place.
-     * `notes` (a rate limit warning, or an amend's carry notes and warnings) ends every result text.
+     * The draft's Message-ID and Date as WildDuck stores them, read (under
+     * {@link SEND_FINGERPRINT_DEADLINE_MS}) before it is submitted so a failed submit's outcome can
+     * be checked. Empty when the read fails (logged by status or error name) or finds nothing.
      */
-    async function submitOrRequestApproval(
-        draftUid: number,
-        isAllowed: boolean,
-        notes: string,
-        successMessage: string,
-        previous?: { uid: number, edits: number }
-    ): Promise<CallToolResult> {
-        if(isAllowed) {
-            await wildDuckClient.submitMessage(EmailFolder.Drafts, draftUid);
-            rateLimiter?.increment();
-            return mcpTextResult(`${successMessage}${notes}`);
+    async function sendFingerprint(uid: number): Promise<{ messageId?: string, draftDate?: string }> {
+        const deadline = createDeadline(SEND_FINGERPRINT_DEADLINE_MS);
+        try {
+            const draft = await wildDuckClient.getMessage(EmailFolder.Drafts, uid, deadline.signal);
+            return { messageId: draft?.messageId, draftDate: draft?.date ?? undefined };
+        } catch (err) {
+            logger.warn({ uid, ...failureDetail(err), msg: 'Could not read the draft before sending it; a failed send will be reported as unknown' });
+            return {};
+        } finally {
+            deadline.clear();
         }
+    }
 
-        // Not on allowlist (or replyAll) — request admin approval. The card is posted through the
-        // Discord outbox when Discord is offline, so a failure here is exceptional.
+    /**
+     * What happened to a direct send whose submit failed, from the same check an approved send's
+     * uncertain outcome gets ({@link checkEmailSendDelivery}), under
+     * {@link SEND_OUTCOME_CHECK_DEADLINE_MS}: `delivered` (its Message-ID is in Sent Mail),
+     * `not-delivered` (the same draft is untouched in Drafts) or `undetermined` (that cannot be
+     * told); undefined when the check fails (logged by status or error name).
+     */
+    async function failedSendOutcome(uid: number, fingerprint: { messageId?: string, draftDate?: string }): Promise<DeliveryCheck['verdict'] | undefined> {
+        const deadline = createDeadline(SEND_OUTCOME_CHECK_DEADLINE_MS);
+        try {
+            const now = new Date();
+            const check = await checkEmailSendDelivery(wildDuckClient, { params: { uid, ...fingerprint }, since: now, until: now, signal: deadline.signal });
+            return check.verdict;
+        } catch (err) {
+            logger.warn({ uid, ...failureDetail(err), msg: 'Could not check whether a failed send went out' });
+        } finally {
+            deadline.clear();
+        }
+        return undefined;
+    }
+
+    /**
+     * Submits an allowed draft at once, never retrying the submit. A failed submit is logged
+     * ({@link recordEmailToolFailure}) and its outcome checked: a message found in Sent Mail was
+     * sent; a definitive refusal ({@link DEFINITIVE_SUBMIT_REFUSALS}) of a draft still untouched in
+     * Drafts was not sent and is not charged; anything else is unknown, and is charged, so Izzy is
+     * told not to send it again. `notes` (the rate limit warning) ends every result text.
+     */
+    async function submitDirect(toolName: string, draftUid: number, notes: string, successMessage: string): Promise<CallToolResult> {
+        const fingerprint = await sendFingerprint(draftUid);
+        try {
+            await wildDuckClient.submitMessage(EmailFolder.Drafts, draftUid);
+        } catch (err) {
+            const failure = recordEmailToolFailure(toolName, err);
+            const outcome = await failedSendOutcome(draftUid, fingerprint);
+            const draftRef = `${EmailFolder.Drafts}:${draftUid}`;
+            if(outcome === 'delivered') {
+                rateLimiter?.increment();
+                return mcpTextResult(`${successMessage} The mail server reported an error, but the message was found in Sent Mail.${notes}`);
+            }
+            if(outcome === 'not-delivered' && DEFINITIVE_SUBMIT_REFUSALS.has(failure.code)) {
+                return { content: [{ type: 'text' as const, text: `Not sent: the mail server refused to send this message (${failure.code}), and it is still an unsent draft, ${draftRef}. To try again, delete it with deleteDraft, then send or reply again; if it is refused again, tell the admin. Reference: ${failure.reference}.${notes}` }], isError: true };
+            }
+            rateLimiter?.increment();
+            return { content: [{ type: 'text' as const, text: `Outcome unknown: the mail server did not confirm sending this message (${failure.code}), so it may or may not have gone out (draft ${draftRef}). Do not send this again; check Sent Mail later. Reference: ${failure.reference}.${notes}` }], isError: true };
+        }
+        rateLimiter?.increment();
+        return mcpTextResult(`${successMessage}${notes}`);
+    }
+
+    /**
+     * Submit the draft at once when every recipient is allowed (the caller decides: all To
+     * addresses allowlisted for a send, the replied-to address for a plain reply, never for a
+     * reply-all), else show it to the admin for approval ({@link requestApproval}).
+     */
+    async function submitOrRequestApproval(toolName: string, draftUid: number, isAllowed: boolean, notes: string, successMessage: string): Promise<CallToolResult> {
+        return isAllowed ? submitDirect(toolName, draftUid, notes, successMessage) : requestApproval(draftUid, notes);
+    }
+
+    /**
+     * Show the draft to the admin for approval. An amend passes the draft it replaced and the new
+     * edit count, so the admin's existing card can be edited in place. `notes` (a rate limit
+     * warning, or an amend's carry notes and warnings) ends every result text.
+     */
+    async function requestApproval(draftUid: number, notes: string, previous?: { uid: number, edits: number }): Promise<CallToolResult> {
+        // Not on allowlist (or replyAll, or an amend) — request admin approval. The card is posted
+        // through the Discord outbox when Discord is offline, so a failure here is exceptional.
         let presentation: ApprovalCardPresentation = 'posted';
         if(approvalCards) {
             try {
@@ -678,12 +766,18 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         return mode !== 'replyAll' && (allowlist?.isAllowed('email', primaryTo) ?? false);
     }
 
-    /** Run `fn` holding draft `uid`'s key when a gate is configured (released on every path), else directly. */
-    async function withDraftLock<T>(uid: number, fn: () => Promise<T>): Promise<T> {
+    /**
+     * Run `fn` holding draft `uid`'s key when a gate is configured (released on every path), else
+     * directly, with one signal that aborts `budgetMs` after the key is taken, for every WildDuck
+     * call `fn` makes under it. The budget stands down when `fn` settles.
+     */
+    async function withDraftLock<T>(uid: number, budgetMs: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
         const release = await options.draftLocks?.acquire(draftLockKey(uid));
+        const budget = createDeadline(budgetMs);
         try {
-            return await fn();
+            return await fn(budget.signal);
         } finally {
+            budget.clear();
             release?.();
         }
     }
@@ -692,11 +786,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
      * Remove an amended draft's old UID that WildDuck's replace left behind: delete it (already
      * gone counts), or failing that mark it superseded. Returns a warning for the tool text when
      * both failed, else ''. Runs holding `email-draft:<oldUid>`, so the supersede write is the
-     * held-lock one and never takes that key again.
+     * held-lock one and never takes that key again. `signal` (the amend's budget) bounds the
+     * delete; once it has run out the delete fails at once and the old UID is marked instead, under
+     * the supersede write's own deadlines.
      */
-    async function removeReplacedDraft(oldUid: number, newUid: number): Promise<string> {
+    async function removeReplacedDraft(oldUid: number, newUid: number, signal: AbortSignal): Promise<string> {
         try {
-            await wildDuckClient.deleteMessage(EmailFolder.Drafts, oldUid);
+            await wildDuckClient.deleteMessage(EmailFolder.Drafts, oldUid, signal);
             return '';
         } catch (err) {
             if(isNotFound(err)) {
@@ -758,13 +854,15 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
      * ({@link attachmentListRefusal}), bytes read past the budget (which aborts every fetch) or any
      * fetch that fails returns an error result, so nothing is uploaded and no partial set can be.
      * An inline (`related`) attachment is carried as an ordinary one: the new version is plain
-     * text, so it has no HTML that could reference its cid. Runs holding `email-draft:<uid>`.
+     * text, so it has no HTML that could reference its cid. Runs holding `email-draft:<uid>`; the
+     * amend's budget (`amendSignal`) aborts the fetches too.
      */
     async function carriedAttachments(
         uid: number,
         draftRef: string,
         attachments: WildDuckMessageAttachment[],
-        remove: 'all' | string[] | undefined
+        remove: 'all' | string[] | undefined,
+        amendSignal: AbortSignal
     ): Promise<{ kept: WildDuckAttachment[], removed: number } | CallToolResult> {
         const names = new Set(attachments.map(attachment => attachment.filename));
         const removing = new Set(remove === 'all' ? names : remove);
@@ -780,7 +878,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
         const deadline = createDeadline(AMEND_ATTACHMENT_DEADLINE_MS);
         const budget: AttachmentBudget = { remaining: AMEND_MAX_ATTACHMENT_BYTES, overrun: new AbortController() };
-        const signal = AbortSignal.any([deadline.signal, budget.overrun.signal]);
+        const signal = AbortSignal.any([deadline.signal, budget.overrun.signal, amendSignal]);
         const limit = pLimit(2);
         const fetched = await Promise.all(keeping.map(attachment => limit(async () => ({ attachment, bytes: await fetchCarried(uid, attachment, budget, signal) }))))
             .finally(() => {
@@ -831,12 +929,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
      * {@link AMEND_READ_BACK_DEADLINE_MS} deadline: its Cc and attachment counts and its
      * References, or undefined when it is not found, unreadable, or the read fails or times out
      * (logged by status or error name, never by WildDuck's error text). Never throws, so the new
-     * UID is always reported. Runs holding `email-draft:<oldUid>`.
+     * UID is always reported. Runs holding `email-draft:<oldUid>`; the amend's budget
+     * (`amendSignal`) aborts it too.
      */
-    async function readBackAmended(newUid: number): Promise<StoredDraft | undefined> {
+    async function readBackAmended(newUid: number, amendSignal: AbortSignal): Promise<StoredDraft | undefined> {
         const deadline = createDeadline(AMEND_READ_BACK_DEADLINE_MS);
         try {
-            const parsed = storedDraftSchema.safeParse(await wildDuckClient.getMessage(EmailFolder.Drafts, newUid, deadline.signal));
+            const parsed = storedDraftSchema.safeParse(await wildDuckClient.getMessage(EmailFolder.Drafts, newUid, AbortSignal.any([deadline.signal, amendSignal])));
             if(!parsed.success) {
                 logger.warn({ newUid, msg: 'The amended draft read back from WildDuck was missing or unreadable' });
                 return undefined;
@@ -863,10 +962,13 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
      * delete, else `supersededBy` — so no decision can land on the old UID between the read and its
      * removal, and reads the new version back once to check what it stores and its reply threading.
      * Returns the refusal as a tool result, or the new UID, the notes for the tool text and the
-     * edit number the card will show.
+     * edit number the card will show. Every WildDuck call is bounded by `signal`, the amend's
+     * {@link AMEND_DEADLINE_MS} budget: one that runs out before or during the upload throws (the
+     * upload is never retried); after a successful upload nothing throws, so the new UID is
+     * reported with whatever could not be completed (the old UID's removal, the read-back).
      */
-    async function replaceAmendedDraft(uid: number, draftRef: string, amendment: DraftAmendment): Promise<AmendedDraft | CallToolResult> {
-        const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
+    async function replaceAmendedDraft(uid: number, draftRef: string, amendment: DraftAmendment, signal: AbortSignal): Promise<AmendedDraft | CallToolResult> {
+        const original = await wildDuckClient.getMessage(EmailFolder.Drafts, uid, signal);
         if(!original) {
             return amendError(`Draft ${draftRef} not found.`);
         }
@@ -878,7 +980,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
         if(refusal !== undefined) {
             return amendError(refusal);
         }
-        const attachments = await carriedAttachments(uid, draftRef, original.attachments ?? [], amendment.removeAttachments);
+        const attachments = await carriedAttachments(uid, draftRef, original.attachments ?? [], amendment.removeAttachments, signal);
         if('content' in attachments) {
             return attachments;
         }
@@ -902,12 +1004,12 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
             attachments: attachments.kept,
             draft:       true,
             metaData:    carry.metaData,
-        }, uid);
+        }, uid, signal);
 
         // WildDuck's replace is not atomic: if it did not delete the old UID, delete it now, or
         // failing that mark it superseded so no click, amend or preview uses it.
-        const removal = previousDeleted ? '' : await removeReplacedDraft(uid, newUid);
-        const stored = await readBackAmended(newUid);
+        const removal = previousDeleted ? '' : await removeReplacedDraft(uid, newUid, signal);
+        const stored = await readBackAmended(newUid, signal);
         const carried = carryNote({ cc: cc.length, ccGiven: amendment.cc !== undefined, kept: attachments.kept.length, removed: attachments.removed }, stored);
         return { newUid, notes: `${carried}${threadingNote(threading, stored)}${removal}`, edits: carry.edits };
     }
@@ -921,7 +1023,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 'Check CleanInbox for emails. Returns counter state and message summaries. By default only unread; set showSeen to include read messages.',
                 { showSeen: z.boolean().optional().describe('When true, include read messages alongside unread. Defaults to false (unread only).') },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    withToolErrorHandling('checkInbox', async ({ showSeen }): Promise<CallToolResult> => {
+                    withEmailToolErrorHandling('checkInbox', async ({ showSeen }): Promise<CallToolResult> => {
                         const [countsData, messages] = await Promise.all([
                             wildDuckClient.getMailboxCounts(EmailFolder.CleanInbox),
                             wildDuckClient.listMessages(EmailFolder.CleanInbox, { unseen: !showSeen }),
@@ -952,7 +1054,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 },
 
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    withToolErrorHandling('getEmailContent',
+                    withEmailToolErrorHandling('getEmailContent',
 
                         async (args): Promise<CallToolResult> => {
                             const { folder, uid } = args.message;
@@ -1010,7 +1112,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     message: mailboxMessageRefSchema.describe('The email reference in Mailbox:UID format (e.g., CleanInbox:42)'),
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    withToolErrorHandling('archiveEmail', async (args): Promise<CallToolResult> => {
+                    withEmailToolErrorHandling('archiveEmail', async (args): Promise<CallToolResult> => {
                         const { folder, uid } = args.message;
 
                         // Access control: only CleanInbox and Archive are directly accessible
@@ -1052,7 +1154,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     ]).optional().describe("Mailbox scope. 'all-regular' = all regular mailboxes excluding Junk and Trash (default). 'all' = every folder. Or a specific folder name."),
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    withToolErrorHandling('searchEmail', async (args): Promise<CallToolResult> => {
+                    withEmailToolErrorHandling('searchEmail', async (args): Promise<CallToolResult> => {
                         // Build search params based on mailbox selection
                         const mailboxParam = (!args.mailbox || args.mailbox === 'all-regular' || args.mailbox === 'all')
                             ? undefined
@@ -1105,7 +1207,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     attachments:   z.array(z.string()).optional().describe('File paths to attach'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
-                    withToolErrorHandling('sendEmail', async (args): Promise<CallToolResult> => {
+                    withEmailToolErrorHandling('sendEmail', async (args): Promise<CallToolResult> => {
                         // Resolve from address based on sender profile (loads addresses lazily)
                         const fromResult = await resolveFromAddress(args.senderProfile ?? 'formal');
                         if(!fromResult.ok) {
@@ -1143,7 +1245,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
 
                         // Fast-path only when ALL recipients are allowlisted (cc is undefined for sendEmail)
                         const isAllAllowed = toAddresses.every(addr => allowlist?.isAllowed('email', addr.address) ?? false);
-                        return submitOrRequestApproval(uid, isAllAllowed, rateLimitWarning, 'Sent successfully.');
+                        return submitOrRequestApproval('sendEmail', uid, isAllAllowed, rateLimitWarning, 'Sent successfully.');
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -1160,7 +1262,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 },
 
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
-                    withToolErrorHandling('replyToEmail',
+                    withEmailToolErrorHandling('replyToEmail',
                         async (args): Promise<CallToolResult> => {
                         // Resolve from address based on sender profile (loads addresses lazily)
                             const fromResult = await resolveFromAddress(args.senderProfile ?? 'formal');
@@ -1224,7 +1326,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                                 metaData: { previewToken: newPreviewToken() },
                             });
 
-                            return submitOrRequestApproval(uid, isReplyAllowed(args.mode, primaryTo), rateLimitWarning, `Reply sent to ${primaryTo}.`);
+                            return submitOrRequestApproval('replyToEmail', uid, isReplyAllowed(args.mode, primaryTo), rateLimitWarning, `Reply sent to ${primaryTo}.`);
                         })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -1236,14 +1338,15 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     message: draftsMailboxMessageRefSchema.describe('The draft to delete, in Drafts:UID format'),
                 },
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    withToolErrorHandling('deleteDraft', async (args): Promise<CallToolResult> => {
+                    withEmailToolErrorHandling('deleteDraft', async (args): Promise<CallToolResult> => {
                         const { uid } = args.message;
                         const draftRef = formatMailboxMessageRef(args.message);
                         // Read, check and delete holding the draft's key, so an approval recorded
                         // meanwhile is seen and its draft kept; the card is marked from this read
-                        // after the key is released (lock order is card key, then draft key).
-                        const deletion = await withDraftLock(uid, async (): Promise<{ draft: WildDuckMessage, meta: DraftApprovalMeta } | CallToolResult> => {
-                            const draft = await wildDuckClient.getMessage(EmailFolder.Drafts, uid);
+                        // after the key is released (lock order is card key, then draft key). Both
+                        // WildDuck calls share one DELETE_DRAFT_DEADLINE_MS budget.
+                        const deletion = await withDraftLock(uid, DELETE_DRAFT_DEADLINE_MS, async (signal): Promise<{ draft: WildDuckMessage, meta: DraftApprovalMeta } | CallToolResult> => {
+                            const draft = await wildDuckClient.getMessage(EmailFolder.Drafts, uid, signal);
                             if(!draft) {
                                 return { content: [{ type: 'text' as const, text: `Draft ${draftRef} not found.` }], isError: true };
                             }
@@ -1251,7 +1354,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                             if(meta.approval !== undefined) {
                                 return { content: [{ type: 'text' as const, text: `Draft ${draftRef} has an admin approval recorded; it can't be deleted.` }], isError: true };
                             }
-                            await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid);
+                            await wildDuckClient.deleteMessage(EmailFolder.Drafts, uid, signal);
                             return { draft, meta };
                         });
                         if('content' in deletion) {
@@ -1278,7 +1381,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                     senderProfile:     emailSenderProfileSchema.optional().describe('Sender profile for the From address: formal or informal'),
                 },
                 withWriteHealthGuard(options.healthRegistry, 'email', 'discord', options.reconnectionLoop,
-                    withToolErrorHandling('amendAndResubmitDraft', async (args): Promise<CallToolResult> => {
+                    withEmailToolErrorHandling('amendAndResubmitDraft', async (args): Promise<CallToolResult> => {
                         // Resolve from address based on sender profile (loads addresses lazily)
                         const fromResult = await resolveFromAddress(args.senderProfile ?? 'formal');
                         if(!fromResult.ok) {
@@ -1297,24 +1400,17 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                         // Read, refuse, fetch the kept attachments, upload, remove the old UID and read
                         // the new one back holding the draft's key, so an approval recorded meanwhile is
                         // seen (and the draft kept) and none can land on the old UID before it is gone or
-                        // superseded (#161). The card is presented after the key is released (lock order
-                        // is card key, then draft key).
-                        const amended = await withDraftLock(uid, async () => replaceAmendedDraft(uid, draftRef, {
+                        // superseded (#161), all within one AMEND_DEADLINE_MS budget. The card is
+                        // presented after the key is released (lock order is card key, then draft key).
+                        const amended = await withDraftLock(uid, AMEND_DEADLINE_MS, async signal => replaceAmendedDraft(uid, draftRef, {
                             from, subject: args.subject, body: args.body, to, cc, removeAttachments: args.removeAttachments,
-                        }));
+                        }, signal));
                         if('content' in amended) {
                             return amended;
                         }
 
                         // Always route through approval — amended drafts require human review.
-                        return submitOrRequestApproval(
-                            amended.newUid,
-                            false,
-                            amended.notes,
-                            // Stryker disable next-line StringLiteral: empty string — successMessage is unreachable when isAllowed=false always routes to approval
-                            '',
-                            { uid, edits: amended.edits }
-                        );
+                        return requestApproval(amended.newUid, amended.notes, { uid, edits: amended.edits });
                     })),
                 { annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } }
             ),
@@ -1324,7 +1420,7 @@ export function createEmailMCPServer(options: EmailMCPServerOptions) {
                 'List drafts rejected by admin review.',
                 {},
                 withHealthGuard(options.healthRegistry, 'email', options.reconnectionLoop,
-                    withToolErrorHandling('getRejectedDrafts', async (): Promise<CallToolResult> => {
+                    withEmailToolErrorHandling('getRejectedDrafts', async (): Promise<CallToolResult> => {
                         const rejectedUids = await searchDraftsByReviewState(wildDuckClient, 'rejected_by_admin');
                         const adminRejectedSection = await buildAdminRejectedSubsection(rejectedUids, wildDuckClient);
 

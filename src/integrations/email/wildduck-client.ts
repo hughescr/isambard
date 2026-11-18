@@ -36,7 +36,7 @@ export function isWildDuckAttachmentId(id: unknown): id is string {
 /** Refuses an attachment id WildDuck could not have issued, before any request is made. */
 function assertAttachmentId(id: string): void {
     if(!isWildDuckAttachmentId(id)) {
-        throw new WildDuckError('WildDuck: not a valid attachment id');
+        throw new WildDuckError('WildDuck: not a valid attachment id', undefined, { kind: 'invalid_request' });
     }
 }
 
@@ -485,21 +485,24 @@ export class WildDuckClient {
      * Upload a new version of a draft to Drafts, asking WildDuck to delete `previousUid` once the
      * new one is stored (`replacePrevious`). That delete is not atomic with the upload: WildDuck
      * stores the new message first, and a failed delete still reports success. So the result
-     * carries `previousDeleted`, false unless WildDuck says the old UID is gone.
+     * carries `previousDeleted`, false unless WildDuck says the old UID is gone. `signal` cancels
+     * the request (and the wait for a shared re-authentication); a cancelled upload may still have
+     * been stored.
      */
-    async uploadReplacingDraft(payload: Omit<WildDuckUploadPayload, 'replacePrevious'>, previousUid: number): Promise<{ id: number, previousDeleted: boolean }> {
+    async uploadReplacingDraft(payload: Omit<WildDuckUploadPayload, 'replacePrevious'>, previousUid: number, signal?: AbortSignal): Promise<{ id: number, previousDeleted: boolean }> {
         const response = await this.withAuthRetry(() => this.doUploadMessage(EmailFolder.Drafts, {
             ...payload,
             replacePrevious: { mailbox: EmailFolder.Drafts, id: previousUid },
-        }));
+        }, signal), signal);
         return { id: response.message.id, previousDeleted: response.previousDeleted === true };
     }
 
     /**
-     * Submit a stored draft message for delivery.
+     * Submit a stored draft message for delivery. `signal` cancels the request (and the wait for a
+     * shared re-authentication).
      */
     async submitMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<void> {
-        await this.withAuthRetry(() => this.doSubmitMessage(mailboxPath, uid, signal));
+        await this.withAuthRetry(() => this.doSubmitMessage(mailboxPath, uid, signal), signal);
     }
 
     /**
@@ -520,10 +523,11 @@ export class WildDuckClient {
     }
 
     /**
-     * Delete a message by UID.
+     * Delete a message by UID. `signal` cancels the request (and the wait for a shared
+     * re-authentication); a cancelled delete may still have happened.
      */
-    async deleteMessage(mailboxPath: string, uid: number): Promise<void> {
-        await this.withAuthRetry(() => this.doDeleteMessage(mailboxPath, uid));
+    async deleteMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<void> {
+        await this.withAuthRetry(() => this.doDeleteMessage(mailboxPath, uid, signal), signal);
     }
 
     /**
@@ -546,20 +550,21 @@ export class WildDuckClient {
     /**
      * Retrieve a full message with body and headers, mapped to WildDuckEmailMetadata.
      * Attachments array is always empty — use attachmentMeta for lazy fetching.
-     * Returns null if the message is not found (404).
+     * Returns null if the message is not found (404). `signal` cancels the request (and the wait
+     * for a shared re-authentication).
      */
-    async getFullMessage(mailboxPath: string, uid: number): Promise<WildDuckEmailMetadata | null> {
-        return this.withAuthRetry(() => this.doGetFullMessage(mailboxPath, uid));
+    async getFullMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<WildDuckEmailMetadata | null> {
+        return this.withAuthRetry(() => this.doGetFullMessage(mailboxPath, uid, signal), signal);
     }
 
     /**
-     * Download attachment data as a Buffer. The request has no deadline of its own; `signal`
-     * aborts it, body included. An id WildDuck could not have issued throws a WildDuckError
-     * before any request.
+     * Download attachment data as a Buffer. The request, body included, has the 30 s request
+     * deadline; `signal` also aborts it (and the wait for a shared re-authentication). An id
+     * WildDuck could not have issued throws a WildDuckError before any request.
      */
     async getAttachment(mailboxPath: string, messageUid: number, attachmentId: string, signal?: AbortSignal): Promise<Buffer> {
         assertAttachmentId(attachmentId);
-        return this.withAuthRetry(() => this.doGetAttachment(mailboxPath, messageUid, attachmentId, signal));
+        return this.withAuthRetry(() => this.doGetAttachment(mailboxPath, messageUid, attachmentId, signal), signal);
     }
 
     /**
@@ -572,7 +577,7 @@ export class WildDuckClient {
      */
     async openAttachmentStream(mailboxPath: string, uid: number, attachmentId: string, signal?: AbortSignal): Promise<AttachmentStream | null> {
         assertAttachmentId(attachmentId);
-        return this.withAuthRetry(() => this.doOpenAttachmentStream(mailboxPath, uid, attachmentId, signal));
+        return this.withAuthRetry(() => this.doOpenAttachmentStream(mailboxPath, uid, attachmentId, signal), signal);
     }
 
     /**
@@ -609,40 +614,68 @@ export class WildDuckClient {
 
     /**
      * Retrieve a message by UID.
-     * Returns null if the message is not found (404). `signal` cancels the request.
+     * Returns null if the message is not found (404). `signal` cancels the request (and the wait
+     * for a shared re-authentication).
      */
     async getMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<WildDuckMessage | null> {
-        return this.withAuthRetry(() => this.doGetMessage(mailboxPath, uid, signal));
+        return this.withAuthRetry(() => this.doGetMessage(mailboxPath, uid, signal), signal);
     }
 
     /**
      * Whether a message whose Message-ID header is exactly `messageId` is among the newest
      * {@link FIND_BY_MESSAGE_ID_MAX_PAGES} pages of `mailboxPath` (read and unread alike).
      * False means not found there, not necessarily absent from an older page. `signal` cancels
-     * the request in flight.
+     * the request in flight (and the wait for a shared re-authentication).
      */
     async findMessageByMessageId(mailboxPath: string, messageId: string, signal?: AbortSignal): Promise<boolean> {
-        return this.withAuthRetry(() => this.doFindMessageByMessageId(mailboxPath, messageId, signal));
+        return this.withAuthRetry(() => this.doFindMessageByMessageId(mailboxPath, messageId, signal), signal);
     }
 
     // ---------------------------------------------------------------------------
     // Private helpers
     // ---------------------------------------------------------------------------
 
-    private async withAuthRetry<T>(fn: () => Promise<T>): Promise<T> {
+    /**
+     * Runs `fn`, and once more after a re-authentication if it was refused with a 401. `signal`
+     * (the caller's, when it has one) also ends the wait for that re-authentication, which is
+     * shared with every other caller and keeps running for them.
+     */
+    private async withAuthRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
         const tokenAtAttempt = this.token;
         try {
             return await fn();
         } catch (err) {
             if(err instanceof WildDuckAuthError) {
+                signal?.throwIfAborted();
                 // Another request may have refreshed the token before this 401 arrived.
                 // Stryker disable next-line llm: both token values are string or null, for which loose and strict equality agree.
                 if(this.token === tokenAtAttempt) {
-                    await this.authenticate();
+                    await this.waitFor(this.authenticate(), signal);
                 }
                 return fn();
             }
             throw err;
+        }
+    }
+
+    /**
+     * Waits for `pending` until it settles or `signal` aborts, whichever is first, without
+     * cancelling `pending`. Promise.race subscribes to `pending`, so a rejection after the caller
+     * stopped waiting is still handled.
+     */
+    private async waitFor(pending: Promise<void>, signal: AbortSignal | undefined): Promise<void> {
+        if(signal === undefined) {
+            return pending;
+        }
+        const aborted = Promise.withResolvers<never>();
+        const onAbort = (): void => {
+            aborted.reject(signal.reason);
+        };
+        signal.addEventListener('abort', onAbort);
+        try {
+            await Promise.race([pending, aborted.promise]);
+        } finally {
+            signal.removeEventListener('abort', onAbort);
         }
     }
 
@@ -672,7 +705,7 @@ export class WildDuckClient {
         }, /* skipAuth */ true);
 
         if(!response.token) {
-            throw new WildDuckAuthError('Authentication failed: no token returned');
+            throw new WildDuckAuthError('Authentication failed: no token returned', { kind: 'auth' });
         }
         this.token = response.token;
     }
@@ -796,12 +829,12 @@ export class WildDuckClient {
     private resolveMailboxId(mailboxPath: string): string {
         const mailboxId = this.reverseMailboxMap.get(mailboxPath);
         if(!mailboxId) {
-            throw new WildDuckError(`WildDuck: unknown mailbox path: ${mailboxPath}`);
+            throw new WildDuckError(`WildDuck: unknown mailbox path: ${mailboxPath}`, undefined, { kind: 'invalid_request' });
         }
         return mailboxId;
     }
 
-    private async doUploadMessage(mailboxPath: string, payload: WildDuckUploadPayload): Promise<UploadMessageResponse> {
+    private async doUploadMessage(mailboxPath: string, payload: WildDuckUploadPayload, signal?: AbortSignal): Promise<UploadMessageResponse> {
         const mailboxId      = this.resolveMailboxId(mailboxPath);
         const resolvedPayload = payload.replacePrevious
             ? { ...payload, replacePrevious: { mailbox: this.resolveMailboxId(payload.replacePrevious.mailbox), id: payload.replacePrevious.id } }
@@ -812,6 +845,7 @@ export class WildDuckClient {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify(resolvedPayload),
+                signal,
             }
         );
     }
@@ -855,11 +889,11 @@ export class WildDuckClient {
         );
     }
 
-    private async doDeleteMessage(mailboxPath: string, uid: number): Promise<void> {
+    private async doDeleteMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<void> {
         const mailboxId = this.resolveMailboxId(mailboxPath);
         await this.makeRequest<unknown>(
             `/users/me/mailboxes/${mailboxId}/messages/${uid}`,
-            { method: 'DELETE' }
+            { method: 'DELETE', signal }
         );
     }
 
@@ -912,7 +946,7 @@ export class WildDuckClient {
             throw new WildDuckError(
                 `WildDuck move response missing destination uid for source uid ${uid}`,
                 undefined,
-                { sourceMailbox, uid, destMailbox }
+                { kind: 'bad_response', sourceMailbox, uid, destMailbox }
             );
         }
         return destUid;
@@ -933,11 +967,11 @@ export class WildDuckClient {
         return response.results;
     }
 
-    private async doGetFullMessage(mailboxPath: string, uid: number): Promise<WildDuckEmailMetadata | null> {
+    private async doGetFullMessage(mailboxPath: string, uid: number, signal?: AbortSignal): Promise<WildDuckEmailMetadata | null> {
         const mailboxId = this.resolveMailboxId(mailboxPath);
         const response  = await this.makeRequestNullable<FullMessageResponse>(
             `/users/me/mailboxes/${mailboxId}/messages/${uid}`,
-            { method: 'GET' }
+            { method: 'GET', signal }
         );
         if(!response) {
             return null;
@@ -1026,7 +1060,7 @@ export class WildDuckClient {
         const mailboxId = this.resolveMailboxId(mailboxPath);
         const headerDeadline = new AbortController();
         const timer = setTimeout(() => {
-            headerDeadline.abort(new WildDuckError('WildDuck attachment request timed out before its headers arrived'));
+            headerDeadline.abort(new WildDuckError('WildDuck attachment request timed out before its headers arrived', undefined, { kind: 'timeout' }));
         }, REQUEST_TIMEOUT_MS);
         let response: Response;
         try {
@@ -1045,12 +1079,12 @@ export class WildDuckClient {
         }
         if(response.status === 401) {
             await releaseUnreadBody(response);
-            throw new WildDuckAuthError('WildDuck authentication failed (401)');
+            throw new WildDuckAuthError('WildDuck authentication failed (401)', { kind: 'auth' });
         }
         if(!response.ok) {
             // The error body is never read: it is released unread, so it is neither buffered nor echoed
             await releaseUnreadBody(response);
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}`, undefined, { status: response.status });
+            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}`, undefined, { status: response.status, kind: 'http' });
         }
 
         // A decoded (content-encoded) body's length differs from the header's, so it is only passed through for an identity body.
@@ -1060,68 +1094,29 @@ export class WildDuckClient {
             : { status: response.status, body: response.body };
     }
 
+    /** A request whose 2xx body is an attachment's bytes (see {@link send}). */
     private async makeRequestBuffer(path: string, options: RequestInit): Promise<Buffer> {
-        // Stryker disable next-line ObjectLiteral,SpreadOperandDrop: the sole caller passes a headerless GET, and this copy receives the access token below.
-        const headers: Record<string, string> = {
-            ...options.headers as Record<string, string>,
-        };
-
-        if(this.token) {
-            headers['X-Access-Token'] = this.token;
-        }
-
-        const response = await fetch(`${this.options.url}${path}`, {
-            ...options,
-            headers,
-        });
-
-        if(response.status === 401) {
-            throw new WildDuckAuthError('WildDuck authentication failed (401)');
-        }
-
-        if(!response.ok) {
-            const body = await response.text();
-            const bodySuffix = body ? `: ${body}` : '';
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        return Buffer.from(arrayBuffer);
+        return this.send(path, options, async response => Buffer.from(await response.arrayBuffer()));
     }
 
+    /** A request whose 2xx body is JSON, or null when WildDuck answers 404 (see {@link send}). */
     private async makeRequestNullable<T>(path: string, options: RequestInit): Promise<T | null> {
-        // Stryker disable next-line ObjectLiteral,SpreadOperandDrop: both private callers pass a headerless GET, and this copy receives the access token below.
-        const headers: Record<string, string> = {
-            ...options.headers as Record<string, string>,
-        };
-
-        if(this.token) {
-            headers['X-Access-Token'] = this.token;
-        }
-
-        const response = await fetch(`${this.options.url}${path}`, {
-            ...options,
-            headers,
-        });
-
-        if(response.status === 404) {
-            return null;
-        }
-
-        if(response.status === 401) {
-            throw new WildDuckAuthError('WildDuck authentication failed (401)');
-        }
-
-        if(!response.ok) {
-            const body = await response.text();
-            const bodySuffix = body ? `: ${body}` : '';
-            throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`);
-        }
-
-        return response.json() as Promise<T>;
+        return this.send<T | null>(path, options, async response => response.json() as Promise<T>, { notFound: { value: null } });
     }
 
+    /** A request whose 2xx body is JSON (see {@link send}). */
     private async makeRequest<T>(path: string, options: RequestInit, skipAuth = false): Promise<T> {
+        return this.send(path, options, async response => response.json() as Promise<T>, { skipAuth });
+    }
+
+    /**
+     * Sends one request under a {@link REQUEST_TIMEOUT_MS} deadline, composed with any
+     * `options.signal`, and returns what `read` makes of a 2xx response (or `notFound.value` for a
+     * 404, when given). A 401 throws a WildDuckAuthError; any other non-2xx a WildDuckError
+     * carrying its status. The deadline covers reading the body too, so it stands down only once
+     * the response is consumed, and an unread body is released while it still stands.
+     */
+    private async send<T>(path: string, options: RequestInit, read: (response: Response) => Promise<T>, { skipAuth = false, notFound }: { skipAuth?: boolean, notFound?: { value: T } } = {}): Promise<T> {
         const headers: Record<string, string> = {
             ...options.headers as Record<string, string>,
         };
@@ -1130,7 +1125,6 @@ export class WildDuckClient {
             headers['X-Access-Token'] = this.token;
         }
 
-        // The deadline covers reading the body too, so it stands down only once the response is fully consumed
         const deadline = createDeadline(REQUEST_TIMEOUT_MS);
         let response: Response | undefined;
         try {
@@ -1140,20 +1134,24 @@ export class WildDuckClient {
                 signal: options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal,
             });
 
+            if(response.status === 404 && notFound !== undefined) {
+                return notFound.value;
+            }
+
             if(response.status === 401) {
-                throw new WildDuckAuthError('WildDuck authentication failed (401)');
+                throw new WildDuckAuthError('WildDuck authentication failed (401)', { kind: 'auth' });
             }
 
             if(!response.ok) {
                 const body = await response.text();
                 // Stryker disable next-line llm: response.text returns a string whose only falsy value is the same empty string.
                 const bodySuffix = body ? `: ${body}` : '';
-                throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`, undefined, { status: response.status });
+                throw new WildDuckError(`WildDuck API error: ${response.status} ${response.statusText}${bodySuffix}`, undefined, { status: response.status, kind: 'http' });
             }
 
-            return await (response.json() as Promise<T>);
+            return await read(response);
         } finally {
-            // A 401 throws without reading the body: release it while the deadline still stands, never after
+            // A 401 or 404 returns or throws without reading the body: release it while the deadline still stands, never after
             discardBody(response);
             deadline.clear();
         }

@@ -959,6 +959,241 @@ describe('WildDuckClient', () => {
     });
 
     // -----------------------------------------------------------------------
+    // Deadlines on every request, and an abortable re-authentication wait (#202)
+    // -----------------------------------------------------------------------
+    describe('request deadlines (#202)', () => {
+        /** The next fetch hangs until its signal aborts, then rejects with the abort reason; `signal()` is the signal it was given. */
+        function hangNextFetch(): { aborted: () => boolean, signal: () => AbortSignal | undefined } {
+            const state: { signal?: AbortSignal } = {};
+            mockFetch.mockImplementationOnce(async (_url, options) => {
+                const signal = options?.signal ?? undefined;
+                state.signal = signal;
+                const gate = Promise.withResolvers<Response>();
+                signal?.addEventListener('abort', () => {
+                    gate.reject(signal.reason);
+                }, { once: true });
+                return gate.promise;
+            });
+            return { aborted: () => state.signal?.aborted === true, signal: () => state.signal };
+        }
+
+        const unboundedBefore: [string, (client: WildDuckClient, signal?: AbortSignal) => Promise<unknown>][] = [
+            ['getMessage', async (client, signal) => client.getMessage('Drafts', 42, signal)],
+            ['getFullMessage', async (client, signal) => client.getFullMessage('Drafts', 42, signal)],
+            ['getAttachment', async (client, signal) => client.getAttachment('Drafts', 42, 'ATT1', signal)],
+        ];
+
+        test.each(unboundedBefore)('%s aborts its request at exactly 30 seconds, not a millisecond earlier', async (_name, call) => {
+            const client = await makeInitializedClient();
+            const fetchCall = hangNextFetch();
+
+            const completion = call(client);
+            await drainMicrotasks();
+            jest.advanceTimersByTime(29_999);
+            expect(fetchCall.aborted()).toBe(false);
+            jest.advanceTimersByTime(1);
+
+            expect(fetchCall.aborted()).toBe(true);
+            await expect(completion).rejects.toMatchObject({ name: 'TimeoutError' });
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test.each(unboundedBefore)('%s keeps the 30 s deadline when the caller passes a signal, and the caller\'s signal also aborts it', async (_name, call) => {
+            const client = await makeInitializedClient();
+            const caller = new AbortController();
+            const timedOut = hangNextFetch();
+            const timing = call(client, caller.signal);
+            await drainMicrotasks();
+            jest.advanceTimersByTime(30_000);
+            await expect(timing).rejects.toMatchObject({ name: 'TimeoutError' });
+
+            const cancelled = hangNextFetch();
+            const cancelling = call(client, caller.signal);
+            await drainMicrotasks();
+            expect(cancelled.aborted()).toBe(false);
+            caller.abort(new Error('caller gave up'));
+
+            expect(timedOut.aborted()).toBe(true);
+            expect(cancelled.aborted()).toBe(true);
+            await expect(cancelling).rejects.toThrow('caller gave up');
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('getAttachment keeps the deadline armed while its body is read, then stands it down', async () => {
+            const client = await makeInitializedClient();
+            const body = Promise.withResolvers<ArrayBuffer>();
+            mockFetch.mockResolvedValueOnce({ ...makeJsonResponse({}), arrayBuffer: async () => body.promise });
+
+            const completion = client.getAttachment('Drafts', 42, 'ATT1');
+            await drainMicrotasks();
+            expect(jest.getTimerCount()).toBe(1);
+            body.resolve(new TextEncoder().encode('bytes').buffer);
+
+            const bytes = await completion;
+            expect(bytes.toString()).toBe('bytes');
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('getMessage keeps the deadline armed while its body is parsed, then stands it down', async () => {
+            const client = await makeInitializedClient();
+            const body = Promise.withResolvers<unknown>();
+            mockFetch.mockResolvedValueOnce({ ...makeJsonResponse({}), json: async () => body.promise });
+
+            const completion = client.getMessage('Drafts', 42);
+            await drainMicrotasks();
+            expect(jest.getTimerCount()).toBe(1);
+            body.resolve({ id: 42 });
+
+            expect(await completion).toEqual({ id: 42 });
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('getMessage cancels an unread stalled 404 body before its deadline stands down', async () => {
+            const client = await makeInitializedClient();
+            const stalled = stalledResponse(404);
+            mockFetch.mockResolvedValueOnce(stalled.response);
+
+            expect(await client.getMessage('Drafts', 42)).toBeNull();
+
+            expect(stalled.cancelled()).toBe(true);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        test('getMessage cancels an unread stalled 401 body before its deadline stands down', async () => {
+            const client = await makeInitializedClient();
+            const stalled = stalledResponse(401);
+            mockFetch.mockResolvedValueOnce(stalled.response);
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ id: 42 }));
+
+            expect(await client.getMessage('Drafts', 42)).toEqual({ id: 42 });
+
+            expect(stalled.cancelled()).toBe(true);
+            expect(jest.getTimerCount()).toBe(0);
+        });
+
+        const signalThreaded: [string, (client: WildDuckClient, signal: AbortSignal) => Promise<unknown>][] = [
+            ['deleteMessage', async (client, signal) => client.deleteMessage('Drafts', 42, signal)],
+            ['uploadReplacingDraft', async (client, signal) => client.uploadReplacingDraft({ from: { address: 'a@example.com' }, subject: 's', text: 't' }, 42, signal)],
+            ['getFullMessage', async (client, signal) => client.getFullMessage('Drafts', 42, signal)],
+        ];
+
+        test.each(signalThreaded)('%s aborts its request when the caller\'s signal aborts', async (_name, call) => {
+            const client = await makeInitializedClient();
+            const caller = new AbortController();
+            const fetchCall = hangNextFetch();
+
+            const completion = call(client, caller.signal);
+            await drainMicrotasks();
+            caller.abort(new Error('budget spent'));
+
+            expect(fetchCall.aborted()).toBe(true);
+            await expect(completion).rejects.toThrow('budget spent');
+        });
+    });
+
+    describe('waiting for a shared re-authentication (#202)', () => {
+        afterEach(() => {
+            mockFetch.mockImplementation(async () => {
+                throw new Error('Fetch not mocked for this test');
+            });
+        });
+
+        /** Every /authenticate waits on `auth`; a request with the old token gets a 401; one with the refreshed token gets `{ id: 42 }`. */
+        function expiredTokenServer(auth: Promise<Response>): { authCalls: () => number } {
+            let authCalls = 0;
+            mockFetch.mockImplementation(async (url, options) => {
+                if(url.endsWith('/authenticate')) {
+                    authCalls++;
+                    return auth;
+                }
+                const token = (options!.headers as Record<string, string>)['X-Access-Token'];
+                return token === 'test-auth-token' ? makeJsonResponse({ error: 'expired' }, 401) : makeJsonResponse({ id: 42 });
+            });
+            return { authCalls: () => authCalls };
+        }
+
+        test('a caller\'s signal ends its own wait without cancelling the re-authentication other callers share', async () => {
+            const client = await makeInitializedClient();
+            const auth = Promise.withResolvers<Response>();
+            const server = expiredTokenServer(auth.promise);
+            const caller = new AbortController();
+
+            const abandoned = client.getMessage('Drafts', 1, caller.signal);
+            const patient = client.getMessage('Drafts', 2);
+            await drainMicrotasks();
+            expect(server.authCalls()).toBe(1);
+            caller.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+
+            await expect(abandoned).rejects.toMatchObject({ name: 'TimeoutError' });
+            auth.resolve(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+            expect(await patient).toEqual({ id: 42 });
+            expect(server.authCalls()).toBe(1);
+            expect(client.getAuthToken()).toBe('refreshed-token');
+        });
+
+        test('a caller whose signal stays live waits for the re-authentication and retries once', async () => {
+            const client = await makeInitializedClient();
+            const auth = Promise.withResolvers<Response>();
+            const server = expiredTokenServer(auth.promise);
+            const caller = new AbortController();
+
+            const request = client.getMessage('Drafts', 1, caller.signal);
+            await drainMicrotasks();
+            auth.resolve(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' }));
+
+            expect(await request).toEqual({ id: 42 });
+            expect(server.authCalls()).toBe(1);
+            expect(mockFetch).toHaveBeenCalledTimes(3);
+        });
+
+        test('stops listening to the caller\'s signal once the re-authentication has settled', async () => {
+            const client = await makeInitializedClient();
+            expiredTokenServer(Promise.resolve(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' })));
+            const caller = new AbortController();
+            const added = jest.spyOn(caller.signal, 'addEventListener');
+            const removed = jest.spyOn(caller.signal, 'removeEventListener');
+
+            await client.getMessage('Drafts', 1, caller.signal);
+
+            const waits = added.mock.calls.filter(([, listener]) => removed.mock.calls.some(([type, removedListener]) => type === 'abort' && removedListener === listener));
+            expect(added.mock.calls.filter(([type]) => type === 'abort').length).toBeGreaterThan(0);
+            expect(waits.length).toBe(added.mock.calls.filter(([type]) => type === 'abort').length);
+        });
+
+        test('a caller whose signal is already aborted when its 401 arrives starts no re-authentication', async () => {
+            const client = await makeInitializedClient();
+            const caller = new AbortController();
+            const server = expiredTokenServer(Promise.resolve(makeJsonResponse({ ...AUTH_RESPONSE, token: 'refreshed-token' })));
+            mockFetch.mockImplementationOnce(async () => {
+                caller.abort(new Error('gave up'));
+                return makeJsonResponse({ error: 'expired' }, 401);
+            });
+
+            await expect(client.getMessage('Drafts', 1, caller.signal)).rejects.toThrow('gave up');
+
+            expect(server.authCalls()).toBe(0);
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+        });
+
+        test('a re-authentication that fails after a caller stopped waiting is no unhandled rejection, and reaches the callers still waiting', async () => {
+            const client = await makeInitializedClient();
+            const auth = Promise.withResolvers<Response>();
+            expiredTokenServer(auth.promise);
+            const caller = new AbortController();
+
+            const abandoned = client.getMessage('Drafts', 1, caller.signal);
+            const patient = client.getMessage('Drafts', 2);
+            await drainMicrotasks();
+            caller.abort(new Error('gave up'));
+            await expect(abandoned).rejects.toThrow('gave up');
+            auth.resolve(makeJsonResponse({ success: true }));
+
+            await expect(patient).rejects.toThrow('Authentication failed: no token returned');
+        });
+    });
+
+    // -----------------------------------------------------------------------
     // getUserAddresses()
     // -----------------------------------------------------------------------
     describe('getUserAddresses()', () => {
@@ -1480,12 +1715,64 @@ describe('WildDuckClient', () => {
 
             expect(thrown).toBeInstanceOf(WildDuckError);
             expect((thrown as WildDuckError).message).toBe(`WildDuck API error: ${status} Error: nope`);
-            expect((thrown as WildDuckError).context).toEqual({ status });
+            expect((thrown as WildDuckError).context).toEqual({ status, kind: 'http' });
+        });
+
+        test.each([
+            ['getMessage', async (client: WildDuckClient) => client.getMessage('Drafts', 42)],
+            ['getFullMessage', async (client: WildDuckClient) => client.getFullMessage('Drafts', 42)],
+            ['getAttachment', async (client: WildDuckClient) => client.getAttachment('Drafts', 42, 'ATT1')],
+        ] as const)('%s answered 503 throws a WildDuckError carrying the status and kind', async (_name, call) => {
+            const client = await makeInitializedClient();
+            mockFetch.mockResolvedValueOnce(makeErrorResponseWithBody('nope', 503));
+
+            const thrown = await call(client).catch((error: unknown) => error);
+
+            expect(thrown).toBeInstanceOf(WildDuckError);
+            expect((thrown as WildDuckError).context).toEqual({ status: 503, kind: 'http' });
+        });
+
+        test.each([
+            ['search', async (client: WildDuckClient) => client.search({})],
+            ['getMessage', async (client: WildDuckClient) => client.getMessage('Drafts', 42)],
+            ['getAttachment', async (client: WildDuckClient) => client.getAttachment('Drafts', 42, 'ATT1')],
+            ['openAttachmentStream', async (client: WildDuckClient) => client.openAttachmentStream('Drafts', 42, 'ATT1')],
+        ] as const)('%s refused with a 401 again after re-authenticating throws a WildDuckAuthError of kind auth', async (_name, call) => {
+            const client = await makeInitializedClient();
+            mockFetch
+                .mockResolvedValueOnce(makeJsonResponse({ error: 'expired' }, 401))
+                .mockResolvedValueOnce(makeJsonResponse({ ...AUTH_RESPONSE, token: 'retry-token' }))
+                .mockResolvedValueOnce(makeJsonResponse({ error: 'expired again' }, 401));
+
+            const thrown = await call(client).catch((error: unknown) => error);
+
+            expect(thrown).toBeInstanceOf(WildDuckAuthError);
+            expect((thrown as WildDuckAuthError).context).toEqual({ kind: 'auth' });
+        });
+
+        test('a login answered without a token throws a WildDuckAuthError of kind auth', async () => {
+            mockFetch.mockResolvedValueOnce(makeJsonResponse({ success: true }));
+
+            const thrown = await new WildDuckClient(CLIENT_OPTIONS).init().catch((error: unknown) => error);
+
+            expect(thrown).toBeInstanceOf(WildDuckAuthError);
+            expect((thrown as WildDuckAuthError).context).toEqual({ kind: 'auth' });
+        });
+
+        test('an unknown mailbox or an attachment id WildDuck could not have issued is refused before any request, as kind invalid_request', async () => {
+            const client = await makeInitializedClient();
+
+            const unknownMailbox = await client.getMessage('Nowhere', 42).catch((error: unknown) => error);
+            const badId = await client.getAttachment('Drafts', 42, 'att-1').catch((error: unknown) => error);
+
+            expect((unknownMailbox as WildDuckError).context).toEqual({ kind: 'invalid_request' });
+            expect((badId as WildDuckError).context).toEqual({ kind: 'invalid_request' });
+            expect(mockFetch).not.toHaveBeenCalled();
         });
     });
 
     describe('getMessage() cancellation', () => {
-        test('passes the caller\'s signal to fetch', async () => {
+        test('passes fetch a signal that the caller\'s signal aborts', async () => {
             const client = await makeInitializedClient();
             const controller = new AbortController();
             mockFetch.mockResolvedValueOnce(makeJsonResponse({ id: 42 }));
@@ -1493,7 +1780,9 @@ describe('WildDuckClient', () => {
             await client.getMessage('Drafts', 42, controller.signal);
 
             const [_url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-            expect(options.signal).toBe(controller.signal);
+            expect(options.signal?.aborted).toBe(false);
+            controller.abort();
+            expect(options.signal?.aborted).toBe(true);
         });
 
         test('returns the Message-ID, Date and draft flag the API reports', async () => {
@@ -2975,7 +3264,7 @@ describe('WildDuckClient', () => {
             }
             expect(thrown).toBeInstanceOf(WildDuckError);
             expect((thrown as WildDuckError).message).toBe('WildDuck move response missing destination uid for source uid 42');
-            expect((thrown as WildDuckError).context).toEqual({ sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
+            expect((thrown as WildDuckError).context).toEqual({ kind: 'bad_response', sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
         });
 
         test('throws WildDuckError when no pair matches the source uid', async () => {
@@ -2992,7 +3281,7 @@ describe('WildDuckClient', () => {
             }
             expect(thrown).toBeInstanceOf(WildDuckError);
             expect((thrown as WildDuckError).message).toBe('WildDuck move response missing destination uid for source uid 42');
-            expect((thrown as WildDuckError).context).toEqual({ sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
+            expect((thrown as WildDuckError).context).toEqual({ kind: 'bad_response', sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
         });
 
         test('throws WildDuckError when the destination uid is not a number', async () => {
@@ -3009,7 +3298,7 @@ describe('WildDuckClient', () => {
             }
             expect(thrown).toBeInstanceOf(WildDuckError);
             expect((thrown as WildDuckError).message).toBe('WildDuck move response missing destination uid for source uid 42');
-            expect((thrown as WildDuckError).context).toEqual({ sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
+            expect((thrown as WildDuckError).context).toEqual({ kind: 'bad_response', sourceMailbox: 'CleanInbox', uid: 42, destMailbox: 'Archive' });
         });
 
         test('throws WildDuckError when source mailbox not in map', async () => {
@@ -3711,7 +4000,7 @@ describe('WildDuckClient', () => {
             expect(options.method).toBe('GET');
         });
 
-        test('passes the caller\'s abort signal to the request, and none when not given', async () => {
+        test('passes the request a signal the caller\'s signal aborts, and a deadline signal when none is given', async () => {
             const client = await makeInitializedClient();
             mockFetch.mockResolvedValueOnce(makeBufferResponse(Buffer.from('a')));
             mockFetch.mockResolvedValueOnce(makeBufferResponse(Buffer.from('b')));
@@ -3721,8 +4010,10 @@ describe('WildDuckClient', () => {
             await client.getAttachment('Drafts', 42, 'ATT00002');
 
             const [[, withSignal], [, withoutSignal]] = mockFetch.mock.calls as [string, RequestInit][];
-            expect(withSignal.signal).toBe(controller.signal);
-            expect(withoutSignal.signal).toBeUndefined();
+            controller.abort();
+            expect(withSignal.signal?.aborted).toBe(true);
+            expect(withoutSignal.signal).toBeInstanceOf(AbortSignal);
+            expect(withoutSignal.signal?.aborted).toBe(false);
         });
 
         test('sends auth token header', async () => {
@@ -3965,7 +4256,7 @@ describe('WildDuckClient', () => {
 
             expect(err).toBeInstanceOf(WildDuckError);
             expect((err as WildDuckError).message).toBe('WildDuck API error: 500 Error');
-            expect((err as WildDuckError).context).toEqual({ status: 500 });
+            expect((err as WildDuckError).context).toEqual({ status: 500, kind: 'http' });
             expect(cancel).toHaveBeenCalledTimes(1);
             expect(text).not.toHaveBeenCalled();
         });
@@ -4099,6 +4390,7 @@ describe('WildDuckClient', () => {
             const err = await pending;
             expect(err).toBeInstanceOf(WildDuckError);
             expect((err as WildDuckError).message).toBe('WildDuck attachment request timed out before its headers arrived');
+            expect((err as WildDuckError).context).toEqual({ kind: 'timeout' });
         });
 
         test('stops the header deadline once the headers arrive, so only the caller can abort the body', async () => {

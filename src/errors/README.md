@@ -113,7 +113,7 @@ classDiagram
 
     class WildDuckError {
         +code: ErrorCode
-        +context?: Record~string, unknown~
+        +context?: WildDuckErrorContext
     }
 
     class BskyError {

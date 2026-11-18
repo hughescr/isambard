@@ -53,6 +53,7 @@ export {
     WildDuckError,
     WildDuckAuthError
 } from './email';
+export type { WildDuckErrorContext, WildDuckErrorKind } from './email';
 
 export {
     BskyError,
