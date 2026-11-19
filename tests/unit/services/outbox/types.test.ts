@@ -116,6 +116,7 @@ describe('outboxItemSchema', () => {
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, kind: 'other' } }).success).toBe(false);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, draftUid: 1.5 } }).success).toBe(false);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, draftUid: -1 } }).success).toBe(false);
+        expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, draftUid: 0 } }).success).toBe(true);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, edits: 1.5 } }).success).toBe(false);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { ...completion, edits: -1 } }).success).toBe(false);
         expect(outboxItemSchema.safeParse({ ...validItem, epoch: 0, completion: { kind: 'email_approval_card', edits: 0 } }).success).toBe(false);
