@@ -7,6 +7,9 @@
  */
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it, jest, spyOn } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { logger } from '@hughescr/logger';
 import { VectorIndexClosedError, VectorIndexError } from '@/errors';
 import { createLayerName, createMemoryPath, createIndexLayer, createSearchableNamespace } from '@/storage/memory-tool/types';
@@ -359,7 +362,14 @@ describe('VectorIndex', () => {
         // Observed CI durations vary by runner load (local: ~4ms; CI: up to ~1020ms),
         // so the override is generous rather than tuned to a specific runner.
         it('opens a database at the given path and returns a VectorIndex', async () => {
-            const tmpPath = `${process.env.TMPDIR ?? '/tmp'}/vec-test-${Date.now()}.sqlite`;
+            // A fresh directory per run, not a Date.now() file name: concurrent test processes (Stryker
+            // workers share one TMPDIR and each runs the whole suite) could otherwise pick the same path,
+            // and one's cleanup deleting the file under the other's open connection fails it with
+            // SQLITE_IOERR_FSTAT, which a mutation run then records as a false kill (#207).
+            // node:fs sync, not node:fs/promises: tests/setup.ts mocks the latter with an in-memory fake.
+            // eslint-disable-next-line n/no-sync -- real filesystem required; node:fs/promises is globally mocked in tests (see above)
+            const tmpDir = mkdtempSync(path.join(tmpdir(), 'vec-test-'));
+            const tmpPath = path.join(tmpDir, 'vec.sqlite');
             const vi = await VectorIndex.open(tmpPath);
             try {
                 expect(vi.isClosed).toBe(false);
@@ -374,10 +384,9 @@ describe('VectorIndex', () => {
                 reopened.close();
             } finally {
                 vi.close();
-                await Bun.file(tmpPath).delete().catch(() => undefined);
-                // Also clean up WAL/SHM files
-                await Bun.file(`${tmpPath}-wal`).delete().catch(() => undefined);
-                await Bun.file(`${tmpPath}-shm`).delete().catch(() => undefined);
+                // Removes the database and its WAL/SHM files with the directory
+                // eslint-disable-next-line n/no-sync -- real filesystem required; node:fs/promises is globally mocked in tests
+                rmSync(tmpDir, { recursive: true, force: true });
             }
         }, 5000);
     });
